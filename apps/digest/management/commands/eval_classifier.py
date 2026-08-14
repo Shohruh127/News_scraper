@@ -77,7 +77,7 @@ class Command(BaseCommand):
                     text=text,
                     model=model,
                     timeout=timeout,
-                    num_predict=400,
+                    num_predict=1200,
                 )
                 pred_topic = classification.primary_topic.value
                 pred_maturity = classification.maturity.value

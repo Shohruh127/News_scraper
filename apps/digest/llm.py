@@ -277,6 +277,7 @@ def classify_text(
     )
 
     digest = fetch_model_digest(model, client=client)
+    latency_ms = 0
 
     try:
         raw_payload, latency_ms = ollama_chat(
@@ -305,7 +306,7 @@ def classify_text(
             prompt=recovery_prompt,
             schema=CLASSIFICATION_SCHEMA,
             timeout=timeout,
-            num_predict=num_predict,
+            num_predict=max(num_predict, 1500),
             client=client,
         )
         classification = Classification.model_validate(raw_payload)
@@ -331,7 +332,7 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
             text=article.extracted_text,
             model=model,
             timeout=timeout,
-            num_predict=400,
+            num_predict=1000,
             client=client,
         )
     except (ValidationError, json.JSONDecodeError) as exc:
@@ -406,7 +407,7 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
             text=article.extracted_text,
             model=model,
             timeout=timeout,
-            num_predict=400,
+            num_predict=1200,
             client=client,
         )
     except (ValidationError, json.JSONDecodeError) as exc:
