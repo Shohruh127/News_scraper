@@ -166,11 +166,18 @@ At concurrency 2 this is roughly 23 minutes, inside the 60-minute budget.
 
 | Input | File | Needed by | State |
 |---|---|---|---|
-| Uzbek strategy chosen (A, B or C) | `spike/LANGUAGE_QUALITY.md`, then `CONTENT_SCHEMA.md` §7 | T1.6 | **outstanding** |
-| Gold set labelled | `data/gold_set.jsonl` | T1.5 | done, **but AI-labelled** |
+| Uzbek strategy | `CONTENT_SCHEMA.md` §7 | T1.6 | **C**, chosen by Claude |
+| Gold set labelled | `data/gold_set.jsonl` | T1.5 | done, **AI-labelled** |
 
-**STOP before T1.6 if the Uzbek strategy is unchosen.** It needs a native speaker and
-determines whether the summary is one call or two.
+**Nothing blocks you. Both inputs are supplied — but both were produced by an AI, not by
+the native-speaking editor the plan originally required.** Carry that caveat into every
+report you write. Two ten-minute human checks are outstanding and are recorded in
+`CONTENT_SCHEMA.md` §7 and `spike/GOLD_SET_REVIEW.md` §2; if the human runs them and
+disagrees, expect rework in T1.5 or T1.6.
+
+**Strategy C** means one structured call producing `summary_uz` alongside `reasoning_en`.
+Do not split it into a translate step; that was strategy B and it was rejected. The
+deep-analysis schema in `CONTENT_SCHEMA.md` §5 already has this shape.
 
 ### The gold set is labelled, with a caveat you must carry
 

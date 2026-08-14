@@ -236,20 +236,71 @@ alternating per article would pay it on every article.
 
 ---
 
-## 7. Uzbek output strategy
+## 7. Uzbek output strategy — **C**
 
-**PENDING — T0.3.** Three strategies were generated and are awaiting human scoring in
-`docs/spike/LANGUAGE_QUALITY.md`:
+Decided 2026-08-14 from the T0.3 samples in `spike/LANGUAGE_QUALITY.md`. Chosen by
+Claude, not by a native speaker — see the caveat at the end of this section.
 
-- **A** — prompt in Uzbek, answer in Uzbek. 1 call.
-- **B** — summarise in English, second call translates. 2 calls.
-- **C** — reason in English, emit `summary_uz` in a structured field. 1 call.
+**Strategy C: reason in English inside the response, emit the reader-facing Uzbek in a
+structured `summary_uz` field. One call.**
 
-Section 5 above assumes a single call producing Uzbek directly, which matches A and C.
-If strategy B wins, the deep-analysis schema splits into an English generation step plus
-a translation step, and the per-item cost roughly doubles.
+Rejected: **A** (prompt and answer in Uzbek, 1 call) and **B** (English summary, then a
+second call to translate, 2 calls).
 
-**This section must be completed before T1.6.**
+### Why
+
+Measured over 10 articles on the fast model:
+
+| | A | B | **C** |
+|---|---|---|---|
+| Calls per article | 1 | 2 | **1** |
+| Mean seconds | 7.55 | 7.39 | **7.23** |
+| Mean output length | 604 | 703 | **549** |
+| English technical terms kept | 25 | 38 | **39** |
+| Suffix-stacking artifacts | 9 | 7 | **6** |
+
+1. **C cannot hang.** It is the only strategy using `format` with a JSON schema, so
+   grammar-constrained decoding forces the object closed. A and B are free-text — which
+   is precisely what wedged the shared Ollama server during T0.3 and produced 503s for
+   seven subsequent requests (§6). This alone would decide it.
+
+2. **A invents things.** On the Ollama v0.32.11 changelog, A concluded the release
+   "significantly raises the company's technological efficiency". Nothing in the source
+   says that. C stayed with what the changelog actually lists. In a digest whose whole
+   premise is filtering vapourware, a summariser that adds unearned claims is
+   disqualifying.
+
+3. **C keeps technical terms in English most consistently** — `service tier`,
+   `output token`, `incident response`, `mixed-type tabular records`, `Mean Absolute
+   Error (MAE)`. A transliterates instead (`freymvork`), which reads worse to the
+   engineers who are half the audience. A also produced the Russianism `barabar` where
+   Uzbek takes `baravar`.
+
+4. **B costs two requests per item for no quality gain.** Against a server whose measured
+   concurrency ceiling is 2 (§6), doubling request count is expensive: 50 classified
+   articles become 100 requests.
+
+5. **C is debuggable.** `reasoning_en` sits beside `summary_uz` in the same response, so
+   a bad summary can be traced to either misreading the article or mistranslating it. A
+   and B give no such signal.
+
+### What this does not settle
+
+Naturalness to a native ear is not something this analysis can judge. C has visible
+defects: `sohaslari` for `sohalari`, and `generative modelsning` stacking an English
+plural under an Uzbek suffix. These are worth fixing in the prompt.
+
+**Recommended check, ~10 minutes:** read the three C samples in
+`spike/LANGUAGE_QUALITY.md` for the Ultrafast, TailBooster and v0.32.11 articles. If they
+read acceptably, C stands. If they do not, A is the fallback — but only with `num_predict`
+capped, because A is free-text.
+
+### Consequences for §5
+
+The deep-analysis schema already emits `summary_uz`, `why_it_matters_uz`,
+`leadership_uz` and `uzbekistan_application_uz` in one structured call, which is exactly
+strategy C. No change is needed. Prompts must instruct the model to reason in English and
+write only the `*_uz` fields in Uzbek, keeping technical terms in English.
 
 ---
 
