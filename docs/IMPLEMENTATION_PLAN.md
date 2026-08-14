@@ -164,15 +164,38 @@ At concurrency 2 this is roughly 23 minutes, inside the 60-minute budget.
 
 ## 3. Blocked on the human — check before starting T1.5
 
-| Input | File | Needed by |
-|---|---|---|
-| Uzbek strategy chosen (A, B or C) | `spike/LANGUAGE_QUALITY.md`, then `CONTENT_SCHEMA.md` §7 | T1.6 |
-| 26 rows labelled | `data/gold_set.jsonl` | T1.5 |
+| Input | File | Needed by | State |
+|---|---|---|---|
+| Uzbek strategy chosen (A, B or C) | `spike/LANGUAGE_QUALITY.md`, then `CONTENT_SCHEMA.md` §7 | T1.6 | **outstanding** |
+| Gold set labelled | `data/gold_set.jsonl` | T1.5 | done, **but AI-labelled** |
 
-**STOP if either is missing.** T1.5's acceptance is precision measured against the gold
-set; without labels the gate cannot be evaluated and GATE 1 cannot pass. Neither can be
-done by an agent — the Uzbek judgement needs a native speaker, and labelling your own
-test set means grading your own work.
+**STOP before T1.6 if the Uzbek strategy is unchosen.** It needs a native speaker and
+determines whether the summary is one call or two.
+
+### The gold set is labelled, with a caveat you must carry
+
+All 26 rows are labelled, but by Claude, not by a human editor — every row carries
+`labelled_by: "claude"`. Read `spike/GOLD_SET_REVIEW.md` before you use it.
+
+The short version: the same model wrote the enum definitions in `CONTENT_SCHEMA.md` and
+then applied them here. A classifier that reads those definitions and is scored against
+that application can reach high precision by following the definitions faithfully,
+without the definitions being editorially right.
+
+**So precision ≥ 0.80 is necessary but not sufficient.** When you report T1.5, report the
+number *and* this caveat. Do not present the gate as proving editorial quality.
+
+Two further limits on what the set measures:
+
+- Seven of the twelve topics have **zero examples** — `speech_voice`, `robotics`,
+  `fintech`, `govtech`, `startups`, `technical_talks`, `safety_security`. Precision on
+  those is unmeasured, not good.
+- `GOLD_SET_REVIEW.md` §2 lists six contestable calls. If the human spot-checks anything,
+  it should be those six.
+
+**Never relabel this file yourself**, including rows you disagree with. Disagreement is a
+finding — report it. Editing the standard to match your output is the one thing that
+would make the measurement worthless.
 
 ---
 
