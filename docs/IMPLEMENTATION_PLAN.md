@@ -1,32 +1,42 @@
-# Implementation Plan — M0 & M1 (Django edition)
+# Implementation Plan
 
-Version: 2.0 — supersedes v1.0 (minimal-stack edition)
+Version: 3.0 — handover edition
 Date: 2026-08-14
 Project root: `D:\News_scraper`
-Related: `PROJECT_PLAN.md`, `TECHNICAL_REVIEW.md`, `ENVIRONMENT_INVENTORY.md`,
-`decisions/001-django-celery-stack.md`, `decisions/002-source-failure-policy.md`
+Git: `master`, last commit `13ac749`
+
+Companion documents, all authoritative:
+`PROJECT_PLAN.md` · `CONTENT_SCHEMA.md` · `TECHNICAL_REVIEW.md` ·
+`ENVIRONMENT_INVENTORY.md` · `decisions/001-django-celery-stack.md` ·
+`decisions/002-source-failure-policy.md` · `spike/OLLAMA_BENCHMARK.md` ·
+`spike/CONTENT_VOLUME.md` · `spike/LANGUAGE_QUALITY.md`
 
 ---
 
-## 0. How to work
+## 0. Read this first
 
-### Design rules — these override any habit
+You are continuing an existing codebase. **T1.1 through T1.4 are built, tested and
+committed.** Do not rebuild them. Section 1 tells you exactly what exists.
 
-1. **One Django app.** Everything lives in `apps/digest/`. Do not split into more apps.
-2. **Functions over classes.** Use a class only when it holds state across calls.
-3. **No abstraction before the second case.** No `Protocol`, no ABC, no base classes,
-   no plugin registry beyond a plain dict.
-4. **Use what Django gives you.** Admin instead of a custom UI. `django-celery-results`
-   instead of a job-tracking table. Django ORM instead of raw SQL.
-5. **One file per concern, not one file per class.** All four connectors live in
-   `connectors.py`. All LLM code lives in `llm.py`.
-6. **If a feature is not in this plan, it is not in M1.** Ideas go to the backlog.
+The system fetches AI-industry news from eight sources, will classify it with a local
+Ollama server, rank it, and publish a daily Uzbek digest to a Telegram channel with a
+technical appendix in the linked discussion group.
+
+### Design rules — these override habit
+
+1. **One Django app.** Everything in `apps/digest/`. Do not create a second app.
+2. **Functions over classes.** A class only when it holds state across calls.
+3. **No abstraction before the second case.** No `Protocol`, no ABC, no base classes.
+4. **Use what Django gives you.** Admin instead of custom UI. `django-celery-results`
+   instead of a job table.
+5. **One file per concern.** All connectors in `connectors.py`, all LLM code in `llm.py`.
+6. **Not in this plan means not in M1.** New ideas go to the backlog, not into the code.
 
 ### Execution rules
 
-- One task at a time, in order. Acceptance check must pass before moving on.
-- Every acceptance check is a command. Run it, paste the real output.
-- Where it says STOP, stop and ask. There are only four STOPs in this document.
+- One task at a time, in order. The acceptance check must pass before you move on.
+- Every acceptance check is a command. Run it and paste the real output.
+- Where this document says STOP, stop and ask the human.
 - Report deviations. A deviation nobody knows about is a defect.
 
 ### Do not
@@ -35,431 +45,271 @@ Related: `PROJECT_PLAN.md`, `TECHNICAL_REVIEW.md`, `ENVIRONMENT_INVENTORY.md`,
 |---|---|
 | Touch `D:\IMV_IB_Support`, `D:\diarization`, `D:\Doni_project`, `D:\chatbot` | Unrelated production systems, read-only references |
 | Commit `.env` or any token | Secrets stay out of git |
-| Add DRF, views, templates (beyond admin), or a frontend | ADR-001. Telegram is the UI |
-| Add LangChain, vector DB, Kubernetes, or fine-tuning | Out of scope |
-| Auto-disable a failing source | ADR-002 |
-| Write `:latest` in a pinned config field | Moving pointer; record the digest instead |
+| Call Ollama without `options.num_predict` | An uncapped call wedged the shared server and caused 503s for others (§2) |
+| Add DRF, views, templates beyond admin, or any frontend | Telegram is the UI (ADR-001) |
+| Add LangChain, a vector DB, Kubernetes, `asyncio`, or fine-tuning | Out of scope |
+| Auto-disable a failing source | ADR-002: alert only |
+| Publish to the real channel before GATE 1 | §5 |
+| Label `data/gold_set.jsonl` yourself | It is the standard your work is measured against |
 
 ---
 
-## 1. Verified facts
+## 1. What already exists
 
-Measured or verified on 2026-08-14. Treat as given.
+```
+manage.py
+config/
+  settings.py     one file: DB, Redis, Celery routes, Ollama, Telegram, ranking weights
+  celery.py       Celery app, autodiscover
+  urls.py         admin only
+apps/digest/
+  models.py       Topic, Maturity, EXCLUDED_MATURITIES, Source, Article,
+                  Analysis, Digest, DigestItem, Feedback
+  admin.py        all six registered; Source list shows health, has clear_failures action
+  connectors.py   StructureChanged, RetryableHTTPError, parse_date,
+                  fetch_rss/github/hn/hf/html, FETCHERS, fetch(source)
+  extract.py      ExtractionFailed, canonical_url, content_hash, looks_blocked,
+                  fetch_text, page_title, normalize(item, source)
+  tasks.py        fetch_all_sources, fetch_source, _prefilter, _store,
+                  _record_success, _record_failure, _alert_once_per_day
+  management/commands/  seed_sources.py, fetch_sources.py
+  migrations/     0001_initial, 0002_alter_source_connector
+tests/            test_settings, test_models, test_connectors, test_extract
+docker-compose.yml   postgres :5433, redis :6380, both 127.0.0.1 only
+spikes/           M0 throwaway probes — delete when M0 is signed off
+```
+
+State: `ruff` clean, **41 tests passing**, ingestion verified against the eight live
+sources (185 articles in 4m33s, all inside the 7-day window, no source failures).
+
+### Contracts you must not break
+
+```python
+connectors.fetch(source) -> list[dict]
+# {"url", "title", "published_at" (aware|None), "raw_text", "meta"}
+
+extract.normalize(item, source) -> dict      # kwargs for Article.objects.create
+                                             # raises ExtractionFailed
+tasks._prefilter(source, items) -> (todo, stale, already)
+```
+
+`_prefilter` drops items older than `ARTICLE_MAX_AGE_DAYS` and URLs already stored,
+**before** extraction. Extraction costs one HTTP request per item; OpenAI's feed
+returns over a thousand entries. Never move extraction ahead of these checks.
+
+### Settings you will use
+
+`OLLAMA_BASE_URL` · `OLLAMA_FAST_MODEL` · `OLLAMA_DEEP_MODEL` · `OLLAMA_FAST_TIMEOUT` ·
+`OLLAMA_DEEP_TIMEOUT` · `OLLAMA_MAX_CONCURRENCY` (=2) · `ARTICLE_MIN_CHARS` (=400) ·
+`ARTICLE_MAX_AGE_DAYS` (=7) · `SOURCE_DEGRADED_AFTER` (=3) · `RANKING_WEIGHTS` ·
+`DIGEST_MAX_ITEMS` (=7) · `DIGEST_MAX_PER_TOPIC` (=2) · `PUBLISHING_ENABLED` (=False) ·
+`TELEGRAM_*`
+
+### Getting running
+
+```bash
+docker compose up -d
+uv run python manage.py migrate
+uv run python manage.py seed_sources
+uv run python manage.py fetch_sources
+uv run pytest -q
+```
+
+---
+
+## 2. Measured facts
+
+From `spike/OLLAMA_BENCHMARK.md` and `spike/CONTENT_VOLUME.md`. Do not re-derive these,
+and do not contradict them without a new measurement.
 
 | Fact | Value |
 |---|---|
-| Ollama endpoint | `POST {OLLAMA_BASE_URL}/api/chat`, `stream:false`, `format` = JSON Schema object |
-| Models on the server | **only two**: `gemma4:latest` (8.0B, Q4_K_M, digest `c6eb396dbd5992bb`) and `gemma4:31b` (31.3B, Q4_K_M, digest `6316f0629137b426`) |
-| 8B latency | p50 **5.6s**, p95 **6.2s**, cold start 18.7s |
-| 31B latency | p50 **11.9s**, p95 **27.5s**, mean 20.2s with the full prompt |
-| Schema validity | 8B 20/20; 31B 10/10 with the defined-enum prompt |
-| Determinism | `temperature: 0` gives identical output for identical input |
-| Prompt cost | Enum definitions are free on 8B, **+37% on 31B** |
-| Critical finding | Enum **definitions** matter more than model size. Without them 31B scored 1/10 on topic; with them, ~9.5/10 |
-| Context | 8B 128K, 31B 256K — full articles fit, **no chunking needed** |
-| OpenAI RSS | `https://openai.com/news/rss.xml` |
-| DeepMind RSS | `https://deepmind.google/blog/feed/basic/` |
-| Anthropic | **no RSS exists** — HTML connector on `https://www.anthropic.com/news` |
-| HN Algolia | `https://hn.algolia.com/api/v1/search_by_date?tags=story` — no auth |
-| HF papers | `https://huggingface.co/api/daily_papers?limit=100` — no auth |
-| trafilatura | 2.2.0 |
-| Telegram comment | Bot sees the auto-forwarded post in the linked group with `is_automatic_forward=true`; reply to that message id. `getDiscussionMessage` is MTProto, not Bot API |
+| Models installed | **only two**: `gemma4:latest` (8.0B, Q4_K_M, digest `c6eb396dbd5992bb`) and `gemma4:31b` (31.3B, Q4_K_M, digest `6316f0629137b426`) |
+| 8B latency | p50 5.59s, p95 6.20s |
+| 31B latency | p50 11.93s, p95 27.52s |
+| Schema validity | 100% on both, with enum definitions in the prompt |
+| Determinism | `temperature: 0` reproduces output exactly |
+| Concurrency ceiling | **2**. Eight parallel requests are slower than serial |
+| Model swap cost | ~11s. Batch all triage, then all classification. Never alternate |
+| Server context | 31B runs at `context_length: 20480` |
+| Enum definitions | Decide accuracy: 31B scored ~1/10 on topic without them, ~9.5/10 with them |
+| Content volume | ~31 items/day reach the classifier across the eight sources |
+| Extraction failure | ~10-19%, mostly HN links behind paywalls and bot walls |
 
-### Model routing — decided by measurement
+### `num_predict` is mandatory
+
+An uncapped free-text call to `gemma4:31b` never terminated, consumed a 600s timeout,
+held the server's slot, and caused `503` for the next seven requests. The server is
+**shared with other teams**. Caps: triage/classify 400, Uzbek summary 500, deep analysis
+1200. Client timeouts 60s fast, 180s deep.
+
+Structured output (`format`) makes runaway far less likely because the grammar forces
+the object closed — every classification call in M0 finished normally. Set `num_predict`
+anyway.
+
+### Model routing
 
 ```
-~200 articles
-    ↓  8B triage        6s   → rejects obvious junk
+~200 candidates
+    ↓  8B triage        5.6s each   reject obvious junk
 ~50 survivors
-    ↓  31B classify    20s   → the real decision
-top 3–5
+    ↓  31B classify    20.2s each   the real decision
+top 3-5
     ↓  31B deep analysis
 ```
 
-Budget: 200×6s + 50×20s ≈ **37 min**, inside the 60-minute limit.
-Sending all 200 to 31B would take 67 min and blow the budget. That is why triage exists.
+At concurrency 2 this is roughly 23 minutes, inside the 60-minute budget.
 
 ---
 
-## 2. Environment
+## 3. Blocked on the human — check before starting T1.5
 
-Already present: Python 3.12, uv 0.11.8, Docker 29.6.2, git 2.53.
-
-`.env` keys (`.env.example` is committed, `.env` is not):
-
-```
-OLLAMA_BASE_URL, OLLAMA_FAST_MODEL, OLLAMA_DEEP_MODEL,
-OLLAMA_FAST_TIMEOUT=60, OLLAMA_DEEP_TIMEOUT=300,
-DATABASE_URL, REDIS_URL, DJANGO_SECRET_KEY, DJANGO_DEBUG,
-TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID, TELEGRAM_ADMIN_CHAT_ID,
-PUBLISHING_ENABLED=false, TIME_ZONE=Asia/Tashkent
-```
-
-Telegram keys are needed from M1.7 onward, not before.
-
----
-
-# MILESTONE 0 — SPIKE
-
-Throwaway code in `spikes/`. Deleted at the start of M1.
-
-## Status
-
-| Task | State | Artifact |
+| Input | File | Needed by |
 |---|---|---|
-| T0.1 workspace, git, `.env` | **done** | commit `c6f2f74` |
-| T0.2 Ollama probe — tags, latency, schema, prompt A/B | **done** | `spike/OLLAMA_BENCHMARK.md` |
-| T0.2b concurrency test | **done** — ceiling is **2** | same |
-| T0.3 Uzbek language quality | generated, **awaiting human scores** | `spike/LANGUAGE_QUALITY.md` |
-| T0.4 content volume + gold set | **done** — 33.7 items/day | `spike/CONTENT_VOLUME.md`, `data/gold_set.jsonl` |
-| T0.5 freeze `CONTENT_SCHEMA.md` | **done** except §7 (waits on T0.3) | `CONTENT_SCHEMA.md` |
+| Uzbek strategy chosen (A, B or C) | `spike/LANGUAGE_QUALITY.md`, then `CONTENT_SCHEMA.md` §7 | T1.6 |
+| 26 rows labelled | `data/gold_set.jsonl` | T1.5 |
 
-Two human inputs remain, and only these two:
-
-1. Score the Uzbek samples in `docs/spike/LANGUAGE_QUALITY.md`, then fill
-   `CONTENT_SCHEMA.md` §7.
-2. Label the 26 rows of `data/gold_set.jsonl` (`human_label`, `human_topic`,
-   `human_maturity`).
-
-Neither can be done by an agent. Uzbek quality needs a native speaker, and the gold set
-is the editorial standard the classifier is measured against — if the agent labels it,
-the agent is grading its own work.
-
-## T0.2b — concurrency
-
-Run `probe_ollama.py concurrency --model gemma4:latest` at 1, 2, 4, 8 parallel requests.
-Record wall time and effective speedup.
-
-**This single number sets the `llm` Celery worker concurrency in M1.5.** A speedup near
-1.0x means the server serialises and the worker must run `-c 1`.
-
-Write results into `docs/spike/OLLAMA_BENCHMARK.md` together with the §1 measurements.
-
-## T0.3 — Uzbek quality
-
-`probe_language.py`: 10 articles × 3 strategies × 2 models.
-
-- A: prompt in Uzbek, answer in Uzbek
-- B: summarise in English, second call translates
-- C: reason in English, emit `summary_uz` field
-
-Output goes to `docs/spike/LANGUAGE_QUALITY.md` with an empty score column.
-
-**STOP.** The human scores 1–5. Do not score Uzbek text yourself.
-
-## T0.4 — Content volume + gold set
-
-Collect 3 days from the five sources in §1. Report per-source per-day counts, duplicate
-rate, and fetch reliability in `docs/spike/CONTENT_VOLUME.md`.
-
-Produce `data/gold_set.jsonl`, 25–30 items spanning the quality range (include obvious
-PR-fluff and obvious high-value releases), with `human_label`, `human_topic`,
-`human_maturity` left `null`.
-
-**STOP.** The human labels them. The gold set is how M1.5 is measured.
-
-## T0.5 — Freeze the schema
-
-`docs/CONTENT_SCHEMA.md`: the classification schema, the deep-analysis schema, the topic
-and maturity enums as the single source of truth, the chosen Uzbek strategy, and the
-pinned model tags with their measured latencies.
-
-**Enum definitions are part of the schema, not the prompt.** M0 proved they decide
-accuracy. Each definition must say how the category differs from its neighbour, not just
-what it is. Specifically fix the known regression: an arXiv paper that merely promises
-code is `paper_only`; `reproducible_open_source` requires a working link today.
-
-## GATE 0
-
-Report: concurrency ceiling · Uzbek strategy + scores · items/day passing the filter ·
-gold set labelled yes/no. Then the human approves M1.
+**STOP if either is missing.** T1.5's acceptance is precision measured against the gold
+set; without labels the gate cannot be evaluated and GATE 1 cannot pass. Neither can be
+done by an agent — the Uzbek judgement needs a native speaker, and labelling your own
+test set means grading your own work.
 
 ---
 
-# MILESTONE 1 — THIN PRODUCT
+## 4. Remaining M1 tasks
 
-## Layout
+### T1.5 — Classification
 
-```
-News_scraper/
-├── manage.py
-├── config/
-│   ├── settings.py          # one file, one environment
-│   ├── celery.py
-│   └── urls.py              # admin only
-├── apps/digest/
-│   ├── models.py
-│   ├── admin.py
-│   ├── tasks.py             # celery tasks
-│   ├── connectors.py        # all four fetchers
-│   ├── extract.py           # trafilatura, canonical url, hash
-│   ├── llm.py               # ollama client + pydantic schemas + prompts
-│   ├── ranking.py
-│   ├── publish.py           # telegram sendMessage via httpx
-│   └── management/commands/
-├── tests/
-├── docker-compose.yml
-└── pyproject.toml
-```
+**Files:** `apps/digest/llm.py`, additions to `tasks.py`,
+`management/commands/eval_classifier.py`, `tests/test_llm.py`
 
-Nine Python files. If a tenth is needed, ask why first.
+1. **`ollama_chat(model, prompt, schema, timeout, num_predict) -> tuple[dict, int]`**
+   returning `(parsed_payload, latency_ms)`. `stream: false`, `format=schema`,
+   `options={"temperature": 0, "num_predict": num_predict}`. Retry with `tenacity` on
+   timeout and 5xx only — reuse the `RetryableHTTPError` pattern from `connectors.py`.
 
----
+2. **Pydantic `Classification`** matching `CONTENT_SCHEMA.md` §4 exactly:
+   `primary_topic`, `maturity`, `novelty`, `evidence`, `production_readiness`, `reason`.
+   There is no `relevant` field; rejection is `primary_topic == "irrelevant"` plus score
+   thresholds.
 
-## T1.1 — Django + Celery skeleton
+3. **Prompts as module constants**, embedding the enum definitions from
+   `CONTENT_SCHEMA.md` §2 and §3 **verbatim**, including the mandatory `irrelevant` rule
+   and the `paper_only` boundary. This is the single highest-leverage thing in the file.
 
-**Files:** `pyproject.toml`, `manage.py`, `config/`, `apps/digest/`, `docker-compose.yml`
+4. **Rule pre-filter before any LLM call**: blocklisted domains, and anything
+   `_prefilter` would not already have caught. Log how many the rules removed.
 
-1. `uv init`; add `django`, `celery[redis]`, `django-celery-beat`,
-   `django-celery-results`, `psycopg[binary]`, `django-environ`, `httpx`, `pydantic`,
-   `feedparser`, `trafilatura`, `python-dateutil`, `tenacity`.
-   Dev: `pytest`, `pytest-django`, `respx`, `ruff`.
-2. `django-admin startproject config .`, then `apps/digest/` as the single app.
-3. `config/settings.py` — single file, reads `.env` via `django-environ`.
-   `TIME_ZONE = "Asia/Tashkent"`, `USE_TZ = True`.
-4. `config/celery.py` — standard Django-Celery wiring, two queues:
+5. **Two Celery tasks on the `llm` queue**:
+   - `triage_article(article_id)` → fast model, sets `status='triaged'` or `'skipped'`
+   - `classify_article(article_id)` → deep model, sets `status='classified'`
+   Plus `triage_and_classify()` which runs **all** triage first, then **all**
+   classification, to pay the model swap once.
 
-```python
-task_routes = {
-    "digest.fetch_source": {"queue": "fetch"},
-    "digest.classify_*":   {"queue": "llm"},
-}
-```
-
-5. `docker-compose.yml`: postgres + redis, both bound to `127.0.0.1`, both with a
-   healthcheck and a named volume. Django, worker and beat run from the host in M1.
-6. `pyproject.toml`: `[tool.pytest.ini_options]` with `DJANGO_SETTINGS_MODULE = "config.settings"`.
-
-**Acceptance:**
-```bash
-docker compose up -d && uv run python manage.py check && uv run python manage.py migrate && uv run pytest -q
-```
-
----
-
-## T1.2 — Models and admin
-
-**Files:** `apps/digest/models.py`, `apps/digest/admin.py`, migration
-
-Six models. No more.
-
-| Model | Fields |
-|---|---|
-| `Source` | name, connector (choices: rss/github/hn/html), url, config (JSON), stream, enabled, priority, last_fetched_at, consecutive_failures, is_degraded |
-| `Article` | source FK, canonical_url (unique), content_hash (unique), title, published_at, fetched_at, language, **extracted_text**, status (fetched/classified/skipped), meta (JSON) |
-| `Analysis` | article FK, model_tag, model_digest, payload (JSON), latency_ms, created_at |
-| `Digest` | digest_date (unique), status, composed_at, published_at |
-| `DigestItem` | digest FK, article FK, position, score, channel_message_id, group_message_id |
-| `Feedback` | digest_item FK, user_id, reaction, created_at — table created now, used in M2 |
-
-Notes:
-- Extracted text lives **on** `Article`. No separate content table.
-- `model_digest` records the Ollama digest so a repointed `:latest` tag is detectable.
-- No `job_runs` table — `django-celery-results` provides `TaskResult` with admin.
-
-Admin must make source review a two-click job (ADR-002):
-`Source` list shows name, connector, enabled, consecutive_failures, is_degraded,
-last_fetched_at; filters on `is_degraded` and `enabled`.
-`Article` list shows title, source, published_at, status.
-
-**Acceptance:**
-```bash
-uv run python manage.py makemigrations && uv run python manage.py migrate && uv run python manage.py createsuperuser --noinput && uv run pytest tests/test_models.py -q
-```
-Then open `/admin/`, add one Source by hand, confirm it saves.
-
----
-
-## T1.3 — Connectors
-
-**Files:** `apps/digest/connectors.py`, `apps/digest/tasks.py`, `tests/test_connectors.py`
-
-Four plain functions plus a dict. No classes.
-
-```python
-def fetch_rss(source) -> list[dict]: ...
-def fetch_github(source) -> list[dict]: ...
-def fetch_hn(source) -> list[dict]: ...
-def fetch_html(source) -> list[dict]: ...
-
-FETCHERS = {"rss": fetch_rss, "github": fetch_github,
-            "hn": fetch_hn, "html": fetch_html}
-```
-
-Each returns dicts with `url`, `title`, `published_at`, `raw_text`, `meta`.
-`fetch_html` reads its CSS selectors from `source.config` — editable in admin, no code
-change to add a site.
-
-**Known issue from T0.4.** The spike derived Anthropic titles from URL slugs, producing
-strings like "Donation Public First Action". Acceptable for a spike, not for production:
-`fetch_html` must pull the real title from a CSS selector, and must also find
-`published_at` — the spike returned `None` for all 13 Anthropic items, which would break
-the 7-day rule filter in T1.5.
-
-Health checks (from ADR-002), in this order:
-1. `fetch_html` asserts `source.config["min_items"]`; fewer matches raises
-   `StructureChanged` rather than returning an empty list.
-2. Text shorter than 400 chars, or containing `enable JavaScript` / `Access denied` /
-   `captcha`, counts as an extraction failure.
-3. On failure: `consecutive_failures += 1`. At 3, set `is_degraded=True` and alert once
-   per day. **Never set `enabled=False`.**
-4. One source failing must not abort the run.
-
-`tenacity`: 3 attempts, exponential backoff, retry only on timeout, connection error,
-5xx, 429. Never on other 4xx.
-
-Celery: `fetch_all_sources` fans out one `fetch_source` task per source on the `fetch`
-queue. Worker concurrency is the global limit; per-host politeness uses Celery
-`rate_limit`.
-
-Sources for M1 (created via admin or a data migration):
-OpenAI RSS · DeepMind RSS · Anthropic HTML · HF papers · LangGraph GitHub ·
-MCP GitHub · Ollama GitHub · HN Algolia.
-
-**Tests:** `respx` mocks with saved fixtures. No test touches the network.
-
-**Acceptance:**
-```bash
-uv run pytest tests/test_connectors.py -q && uv run python manage.py fetch_sources
-```
-Reports per-source counts; degraded sources are listed, not fatal.
-
-**STOP if** a source needs JavaScript rendering. Playwright is out of M1 scope.
-
----
-
-## T1.4 — Extraction and dedup
-
-**Files:** `apps/digest/extract.py`, `tests/test_extract.py`
-
-- `trafilatura.extract` for article text.
-- Canonical URL: strip `utm_*` and tracking params, lowercase host, resolve redirects.
-- `content_hash` = SHA-256 of the normalised text.
-- Dates to timezone-aware UTC; missing date falls back to fetch time and is flagged in `meta`.
-- Dedup by canonical URL, then content hash. Both are DB unique constraints, so the
-  database enforces it, not the code.
-
-Fuzzy title matching is **M2**, not M1. URL plus hash is enough to start.
-
-**Acceptance:**
-```bash
-uv run pytest tests/test_extract.py -q
-```
-Tests: two URLs differing only by `utm_` collapse to one; identical text under different
-URLs collapses; a 200-char stub is rejected.
-
----
-
-## T1.5 — Classification
-
-**Files:** `apps/digest/llm.py`, `apps/digest/tasks.py`,
-`apps/digest/management/commands/eval_classifier.py`, `tests/test_llm.py`
-
-1. `ollama_chat(model, prompt, schema, timeout, num_predict)` — one function.
-   `stream:false`, `format=schema`, `options={"temperature": 0, "num_predict": N}`.
-   **`num_predict` is required, not optional** — see `CONTENT_SCHEMA.md` §6. A T0.3 call
-   without it wedged the shared Ollama server and produced `503` for seven subsequent
-   requests.
-2. Pydantic `Classification` model matching `CONTENT_SCHEMA.md`. Prompts live in
-   `llm.py` as module constants and **must include the enum definitions** — M0 proved
-   this is what decides accuracy.
-3. Rule pre-filter before any LLM call: older than 7 days, under 400 chars, blocklisted
-   domain. Log how many the rules removed.
-4. Two Celery tasks on the `llm` queue:
-   - `triage_article` → 8B, cheap reject
-   - `classify_article` → 31B, the real decision, only for triage survivors
-   Worker concurrency comes from the T0.2b measurement.
-5. On Pydantic validation failure: retry once with the error appended, then mark the
-   article `skipped` and continue. Never crash the batch.
 6. Persist every call to `Analysis` with `model_tag`, `model_digest`, `latency_ms`.
-7. `eval_classifier` command runs over `data/gold_set.jsonl` and prints precision,
-   recall and a confusion matrix.
+   Read the digest from Ollama's response so a repointed `:latest` is detectable.
+
+7. On Pydantic validation failure: retry once with the error appended to the prompt,
+   then set `status='skipped'` and continue. **Never crash the batch.**
+
+8. **`eval_classifier` command**: run over `data/gold_set.jsonl`, print precision,
+   recall and a confusion matrix against `human_label` / `human_topic` /
+   `human_maturity`. Support `--model` so both tiers can be compared.
 
 **Acceptance:**
 ```bash
 uv run pytest tests/test_llm.py -q && uv run python manage.py eval_classifier
 ```
-Tests pass with mocked Ollama. Eval prints **precision ≥ 0.80**.
+Tests pass with mocked Ollama (`respx`). Eval prints **precision ≥ 0.80**.
 
-**STOP if** precision stays below 0.80 after two prompt revisions. Report the confusion
-matrix — the taxonomy may be wrong, and that is a human decision.
+**STOP if** precision stays under 0.80 after two prompt revisions. Report the confusion
+matrix — the taxonomy may be wrong, and that is a human decision, not a prompt fix.
 
 ---
 
-## T1.6 — Ranking and digest
+### T1.6 — Ranking and digest composition
 
 **Files:** `apps/digest/ranking.py`, `apps/digest/templates/digest/*.html`,
 `tests/test_ranking.py`
 
-- Score: novelty .25, technical significance .20, evidence .20, production readiness .15,
-  source credibility .10, audience relevance .10. Weights live in `settings.py`.
-- Bonuses: open weights, public repo, local deployment possible.
-  Penalties: announcement-only, unverified benchmark, no original source.
-- Hard exclusion: maturity `announcement_only` or `paper_only` never enters a digest.
-- At most 2 items per topic per digest. Maximum 7 items.
-- **Never pad.** Two qualifying items means a two-item digest.
-- Two Django templates: channel post (leadership) and group comment (technical).
-  Escape HTML; Telegram allows a restricted tag set only.
+1. Weighted score from `settings.RANKING_WEIGHTS`. Weights are configuration; do not
+   hard-code them.
+2. Bonuses: open weights, public repo, local deployment possible.
+   Penalties: announcement-only, unverified benchmark claim, no original source.
+3. **Hard exclusion**: `maturity in EXCLUDED_MATURITIES` never enters a digest. The
+   constant is already in `models.py`.
+4. At most `DIGEST_MAX_PER_TOPIC` per topic, at most `DIGEST_MAX_ITEMS` total.
+5. **Never pad.** Two qualifying items produce a two-item digest.
+6. `compose_digest(date)` creates the `Digest` and its `DigestItem` rows. A second call
+   for the same date must fail on the unique constraint, not on an `if`.
+7. Two Django templates: channel post (leadership framing) and group comment (technical
+   appendix). Escape HTML — Telegram accepts a restricted tag set only.
+8. Uzbek text follows the strategy recorded in `CONTENT_SCHEMA.md` §7.
 
 **Acceptance:**
 ```bash
 uv run pytest tests/test_ranking.py -q
 ```
-Includes a snapshot test of rendered output and an explicit test that a 2-item day
-produces a 2-item digest.
+Must include a rendered-output snapshot test and an explicit test that a two-item day
+yields a two-item digest.
 
 ---
 
-## T1.7 — Publishing
+### T1.7 — Publishing
 
-**Files:** `apps/digest/publish.py`, `tests/test_publish.py`
+**Files:** `apps/digest/publish.py`, `management/commands/publish_digest.py`,
+`tests/test_publish.py`
 
 Publishing is a plain `httpx.post` to the Telegram Bot API. **No aiogram in M1** —
 Celery tasks are synchronous and `sendMessage` is one POST. aiogram arrives in M2 with
-the feedback bot, which genuinely needs long polling.
+the feedback bot, which is the only part that needs long polling.
 
-1. `POST /bot{token}/sendMessage` with `parse_mode=HTML` → store `channel_message_id`.
-2. Technical appendix: the channel post is auto-forwarded to the linked group. The bot
-   must be admin in both. In M1, resolve the group message id by reading updates for
-   `is_automatic_forward=true`, then reply to it. Store `group_message_id`.
+1. `POST /bot{token}/sendMessage`, `parse_mode=HTML` → store `channel_message_id`.
+2. **Technical appendix**: the channel post is auto-forwarded to the linked group. Read
+   updates for `message.is_automatic_forward == true`, match it to the channel post,
+   reply to that group message id, store `group_message_id`. The bot must be an
+   administrator in both channel and group. `getDiscussionMessage` is MTProto and is
+   **not** available in the Bot API.
 3. Edit and delete: two management commands taking a `DigestItem` id, calling
-   `editMessageText` / `deleteMessage`.
-4. **Kill switch:** if `PUBLISHING_ENABLED` is false, compose and store but send nothing.
-   Default false.
+   `editMessageText` and `deleteMessage`.
+4. **Kill switch**: when `PUBLISHING_ENABLED` is false, compose and store but send
+   nothing. Default is false.
+5. Send degraded-source alerts to `TELEGRAM_ADMIN_CHAT_ID`. `tasks._alert_once_per_day`
+   currently only logs — wire it here.
 
-No feedback buttons in M1. Buttons without a handler leave the user tapping a spinner.
-Buttons, the bot process and feedback learning all land together in M2.
+No feedback buttons in M1. A button with no handler leaves the reader watching a spinner.
 
 **Acceptance:**
 ```bash
 uv run pytest tests/test_publish.py -q
 ```
-Then a manual run against the test channel: post appeared, appendix appeared as a
-comment under it, edit worked, delete worked, kill switch suppressed sending.
+Then a manual run against the **test** channel, reporting: post appeared, appendix
+appeared as a comment under it, edit worked, delete worked, kill switch suppressed
+sending.
 
-**STOP if** the appendix cannot be posted as a comment — the channel/group link is
+**STOP if** the appendix cannot be posted as a comment. The channel-to-group link is
 misconfigured and that needs the human, not a workaround.
 
 ---
 
-## T1.8 — Schedule
+### T1.8 — Schedule
 
-**Files:** `config/celery.py`, beat entries
+**Files:** `config/celery.py` beat entries, `management/commands/run_pipeline.py`
 
-`django-celery-beat`, timezone `Asia/Tashkent`:
-
-| Time | Task |
+| Time (Asia/Tashkent) | Task |
 |---|---|
 | 08:00 | `fetch_all_sources` |
 | 17:00 | `fetch_all_sources` |
 | 18:00 | `triage_and_classify` |
 | 19:00 | `compose_and_publish` |
 
-- Idempotency comes from `Digest.digest_date` being unique. A second run raises
-  `IntegrityError` and stops — the database enforces it, not the code.
-- Article `status` makes each stage resumable: classify picks up `status='fetched'`.
-- Unhandled task exception → log, then send a message to `TELEGRAM_ADMIN_CHAT_ID`.
-- Task results are visible in admin via `django-celery-results`.
+- `misfire_grace_time` set explicitly; `coalesce=True` so a missed job fires once.
+- Idempotency is `Digest.digest_date` being unique — the database refuses the second
+  run, so two concurrent workers cannot both pass a check.
+- `Article.status` makes every stage resumable.
+- Unhandled task exception → log, then alert `TELEGRAM_ADMIN_CHAT_ID`. The scheduler
+  must never die.
+- Task history is visible in admin through `django-celery-results`.
 
 **Acceptance:**
 ```bash
@@ -467,36 +317,67 @@ uv run celery -A config worker -Q fetch,llm -c 4 --loglevel=info   # terminal 1
 uv run celery -A config beat --loglevel=info                       # terminal 2
 uv run python manage.py run_pipeline --date today                  # terminal 3
 ```
-Pipeline completes end to end; `TaskResult` rows appear in admin; a second
-`run_pipeline` for the same date is refused.
+Completes end to end; `TaskResult` rows appear in admin; a second `run_pipeline` for the
+same date is refused.
 
 ---
 
-## GATE 1
+## 5. GATE 1 — before the public channel
 
 - [ ] 7 consecutive days of automatic digests, no manual intervention
 - [ ] The human has read all 7 and accepts the quality
 - [ ] `eval_classifier` precision ≥ 0.80
 - [ ] Full pipeline under 60 minutes
 - [ ] Kill switch verified
-- [ ] Edit and delete verified on a real post
+- [ ] Edit and delete verified on a real published post
 - [ ] `ruff` and `pytest` clean
-- [ ] No secret in git history
+- [ ] No secret anywhere in git history
 
 Only then does `TELEGRAM_CHANNEL_ID` move from the test channel to the public one.
+Delete `spikes/` at this point.
 
 ---
 
-## M2 preview
+## 6. M2 — harden and go public
 
-Feedback bot (aiogram) + buttons + learning · story clustering + fuzzy dedup ·
-31B deep analysis and technical appendix · independent benchmark verification ·
-25–40 sources · monitoring, baselines and backup · Docker deployment of all processes ·
-breaking-news path.
+Execute in this order. Each is independently shippable.
+
+| # | Task | Substance |
+|---|---|---|
+| T2.1 | Feedback bot | `aiogram 3` long polling as a separate process. Inline buttons 👍 👎 🛠 on channel posts, callback writes to `Feedback`. One reaction per user per item is already enforced by a constraint |
+| T2.2 | Story clustering | One news item arriving from four sources becomes one post with four pieces of evidence. Start with canonical URL, fuzzy title (`rapidfuzz`, threshold ~92) and entity matching. Embeddings only if this measurably fails |
+| T2.3 | 31B deep analysis | Top 3-5 items only. Fills the deep-analysis schema in `CONTENT_SCHEMA.md` §5. Empty string means "not in the source" — the model must never invent a URL, licence or benchmark |
+| T2.4 | Verification layer | Vendor benchmark claims checked against Arena, Artificial Analysis, SWE-bench, Terminal-Bench. Sets `evidence_level` to `multiple_evidence` or leaves `vendor_claim_only` |
+| T2.5 | Feedback learning | 👍 raises topic and source weight, 👎 lowers it, 🛠 raises applicability. Exponential moving average. **No fine-tuning** |
+| T2.6 | Source expansion | 25-40 sources through the existing five connectors. Should require no new code — if it does, the connector config is too narrow |
+| T2.7 | Health baselines | Rolling 14-day median per source of items found, extraction success rate and mean text length. Alert when today falls outside the band. This catches the silent failure: a source that still returns items but now returns 200-character paywall stubs |
+| T2.8 | Monitoring and backup | JSON structured logging, healthcheck, PostgreSQL backup with a **tested** restore |
+| T2.9 | Deployment | Dockerfile plus Compose for django, worker, beat, bot, postgres, redis. Healthchecks, restart policy, deployment preflight |
+| T2.10 | Breaking news path | A major release does not wait for 19:00 |
+
+### GATE 2
+
+- [ ] 30 days stable
+- [ ] Clustering works — no duplicate stories across posts
+- [ ] Feedback measurably moves ranking
+- [ ] Backup restore tested, not assumed
+- [ ] Runs on the server under Docker
 
 ---
 
-## Reporting
+## 7. Known issues carried forward
+
+| Issue | Where | Note |
+|---|---|---|
+| Anthropic items have no date | `fetch_html` | All 13 fall back to fetch time and are flagged `date_missing`. Extract a real date from the article page |
+| Anthropic titles come from the URL slug | `fetch_html` | `page_title()` fixes this during extraction; verify it actually fires |
+| HN extraction failure ~19% | `fetch_hn` | HN links to arbitrary sites; paywalls and bot walls are expected. Track the rate, do not chase zero |
+| `maturity` regression | prompts | Papers that merely promise code get labelled `reproducible_open_source`. The boundary wording in `CONTENT_SCHEMA.md` §3 is the fix — use it verbatim |
+| Server VRAM unknown | Ollama | 31B occupies 33.2 GB. If both models fit simultaneously, `keep_alive` could remove the ~11s swap cost. Unmeasured |
+
+---
+
+## 8. Reporting
 
 Per task: what changed, the acceptance command, its verbatim output, any deviation and
 why. Nothing else.
