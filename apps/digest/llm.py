@@ -407,7 +407,7 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
             text=article.extracted_text,
             model=model,
             timeout=timeout,
-            num_predict=1200,
+            num_predict=2000,
             client=client,
         )
     except (ValidationError, json.JSONDecodeError) as exc:

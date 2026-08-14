@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.digest import llm
-from apps.digest.models import Topic
+from apps.digest.models import EXCLUDED_MATURITIES, Topic
 
 
 class Command(BaseCommand):
@@ -70,6 +70,7 @@ class Command(BaseCommand):
             human_topic = row.get("human_topic", "")
             human_maturity = row.get("human_maturity", "")
 
+            num_predict = 2000 if "31b" in model else 1200
             try:
                 classification, raw_payload, latency_ms, digest = llm.classify_text(
                     title=title,
@@ -77,12 +78,15 @@ class Command(BaseCommand):
                     text=text,
                     model=model,
                     timeout=timeout,
-                    num_predict=1200,
+                    num_predict=num_predict,
                 )
                 pred_topic = classification.primary_topic.value
                 pred_maturity = classification.maturity.value
 
-                if classification.primary_topic == Topic.IRRELEVANT:
+                if (
+                    classification.primary_topic == Topic.IRRELEVANT
+                    or classification.maturity in EXCLUDED_MATURITIES
+                ):
                     pred_label = "drop"
                 else:
                     pred_label = "keep"
