@@ -105,14 +105,25 @@ Throwaway code in `spikes/`. Deleted at the start of M1.
 
 ## Status
 
-| Task | State |
-|---|---|
-| T0.1 workspace, git, `.env` | **done** |
-| T0.2 Ollama probe — tags, latency, schema, prompt A/B | **done** (see §1) |
-| T0.2b concurrency test | **pending — next** |
-| T0.3 Uzbek language quality | pending, needs human scoring |
-| T0.4 content volume + gold set | pending, needs human labelling |
-| T0.5 freeze `CONTENT_SCHEMA.md` | pending |
+| Task | State | Artifact |
+|---|---|---|
+| T0.1 workspace, git, `.env` | **done** | commit `c6f2f74` |
+| T0.2 Ollama probe — tags, latency, schema, prompt A/B | **done** | `spike/OLLAMA_BENCHMARK.md` |
+| T0.2b concurrency test | **done** — ceiling is **2** | same |
+| T0.3 Uzbek language quality | generated, **awaiting human scores** | `spike/LANGUAGE_QUALITY.md` |
+| T0.4 content volume + gold set | **done** — 33.7 items/day | `spike/CONTENT_VOLUME.md`, `data/gold_set.jsonl` |
+| T0.5 freeze `CONTENT_SCHEMA.md` | **done** except §7 (waits on T0.3) | `CONTENT_SCHEMA.md` |
+
+Two human inputs remain, and only these two:
+
+1. Score the Uzbek samples in `docs/spike/LANGUAGE_QUALITY.md`, then fill
+   `CONTENT_SCHEMA.md` §7.
+2. Label the 26 rows of `data/gold_set.jsonl` (`human_label`, `human_topic`,
+   `human_maturity`).
+
+Neither can be done by an agent. Uzbek quality needs a native speaker, and the gold set
+is the editorial standard the classifier is measured against — if the agent labels it,
+the agent is grading its own work.
 
 ## T0.2b — concurrency
 
@@ -279,6 +290,12 @@ Each returns dicts with `url`, `title`, `published_at`, `raw_text`, `meta`.
 `fetch_html` reads its CSS selectors from `source.config` — editable in admin, no code
 change to add a site.
 
+**Known issue from T0.4.** The spike derived Anthropic titles from URL slugs, producing
+strings like "Donation Public First Action". Acceptable for a spike, not for production:
+`fetch_html` must pull the real title from a CSS selector, and must also find
+`published_at` — the spike returned `None` for all 13 Anthropic items, which would break
+the 7-day rule filter in T1.5.
+
 Health checks (from ADR-002), in this order:
 1. `fetch_html` asserts `source.config["min_items"]`; fewer matches raises
    `StructureChanged` rather than returning an empty list.
@@ -338,8 +355,11 @@ URLs collapses; a 200-char stub is rejected.
 **Files:** `apps/digest/llm.py`, `apps/digest/tasks.py`,
 `apps/digest/management/commands/eval_classifier.py`, `tests/test_llm.py`
 
-1. `ollama_chat(model, prompt, schema, timeout)` — one function. `stream:false`,
-   `format=schema`, `options={"temperature": 0}`.
+1. `ollama_chat(model, prompt, schema, timeout, num_predict)` — one function.
+   `stream:false`, `format=schema`, `options={"temperature": 0, "num_predict": N}`.
+   **`num_predict` is required, not optional** — see `CONTENT_SCHEMA.md` §6. A T0.3 call
+   without it wedged the shared Ollama server and produced `503` for seven subsequent
+   requests.
 2. Pydantic `Classification` model matching `CONTENT_SCHEMA.md`. Prompts live in
    `llm.py` as module constants and **must include the enum definitions** — M0 proved
    this is what decides accuracy.
