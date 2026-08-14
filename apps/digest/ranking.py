@@ -34,10 +34,10 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
         settings,
         "RANKING_WEIGHTS",
         {
-            "novelty": 0.30,
-            "evidence": 0.25,
+            "novelty": 0.35,
+            "evidence": 0.30,
             "production_readiness": 0.15,
-            "source_credibility": 0.20,
+            "source_credibility": 0.10,
             "audience_relevance": 0.10,
         },
     )
@@ -48,13 +48,13 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
     readiness = float(payload.get("production_readiness", 5))
 
     # Base normalized dimensions (each 0.0 to weight_i)
-    w_novelty = (novelty / 10.0) * weights.get("novelty", 0.30)
-    w_evidence = (evidence / 10.0) * weights.get("evidence", 0.25)
+    w_novelty = (novelty / 10.0) * weights.get("novelty", 0.35)
+    w_evidence = (evidence / 10.0) * weights.get("evidence", 0.30)
     w_readiness = (readiness / 10.0) * weights.get("production_readiness", 0.15)
 
     # Source credibility from source priority (0 to 100)
     src_priority = article.source.priority if article.source else 50
-    w_source = (src_priority / 100.0) * weights.get("source_credibility", 0.20)
+    w_source = (src_priority / 100.0) * weights.get("source_credibility", 0.10)
 
     # Audience relevance (1.0 for technical topics, 0.0 for irrelevant)
     topic_rel = 1.0 if analysis.topic != Topic.IRRELEVANT else 0.0

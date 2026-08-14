@@ -267,6 +267,61 @@ def test_classify_article_logic(db, sample_article):
 
 
 @respx.mock
+def test_triage_infra_failure_leaves_status_fetched(db, sample_article):
+    """When Ollama returns 503/timeout, article must remain in FETCHED status for next retry."""
+    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(503, json={"error": "server busy"})
+    )
+    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": []})
+    )
+
+    passed = llm.triage_article_logic(sample_article)
+    sample_article.refresh_from_db()
+
+    assert passed is False
+    assert sample_article.status == Article.Status.FETCHED
+    assert Analysis.objects.filter(article=sample_article).count() == 0
+
+
+@respx.mock
+def test_classify_infra_failure_leaves_status_triaged(db, sample_article):
+    """When Ollama returns 503 during classify, article must remain in TRIAGED status."""
+    sample_article.status = Article.Status.TRIAGED
+    sample_article.save(update_fields=["status"])
+
+    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(503, json={"error": "server busy"})
+    )
+    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": []})
+    )
+
+    passed = llm.classify_article_logic(sample_article)
+    sample_article.refresh_from_db()
+
+    assert passed is False
+    assert sample_article.status == Article.Status.TRIAGED
+
+
+@respx.mock
+def test_triage_validation_failure_marks_skipped(db, sample_article):
+    """When model output permanently fails schema validation after retry, mark SKIPPED."""
+    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "not json content"}})
+    )
+    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": []})
+    )
+
+    passed = llm.triage_article_logic(sample_article)
+    sample_article.refresh_from_db()
+
+    assert passed is False
+    assert sample_article.status == Article.Status.SKIPPED
+
+
+@respx.mock
 def test_triage_and_classify_batch(db, source):
     art1 = Article.objects.create(
         source=source,

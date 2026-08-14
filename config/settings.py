@@ -118,12 +118,13 @@ SOURCE_DEGRADED_AFTER = 3
 
 # --- Ranking (ADR: weights are configuration, not code) ---------------------
 # Only dimensions available in M1 classification schema (CONTENT_SCHEMA.md §4).
-# technical_significance was removed: it double-counted novelty + evidence.
+# technical_significance was removed (double-counted novelty + evidence).
+# source_credibility stays at 0.10 to prevent systematic bias against HN/community sources.
 RANKING_WEIGHTS = {
-    "novelty": 0.30,
-    "evidence": 0.25,
+    "novelty": 0.35,
+    "evidence": 0.30,
     "production_readiness": 0.15,
-    "source_credibility": 0.20,
+    "source_credibility": 0.10,
     "audience_relevance": 0.10,
 }
 DIGEST_MAX_ITEMS = 7

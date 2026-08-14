@@ -46,6 +46,14 @@ RETRYABLE_LLM_EXCEPTIONS = (
     RetryableLLMError,
 )
 
+INFRASTRUCTURE_EXCEPTIONS = (
+    httpx.HTTPError,
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.ReadError,
+    RetryableLLMError,
+)
+
 
 class Classification(BaseModel):
     """Matches CONTENT_SCHEMA.md §4 exactly."""
@@ -326,15 +334,35 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
             num_predict=400,
             client=client,
         )
-    except Exception as exc:
+    except (ValidationError, json.JSONDecodeError) as exc:
+        # Permanent model schema failure on this article after retry
         log.error(
-            "Triage failed for article %s (%s): %s. Marking skipped.",
+            "Model validation failed permanently for article %s (%s): %s. Marking skipped.",
             article.id,
             article.title,
             exc,
         )
         article.status = Article.Status.SKIPPED
         article.save(update_fields=["status"])
+        return False
+    except INFRASTRUCTURE_EXCEPTIONS as exc:
+        # Transient infrastructure failure (503, timeout, connect error)
+        # Do NOT change status — article remains FETCHED and will be retried on next run.
+        log.warning(
+            "Transient infrastructure failure during triage of article %s (%s): %s. "
+            "Leaving status as FETCHED for next retry.",
+            article.id,
+            article.title,
+            exc,
+        )
+        return False
+    except Exception as exc:
+        log.error(
+            "Unexpected error during triage for article %s (%s): %s. Leaving status unchanged.",
+            article.id,
+            article.title,
+            exc,
+        )
         return False
 
     Analysis.objects.create(
@@ -381,15 +409,37 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
             num_predict=400,
             client=client,
         )
-    except Exception as exc:
+    except (ValidationError, json.JSONDecodeError) as exc:
+        # Permanent model schema failure on this article after retry
         log.error(
-            "Deep classification failed for article %s (%s): %s. Marking skipped.",
+            "Deep classification model validation failed permanently for article %s (%s): %s. "
+            "Marking skipped.",
             article.id,
             article.title,
             exc,
         )
         article.status = Article.Status.SKIPPED
         article.save(update_fields=["status"])
+        return False
+    except INFRASTRUCTURE_EXCEPTIONS as exc:
+        # Transient infrastructure failure (503, timeout, connect error)
+        # Do NOT change status — article remains TRIAGED and will be retried on next run.
+        log.warning(
+            "Transient infrastructure failure during deep classification of article %s (%s): %s. "
+            "Leaving status as TRIAGED for next retry.",
+            article.id,
+            article.title,
+            exc,
+        )
+        return False
+    except Exception as exc:
+        log.error(
+            "Unexpected error during deep classification for article %s (%s): %s. "
+            "Leaving status unchanged.",
+            article.id,
+            article.title,
+            exc,
+        )
         return False
 
     Analysis.objects.create(
