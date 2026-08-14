@@ -1,0 +1,8 @@
+<b>🔥 AI Frontier Dayjest — {{ digest_date|date:"Y-m-d" }}</b>
+<i>Bugungi eng muhim texnologik va amaliy AI yangiliklari</i>
+{% for item in items %}
+<b>{{ item.position }}. <a href="{{ item.url }}">{{ item.title }}</a></b>
+<i>Mavzu: #{{ item.topic }} | Bosqich: #{{ item.maturity }}</i>
+{{ item.summary_uz }}
+{% endfor %}
+<i>💡 Texnik tahlil va arxitektura tafsilotlari muhokama guruhida (izohda).</i>

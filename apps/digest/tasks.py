@@ -133,6 +133,115 @@ def _alert_once_per_day(source) -> None:
     if source.last_alerted_on == today:
         return
     source.last_alerted_on = today
+    msg = (
+        f"Source <b>{source.name}</b> is degraded ({source.consecutive_failures} "
+        f"consecutive failures).\nLast error: <code>{source.last_error}</code>"
+    )
     log.error("SOURCE DEGRADED: %s — %s consecutive failures — %s",
               source.name, source.consecutive_failures, source.last_error)
-    # Telegram delivery arrives with publish.py in T1.7.
+    try:
+        from . import publish
+        publish.send_admin_alert(msg)
+    except Exception as exc:
+        log.warning("Could not dispatch admin alert for %s: %s", source.name, exc)
+
+
+# --- LLM Tasks (on 'llm' queue) ---------------------------------------------
+
+@shared_task(name="digest.triage_article")
+def triage_article(article_id: int) -> dict:
+    from . import llm
+    article = Article.objects.get(pk=article_id)
+    passed = llm.triage_article_logic(article)
+    return {"article_id": article_id, "status": article.status, "passed": passed}
+
+
+@shared_task(name="digest.classify_article")
+def classify_article(article_id: int) -> dict:
+    from . import llm
+    article = Article.objects.get(pk=article_id)
+    passed = llm.classify_article_logic(article)
+    return {"article_id": article_id, "status": article.status, "passed": passed}
+
+
+@shared_task(name="digest.triage_and_classify")
+def triage_and_classify() -> dict:
+    """Run all triage first, then all classification to pay the model swap cost once."""
+    from . import llm
+
+    # Phase 1: Fast triage on all untriaged fetched articles
+    to_triage = list(Article.objects.filter(status=Article.Status.FETCHED).order_by("id"))
+    triaged_count, triage_passed = 0, 0
+    log.info("Starting triage batch on %d articles", len(to_triage))
+    for art in to_triage:
+        passed = llm.triage_article_logic(art)
+        triaged_count += 1
+        if passed:
+            triage_passed += 1
+
+    log.info(
+        "Triage finished: %d triaged, %d passed to classification",
+        triaged_count,
+        triage_passed,
+    )
+
+    # Phase 2: Deep classification on all survivors
+    to_classify = list(Article.objects.filter(status=Article.Status.TRIAGED).order_by("id"))
+    classified_count, classify_passed = 0, 0
+    log.info("Starting classification batch on %d articles", len(to_classify))
+    for art in to_classify:
+        passed = llm.classify_article_logic(art)
+        classified_count += 1
+        if passed:
+            classify_passed += 1
+
+    log.info(
+        "Classification finished: %d classified, %d passed for digest",
+        classified_count,
+        classify_passed,
+    )
+
+    return {
+        "triaged": triaged_count,
+        "triage_survivors": triage_passed,
+        "classified": classified_count,
+        "classify_survivors": classify_passed,
+    }
+
+
+@shared_task(name="digest.compose_and_publish")
+def compose_and_publish(digest_date_str: str | None = None) -> dict:
+    """Compose digest and publish to Telegram for a target date (defaults to today)."""
+    from datetime import date as dt_date
+
+    from . import publish, ranking
+    from .models import Digest
+
+    if digest_date_str:
+        target_date = dt_date.fromisoformat(digest_date_str)
+    else:
+        target_date = timezone.localdate()
+
+    try:
+        digest = ranking.compose_digest(target_date)
+    except IntegrityError:
+        log.warning("Digest for %s already exists. Using existing composed digest.", target_date)
+        digest = Digest.objects.get(digest_date=target_date)
+    except Exception as exc:
+        log.error("Failed to compose digest for %s: %s", target_date, exc)
+        publish.send_admin_alert(f"Failed to compose digest for {target_date}: {exc}")
+        return {"error": str(exc), "digest_date": str(target_date)}
+
+    if digest.status == Digest.Status.PUBLISHED:
+        log.info("Digest for %s is already published.", target_date)
+        return {"status": "already_published", "digest_date": str(target_date)}
+
+    try:
+        res = publish.publish_digest(digest)
+        return res
+    except Exception as exc:
+        log.error("Failed to publish digest for %s: %s", target_date, exc)
+        publish.send_admin_alert(f"Failed to publish digest for {target_date}: {exc}")
+        return {"error": str(exc), "digest_date": str(target_date)}
+
+

@@ -36,3 +36,17 @@ def test_celery_app_is_importable():
     from config import celery_app
 
     assert celery_app.main == "news_radar"
+
+
+def test_celery_beat_schedule_configured():
+    from config import celery_app
+
+    sched = celery_app.conf.beat_schedule
+    assert "fetch-morning" in sched
+    assert "fetch-evening" in sched
+    assert "triage-and-classify" in sched
+    assert "compose-and-publish" in sched
+    assert sched["fetch-morning"]["task"] == "digest.fetch_all_sources"
+    assert sched["triage-and-classify"]["task"] == "digest.triage_and_classify"
+    assert sched["compose-and-publish"]["task"] == "digest.compose_and_publish"
+

@@ -117,12 +117,13 @@ ARTICLE_MAX_AGE_DAYS = 7
 SOURCE_DEGRADED_AFTER = 3
 
 # --- Ranking (ADR: weights are configuration, not code) ---------------------
+# Only dimensions available in M1 classification schema (CONTENT_SCHEMA.md §4).
+# technical_significance was removed: it double-counted novelty + evidence.
 RANKING_WEIGHTS = {
-    "novelty": 0.25,
-    "technical_significance": 0.20,
-    "evidence": 0.20,
+    "novelty": 0.30,
+    "evidence": 0.25,
     "production_readiness": 0.15,
-    "source_credibility": 0.10,
+    "source_credibility": 0.20,
     "audience_relevance": 0.10,
 }
 DIGEST_MAX_ITEMS = 7

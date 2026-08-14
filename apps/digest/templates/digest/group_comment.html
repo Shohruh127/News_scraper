@@ -1,0 +1,14 @@
+<b>🛠 Texnik Ilova (Technical Appendix) — {{ digest_date|date:"Y-m-d" }}</b>
+{% for item in items %}
+<b>#{{ item.position }}. {{ item.title }} — Texnik tahlil</b>
+{% if item.what_was_built %}<b>Nima qurildi:</b> {{ item.what_was_built }}{% endif %}
+{% if item.architecture %}<b>Arxitektura:</b> {{ item.architecture }}{% endif %}
+{% if item.license %}<b>Litsenziya:</b> {{ item.license }}{% endif %}
+{% if item.repo_url %}<b>Repo:</b> <a href="{{ item.repo_url }}">{{ item.repo_url }}</a>{% endif %}
+{% if item.api_url %}<b>API:</b> <a href="{{ item.api_url }}">{{ item.api_url }}</a>{% endif %}
+{% if item.install %}<b>O'rnatish:</b> <code>{{ item.install }}</code>{% endif %}
+<b>Mahalliy deploy:</b> {% if item.local_deployable %}Mavjud ✅{% else %}Mavjud emas ❌{% endif %}
+{% if item.benchmarks %}<b>Benchmarklar:</b> {{ item.benchmarks }}{% endif %}
+{% if item.limitations %}<b>Cheklovlar:</b> {{ item.limitations }}{% endif %}
+{% if item.uzbekistan_application_uz %}<b>O'zbekistonda qo'llanishi:</b> {{ item.uzbekistan_application_uz }}{% endif %}
+{% endfor %}
