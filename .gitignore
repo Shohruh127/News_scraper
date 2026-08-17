@@ -1,17 +1,45 @@
 # Secrets — never committed
 .env
-.env.local
+.env.*
+!.env.example
 *.pem
 *.key
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+dist/
+build/
 .venv/
 venv/
+ENV/
+env/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Django & Database
+*.sqlite3
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+*.log
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Graphify artifacts
+graphify-out/
+.graphify_*
 
 # Spike outputs — throwaway measurement data
 spikes/out/
@@ -22,4 +50,7 @@ data/raw/
 
 # OS
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 .DS_Store
+

@@ -333,9 +333,34 @@ misconfigured and that needs the human, not a workaround.
 | 18:00 | `triage_and_classify` |
 | 19:00 | `compose_and_publish` |
 
-- `misfire_grace_time` set explicitly; `coalesce=True` so a missed job fires once.
+**Route every task explicitly.** `CELERY_TASK_ROUTES` currently names only the leaf
+tasks, so `fetch_all_sources`, `triage_and_classify` and `compose_and_publish` fall to
+the default `celery` queue while the worker consumes only `fetch,llm`. Beat therefore
+enqueues the entire pipeline into a queue nobody reads. Verified 2026-08-14 by running
+`app.amqp.router.route({}, name)` over every registered task.
+
+Three queues:
+
+| Queue | Tasks | Worker concurrency |
+|---|---|---|
+| `fetch` | `fetch_all_sources`, `fetch_source` | 10 |
+| `llm` | `triage_article`, `classify_article`, `triage_and_classify`, `analyse_for_digest` | **2** (measured, §2) |
+| `publish` | `compose_and_publish` | 1 |
+
+A test must assert the router's output for **every** task name, not just that routes exist.
+
+Other requirements:
+
+- **No `misfire_grace_time`, no `coalesce`.** Those are APScheduler options and do not
+  exist in Celery Beat; they survived the ADR-001 switch by oversight (ADR-003). Beat
+  has `expires`, which stops a stale task running late but does not prevent overlap.
+  Overlap protection needs an explicit lock — a PostgreSQL advisory lock or a Redis
+  `SET NX` key held for the duration of the evening chain.
 - Idempotency is `Digest.digest_date` being unique — the database refuses the second
   run, so two concurrent workers cannot both pass a check.
+- Prefer one causal evening chain over three independent clock times. `triage → classify
+  → rank → editorial → compose → publish` must not rely on "classification has probably
+  finished by 19:00". Keep the 08:00 and 17:00 fetches independent.
 - `Article.status` makes every stage resumable.
 - Unhandled task exception → log, then alert `TELEGRAM_ADMIN_CHAT_ID`. The scheduler
   must never die.
@@ -343,23 +368,162 @@ misconfigured and that needs the human, not a workaround.
 
 **Acceptance:**
 ```bash
-uv run celery -A config worker -Q fetch,llm -c 4 --loglevel=info   # terminal 1
-uv run celery -A config beat --loglevel=info                       # terminal 2
-uv run python manage.py run_pipeline --date today                  # terminal 3
+uv run celery -A config worker -Q fetch,llm,publish -c 4 --loglevel=info  # terminal 1
+uv run celery -A config beat --loglevel=info                              # terminal 2
+uv run python manage.py run_pipeline --date today                         # terminal 3
 ```
 Completes end to end; `TaskResult` rows appear in admin; a second `run_pipeline` for the
-same date is refused.
+same date is refused. **`run_pipeline` calling functions in-process does not prove this** —
+it bypasses the broker entirely, which is why the routing defect went unnoticed. The
+worker and beat terminals must show the tasks being consumed.
+
+---
+
+### T1.9 — Repair the verified defects in T1.6 and T1.7
+
+All five were confirmed by reading the code on 2026-08-14, not reported second-hand.
+
+**Files:** `apps/digest/ranking.py`, `apps/digest/publish.py`, tests
+
+1. **The date window ignores `target_date`.** `select_digest_candidates` assigns it and
+   then builds the window from `timezone.now()`. Build it from `target_date` so a
+   backfill for an earlier date selects the articles of that date.
+
+2. **Articles already published are not excluded.** Nothing filters on `DigestItem`, so
+   the highest-scoring article can appear in seven consecutive digests. Exclude any
+   article with an existing `DigestItem`.
+
+3. **The kill switch fabricates a publication.** `send_message` returns
+   `{"ok": True, "result": {"message_id": 100001}}` when `PUBLISHING_ENABLED` is false.
+   `publish_digest` then stores 100001 and marks the digest `published`, so a dry run is
+   indistinguishable from a real one in the database — and `edit_digest` would later
+   target a message id that belongs to something else. Return an explicit
+   `{"suppressed": True}`, write no ids, and leave the digest `composed`.
+
+4. **A missing appendix still counts as published.** If the auto-forward is not found,
+   the code logs a warning and marks the digest `published` anyway. Mark it `failed`,
+   alert the admin, and stop.
+
+5. **Forward matching can attach the appendix to the wrong post.** Current condition:
+
+   ```python
+   msg.get("is_automatic_forward") is True or msg.get("forward_from_message_id") == channel_message_id
+   ```
+
+   `or` accepts *any* automatic forward in the group. And `forward_from_message_id` no
+   longer exists — the Bot API replaced it with `forward_origin`
+   (`MessageOriginChannel`: `type`, `chat`, `message_id`), verified against
+   core.telegram.org/bots/api. Require **all** of: `is_automatic_forward is True`,
+   `forward_origin["type"] == "channel"`, the origin chat id equals
+   `TELEGRAM_CHANNEL_ID`, and `forward_origin["message_id"] == channel_message_id`.
+   Persist the `getUpdates` offset; polling without it re-reads the same window.
+
+**Acceptance:** tests for two consecutive dates, a backfill date, zero candidates, a
+suppressed send leaving `composed` with no ids, a missing forward producing `failed`, and
+a foreign automatic forward being rejected.
+
+---
+
+### T1.10 — Editorial stage (ADR-003)
+
+**Goal:** produce the Uzbek text the product exists to deliver. Nothing in M1 currently
+does, so the channel post renders the English `reason` field.
+
+**Files:** `apps/digest/llm.py`, `models.py` (+ migration), `ranking.py`, templates
+
+1. Add `Analysis.stage` with values `triage` · `classification` · `editorial`. Migration
+   backfills existing rows to `classification`.
+2. `analyse_for_digest(article_ids)` on the `llm` queue runs `OLLAMA_DEEP_MODEL` over
+   **only the selected 2–7 items**, using the deep-analysis schema in
+   `CONTENT_SCHEMA.md` §5 and strategy C from §7: reason in English, emit the `*_uz`
+   fields in Uzbek, keep technical terms in English. `num_predict=1200`, timeout 180s.
+3. Ranking reads `stage="classification"`. Rendering reads `stage="editorial"`.
+4. **Remove the English fallback.** A `DigestItem` without an `editorial` analysis
+   carrying a non-empty `summary_uz` must not render. Missing Uzbek is an error, not a
+   silent downgrade.
+5. Empty technical fields render as omitted rows, never as invented values.
+
+**Acceptance:** a composed digest where every item has a non-empty `summary_uz`; a test
+proving an item lacking `editorial` raises rather than falling back to English.
+
+---
+
+### T1.11 — Minimal clustering (ADR-003)
+
+**Goal:** satisfy `PROJECT_PLAN.md` §2 — "one story from several sources is one post".
+
+**Files:** `apps/digest/clustering.py`, `ranking.py`, tests
+
+- Group by canonical URL, then by `rapidfuzz` title similarity above a configurable
+  threshold (start at 92, put it in `settings`).
+- Clustering runs **before** topic diversification, so a cluster consumes one slot, not
+  two.
+- One `DigestItem` per cluster, carrying every source link as evidence.
+- Embeddings, entity resolution and cross-day clustering remain M2.2.
+
+**Acceptance:** the Cerebras and OpenAI Ultrafast posts in `data/gold_set.jsonl`
+(`GOLD_SET_REVIEW.md` §3 item 5) collapse into one item with two source links.
+
+---
+
+### T1.12 — Source coverage (ADR-003)
+
+**Goal:** stop the taxonomy promising streams that have no feed. Seven of twelve topics
+currently have none.
+
+Add via `seed_sources`, no new connector types needed:
+
+| Stream | Source | Connector |
+|---|---|---|
+| speech_voice | `openai/whisper`, `SYSTRAN/faster-whisper` releases | github |
+| robotics | NVIDIA developer blog | rss |
+| safety_security | arXiv `cs.CR` | rss |
+
+`fintech`, `govtech` and `technical_talks` get **no dedicated feed in M1**. They appear
+opportunistically through HN and provider blogs. `PROJECT_PLAN.md` §5's daily balance is
+rewritten to promise only what has a source.
+
+**Acceptance:** `fetch_sources` returns items for every newly added source; the daily
+balance in `PROJECT_PLAN.md` names only streams with a feed.
+
+---
+
+### T1.13 — Supported runtime
+
+**Goal:** the seven-day canary must run on a combination Celery supports.
+
+Measured 2026-08-14: runtime is **Python 3.14.4 on win32**; `celery 5.6.3` metadata
+declares support through **3.13**, and Celery has not supported Windows in production
+since v4.
+
+- `requires-python = ">=3.13,<3.14"`; Ruff `target-version = "py313"`.
+- Dockerfile on a Linux base.
+- Compose services: `worker-fetch`, `worker-llm`, `worker-publish`, `beat`, plus the
+  existing postgres and redis.
+
+**Acceptance:** the full suite passes inside the container, and beat plus the three
+workers complete one `run_pipeline` end to end.
 
 ---
 
 ## 5. GATE 1 — before the public channel
 
+Every line here is a **product** claim. Passing tests is not evidence for any of them.
+
 - [ ] 7 consecutive days of automatic digests, no manual intervention
-- [ ] The human has read all 7 and accepts the quality
-- [ ] `eval_classifier` precision ≥ 0.80
-- [ ] Full pipeline under 60 minutes
-- [ ] Kill switch verified
+- [ ] Every published item carries Uzbek `summary_uz` from an `editorial` analysis
+- [ ] A story arriving from two sources appears as one item with two links
+- [ ] Beat-dispatched tasks are consumed by a worker — proven from the worker log,
+      not from `run_pipeline` running in-process
+- [ ] No article appears in two digests
+- [ ] `eval_classifier` precision ≥ 0.80, output saved as an artifact with model digest
+      and timestamp
+- [ ] Full pipeline under 60 minutes, measured
+- [ ] Kill switch leaves the digest `composed` and writes no message ids
+- [ ] A missing discussion-group forward marks the digest `failed` and alerts
 - [ ] Edit and delete verified on a real published post
+- [ ] Runs on Python 3.13 in a Linux container
+- [ ] The human has read all 7 digests and accepts the quality
 - [ ] `ruff` and `pytest` clean
 - [ ] No secret anywhere in git history
 

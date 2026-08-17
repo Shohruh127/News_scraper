@@ -165,8 +165,14 @@ takrorlanish bo'lmasligi uchun.
 | T1.7 | Telegram publishing | 3 | Kanal + izoh, edit/delete, kill-switch |
 | T1.8 | Celery Beat jadvali | 1 | Uchidan-uchiga avtomatik ishlaydi |
 
-Arxitektura qarorlari: `decisions/001-django-celery-stack.md` va
-`decisions/002-source-failure-policy.md`.
+Arxitektura qarorlari: `decisions/001-django-celery-stack.md`,
+`decisions/002-source-failure-policy.md` va **`decisions/003-m1-scope-correction.md`**.
+
+> **ADR-003 (2026-08-14).** Yuqoridagi 8 ta task §2 dagi MVP mezonlarini bajara olmaydi:
+> hech biri o'zbekcha matn ishlab chiqarmaydi va clustering M2 ga surilgan edi. Uchta
+> qobiliyatning **minimal ishlaydigan versiyasi** M1 ga qaytarildi — editorial bosqich,
+> sodda clustering, va taksonomiyaga mos manba qamrovi. Batafsil ro'yxat:
+> `IMPLEMENTATION_PLAN.md` T1.9–T1.13.
 
 Uchta soddalashtirish v1 ga nisbatan:
 
