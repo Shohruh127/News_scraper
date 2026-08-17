@@ -162,8 +162,10 @@ RANKING_WEIGHTS = {
     "source_credibility": 0.10,
     "audience_relevance": 0.10,
 }
-DIGEST_MAX_ITEMS = 7
-DIGEST_MAX_PER_TOPIC = 2
+# One post per news item (ADR-004 §6), so this is a post count, not a list length.
+# The project owner expects 10-15 posts per day.
+DIGEST_MAX_ITEMS = env.int("DIGEST_MAX_ITEMS", default=15)
+DIGEST_MAX_PER_TOPIC = env.int("DIGEST_MAX_PER_TOPIC", default=3)
 
 # --- Clustering, Tier A (ADR-004 §3) ----------------------------------------
 # Character 5-gram Jaccard over article text. Measured in
