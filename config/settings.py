@@ -107,6 +107,22 @@ OLLAMA_FAST_TIMEOUT = env("OLLAMA_FAST_TIMEOUT")
 OLLAMA_DEEP_TIMEOUT = env("OLLAMA_DEEP_TIMEOUT")
 OLLAMA_MAX_CONCURRENCY = 2
 
+# --- Editorial provider (ADR-004 §5) ----------------------------------------
+# Scoped to the editorial stage only. Triage and classification always run on
+# local Ollama. Set LLM_PROVIDER=ollama to revert; that is the whole change.
+#
+# The MiMo Token Plan forbids automated/backend use. This is accepted by the
+# project owner for the testing phase only, with a stated intention to move to a
+# local model or a backend-permitted tier before release. See ADR-004 §5.
+LLM_PROVIDER = env("LLM_PROVIDER", default="ollama")
+MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
+MIMO_API_KEY = env("MIMO_API_KEY", default="")
+MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")
+MIMO_DEEP_MODEL = env("MIMO_DEEP_MODEL", default="mimo-v2.5-pro")
+#: mimo-v2.5 measured clean Uzbek in ADR-004 §5; pro is not required for summaries.
+MIMO_EDITORIAL_MODEL = env("MIMO_EDITORIAL_MODEL", default="mimo-v2.5")
+MIMO_TIMEOUT = env.int("MIMO_TIMEOUT", default=120)
+
 # --- Telegram ---------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHANNEL_ID = env("TELEGRAM_CHANNEL_ID", default="")

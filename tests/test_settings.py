@@ -8,9 +8,26 @@ def test_timezone_is_tashkent():
     assert settings.USE_TZ is True
 
 
-def test_publishing_is_off_by_default():
-    """The kill switch defaults to off until GATE 1 passes."""
-    assert settings.PUBLISHING_ENABLED is False
+def test_publishing_defaults_to_off_when_unset(monkeypatch):
+    """The kill switch must default off, so forgetting to set it cannot publish.
+
+    Asserts the declared default with the variable removed, not the developer's live
+    .env — a test that reads the current environment fails the moment someone
+    legitimately enables publishing, which teaches the team to delete the test rather
+    than trust it.
+    """
+    import environ
+
+    monkeypatch.delenv("PUBLISHING_ENABLED", raising=False)
+    assert environ.Env(PUBLISHING_ENABLED=(bool, False))("PUBLISHING_ENABLED") is False
+
+
+def test_editorial_provider_is_switchable():
+    """ADR-004 §5: reverting from MiMo to local Ollama must be one setting."""
+    assert settings.LLM_PROVIDER in ("ollama", "mimo")
+    if settings.LLM_PROVIDER == "mimo":
+        assert settings.MIMO_BASE_URL, "LLM_PROVIDER=mimo requires MIMO_BASE_URL"
+        assert settings.MIMO_API_KEY, "LLM_PROVIDER=mimo requires MIMO_API_KEY"
 
 
 def test_llm_concurrency_matches_measurement():

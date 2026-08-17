@@ -1,5 +1,6 @@
 """Tests for the editorial stage (T1.10) and Uzbek rendering rules."""
 
+import json
 from datetime import date
 
 import httpx
@@ -22,6 +23,9 @@ def source(db):
 
 @respx.mock
 def test_editorial_analysis_generates_uzbek_and_technical(db, source, settings):
+    # Pinned explicitly: the provider is configurable, so a test that inherits it from
+    # the developer's .env silently changes which code path it covers.
+    settings.LLM_PROVIDER = "ollama"
     settings.OLLAMA_BASE_URL = "http://localhost:11434"
     settings.OLLAMA_DEEP_MODEL = "gemma4:31b"
 
@@ -179,3 +183,66 @@ def test_rendering_succeeds_with_editorial_analysis(db, source):
     group_comment = ranking.render_group_comment(digest)
     assert "Fast transformer layer" in group_comment
     assert "Mavjud ✅" in group_comment
+
+
+@respx.mock
+def test_editorial_uses_mimo_when_provider_is_mimo(db, source, settings):
+    """ADR-004 §5: the editorial stage routes to MiMo, and records the MiMo model tag.
+
+    MiMo is OpenAI-compatible, so the response shape differs from Ollama's and the
+    provider layer has to normalise it.
+    """
+    settings.LLM_PROVIDER = "mimo"
+    settings.MIMO_BASE_URL = "https://mimo.test/v1"
+    settings.MIMO_API_KEY = "test-key"
+    settings.MIMO_EDITORIAL_MODEL = "mimo-v2.5"
+
+    art = Article.objects.create(
+        source=source,
+        canonical_url="https://example.com/mimo-art",
+        content_hash="h_mimo",
+        title="Qwen Open Weights Release",
+        extracted_text="Qwen released open weights with FP8 quantisation." * 20,
+        status=Article.Status.CLASSIFIED,
+    )
+
+    body = {
+        "summary_uz": "Qwen yangi ochiq model taqdim etdi.",
+        "why_it_matters_uz": "Ochiq weights mahalliy deployment imkonini beradi.",
+        "leadership_uz": "Xarajatni kamaytiradi.",
+        "uzbekistan_application_uz": "Davlat tizimlarida on-premise ishlatish mumkin.",
+        "evidence_level": "vendor_claim_only",
+        "technical": {
+            "what_was_built": "Open-weight MoE model",
+            "limitations": "Katta VRAM talab qiladi",
+            "local_deployable": True,
+        },
+    }
+    route = respx.post("https://mimo.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": json.dumps(body)}}]},
+        )
+    )
+
+    analyses = llm.analyse_for_digest_logic([art.id])
+
+    assert route.called
+    assert len(analyses) == 1
+    a = analyses[0]
+    assert a.stage == Analysis.Stage.EDITORIAL
+    assert a.model_tag == "mimo-v2.5"
+    # MiMo exposes no digest, so the drift-detection field is deliberately empty.
+    assert a.model_digest == ""
+    assert a.payload["summary_uz"] == "Qwen yangi ochiq model taqdim etdi."
+
+
+@respx.mock
+def test_mimo_provider_requires_credentials(db, source, settings):
+    """A misconfigured provider must fail loudly, not fall back to a different model."""
+    settings.LLM_PROVIDER = "mimo"
+    settings.MIMO_BASE_URL = ""
+    settings.MIMO_API_KEY = ""
+
+    with pytest.raises(RuntimeError, match="MIMO_API_KEY"):
+        llm.editorial_chat(prompt="x", schema={"type": "object"}, num_predict=100)

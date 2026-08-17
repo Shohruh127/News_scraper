@@ -268,8 +268,10 @@ def fetch_model_digest(model_name: str, client: httpx.Client | None = None) -> s
     retry=retry_if_exception_type(RETRYABLE_LLM_EXCEPTIONS),
     reraise=True,
 )
-def _chat_post(client: httpx.Client, url: str, payload: dict) -> httpx.Response:
-    r = client.post(url, json=payload)
+def _chat_post(
+    client: httpx.Client, url: str, payload: dict, headers: dict | None = None
+) -> httpx.Response:
+    r = client.post(url, json=payload, headers=headers)
     if r.status_code >= 500 or r.status_code == 429:
         raise RetryableLLMError(f"{r.status_code} from {url}: {r.text[:200]}")
     r.raise_for_status()
@@ -321,6 +323,99 @@ def ollama_chat(
     finally:
         if close_client:
             client.close()
+
+
+def mimo_chat(
+    model: str,
+    prompt: str,
+    schema: dict | None = None,
+    timeout: int = 120,
+    max_tokens: int = 1500,
+    client: httpx.Client | None = None,
+) -> tuple[dict, int]:
+    """OpenAI-compatible chat completion against MiMo. Returns (parsed_payload, latency_ms).
+
+    Uses `json_schema` strict mode, not `json_object`. Measured 2026-08-17 on the
+    editorial schema:
+
+      json_object          returned malformed JSON (trailing comma) and, over 7 real
+                           articles, conformed to the schema 2/7 times — it invented
+                           its own keys (`title`, `article_title`) and dropped required
+                           ones.
+      json_schema strict   returned exactly the six required keys.
+
+    Ollama enforces the schema in the decoder via XGrammar, so the prompt never had to
+    name the fields. That assumption does not carry to an OpenAI-compatible endpoint
+    unless strict mode is requested explicitly.
+    """
+    url = f"{settings.MIMO_BASE_URL}/chat/completions"
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }
+    if schema:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "response", "strict": True, "schema": schema},
+        }
+
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=timeout)
+        close_client = True
+
+    t0 = time.perf_counter()
+    try:
+        r = _chat_post(client, url, payload, headers={
+            "Authorization": f"Bearer {settings.MIMO_API_KEY}",
+            "Content-Type": "application/json",
+        })
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        content = r.json()["choices"][0]["message"]["content"]
+        parsed = json.loads(content) if schema else {"raw": content}
+        return parsed, latency_ms
+    finally:
+        if close_client:
+            client.close()
+
+
+def editorial_chat(
+    prompt: str,
+    schema: dict,
+    num_predict: int,
+    client: httpx.Client | None = None,
+) -> tuple[dict, int, str]:
+    """Dispatch the editorial call to the configured provider.
+
+    Returns (payload, latency_ms, model_tag). Only the editorial stage is routed this
+    way — triage and classification stay on local Ollama (ADR-004 §5).
+    """
+    if settings.LLM_PROVIDER == "mimo":
+        if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
+            raise RuntimeError("LLM_PROVIDER=mimo but MIMO_API_KEY/MIMO_BASE_URL are unset")
+        model = settings.MIMO_EDITORIAL_MODEL
+        payload, ms = mimo_chat(
+            model=model,
+            prompt=prompt,
+            schema=schema,
+            timeout=settings.MIMO_TIMEOUT,
+            max_tokens=num_predict,
+            client=client,
+        )
+        return payload, ms, model
+
+    model = settings.OLLAMA_DEEP_MODEL
+    payload, ms = ollama_chat(
+        model=model,
+        prompt=prompt,
+        schema=schema,
+        timeout=settings.OLLAMA_DEEP_TIMEOUT,
+        num_predict=num_predict,
+        client=client,
+    )
+    return payload, ms, model
 
 
 def check_rule_prefilter(article: Article) -> tuple[bool, str]:
@@ -551,12 +646,13 @@ def deep_analyze_text(
     title: str,
     source_name: str,
     text: str,
-    model: str,
-    timeout: int,
     num_predict: int = 1500,
     client: httpx.Client | None = None,
 ) -> tuple[DeepAnalysis, dict, int, str]:
-    """Perform deep technical and Uzbek editorial analysis on an article."""
+    """Deep technical and Uzbek editorial analysis. Provider chosen by LLM_PROVIDER.
+
+    Returns (deep_obj, raw_payload, latency_ms, model_tag).
+    """
     truncated_text = text[:8000]
     prompt = EDITORIAL_PROMPT_TEMPLATE.format(
         title=title,
@@ -564,20 +660,15 @@ def deep_analyze_text(
         text=truncated_text,
     )
 
-    digest = fetch_model_digest(model, client=client)
-    latency_ms = 0
-
     try:
-        raw_payload, latency_ms = ollama_chat(
-            model=model,
+        raw_payload, latency_ms, model_tag = editorial_chat(
             prompt=prompt,
             schema=DEEP_ANALYSIS_SCHEMA,
-            timeout=timeout,
             num_predict=num_predict,
             client=client,
         )
         deep_obj = DeepAnalysis.model_validate(raw_payload)
-        return deep_obj, raw_payload, latency_ms, digest
+        return deep_obj, raw_payload, latency_ms, model_tag
     except (ValidationError, json.JSONDecodeError) as exc:
         log.warning(
             "Editorial validation error on first attempt for '%s': %s. Retrying once with error.",
@@ -589,16 +680,14 @@ def deep_analyze_text(
             f"IMPORTANT: Your previous output failed schema validation with error:\n{exc}\n"
             "Please fix the error and return valid JSON conforming strictly to the schema."
         )
-        raw_payload, latency_retry_ms = ollama_chat(
-            model=model,
+        raw_payload, latency_retry_ms, model_tag = editorial_chat(
             prompt=recovery_prompt,
             schema=DEEP_ANALYSIS_SCHEMA,
-            timeout=timeout,
             num_predict=max(num_predict, 2000),
             client=client,
         )
         deep_obj = DeepAnalysis.model_validate(raw_payload)
-        return deep_obj, raw_payload, latency_ms + latency_retry_ms, digest
+        return deep_obj, raw_payload, latency_retry_ms, model_tag
 
 
 def analyse_for_digest_logic(
@@ -606,9 +695,6 @@ def analyse_for_digest_logic(
     client: httpx.Client | None = None,
 ) -> list[Analysis]:
     """Run deep editorial analysis over the selected items to produce Uzbek text."""
-    model = getattr(settings, "OLLAMA_DEEP_MODEL", "gemma4:31b")
-    timeout = getattr(settings, "OLLAMA_DEEP_TIMEOUT", 180)
-
     articles = Article.objects.filter(id__in=article_ids).select_related("source")
     created_analyses: list[Analysis] = []
 
@@ -622,20 +708,21 @@ def analyse_for_digest_logic(
             continue
 
         try:
-            deep_obj, raw_payload, latency_ms, digest = deep_analyze_text(
+            deep_obj, raw_payload, latency_ms, model_tag = deep_analyze_text(
                 title=art.title,
                 source_name=art.source.name if art.source else "",
                 text=art.extracted_text,
-                model=model,
-                timeout=timeout,
                 num_predict=1500,
                 client=client,
             )
             analysis = Analysis.objects.create(
                 article=art,
                 stage=Analysis.Stage.EDITORIAL,
-                model_tag=model,
-                model_digest=digest,
+                model_tag=model_tag,
+                # MiMo exposes no model digest; only Ollama tags can drift silently.
+                model_digest=(
+                    fetch_model_digest(model_tag) if settings.LLM_PROVIDER != "mimo" else ""
+                ),
                 payload=raw_payload,
                 latency_ms=latency_ms,
             )
