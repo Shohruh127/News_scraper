@@ -547,6 +547,83 @@ def editorial_chat(
     return payload, ms, model
 
 
+# --- Source-based maturity ceiling -------------------------------------------
+# Measured 2026-08-17: 12 of 15 selected items came back `reproducible_open_source`,
+# including seven arXiv abstracts scored evidence 9-10. paper_only was assigned to
+# nothing, so the hard exclusion that implements the anti-vapourware rule excluded
+# nothing.
+#
+# The prompt is not at fault. CONTENT_SCHEMA §3 says reproducible_open_source requires a
+# link that resolves today — but the model cannot open a link. It falls back to the only
+# signal present, "we release our code", which appears in essentially every paper
+# abstract. The task was given to the wrong layer.
+#
+# The source is ground truth and needs no inference: an arXiv abstract is a paper.
+
+#: A URL from one of these is a paper whatever its abstract promises.
+PAPER_DOMAINS = (
+    "arxiv.org",
+    "huggingface.co/papers",
+    "openreview.net",
+    "biorxiv.org",
+    "medrxiv.org",
+    "ar5iv.org",
+)
+
+#: Claim strength, strongest to weakest. Used only to detect a claim above the ceiling.
+#:
+#: paper_only ranks above announcement_only: a paper is a real artifact that can be read,
+#: while a bare announcement offers nothing. Ordering them the other way made the ceiling
+#: rewrite announcement_only into paper_only, which is not capping — both are excluded
+#: from publication either way, so the rewrite was churn with no effect on output.
+MATURITY_RANK = {
+    Maturity.PRODUCTION_DEPLOYMENT: 5,
+    Maturity.LIVE_PRODUCT: 4,
+    Maturity.REPRODUCIBLE_OPEN_SOURCE: 3,
+    Maturity.PUBLIC_PILOT: 2,
+    Maturity.PAPER_ONLY: 1,
+    Maturity.ANNOUNCEMENT_ONLY: 0,
+}
+
+
+def maturity_ceiling(article: Article) -> str | None:
+    """Highest maturity this item may claim without checking an artifact. None = no cap.
+
+    Deliberately keyed on the URL, not the connector: `hn` links to papers, repositories
+    and products alike, so the connector alone would cap the wrong things. A HuggingFace
+    *model card* is not a paper — only `huggingface.co/papers` is — and the Qwen model
+    card that scored reproducible_open_source was correct to.
+    """
+    url = (article.canonical_url or "").lower()
+    if any(d in url for d in PAPER_DOMAINS):
+        return Maturity.PAPER_ONLY
+    if article.source and article.source.connector == "hf":
+        # The hf connector fetches the daily-papers feed and nothing else.
+        return Maturity.PAPER_ONLY
+    return None
+
+
+def apply_maturity_ceiling(article: Article, payload: dict) -> dict:
+    """Downgrade an over-claimed maturity in place. Logs every correction it makes.
+
+    The log line matters: it is the measurement of how often the model over-claims, and
+    the evidence for whether this rule can later be relaxed.
+    """
+    ceiling = maturity_ceiling(article)
+    if ceiling is None:
+        return payload
+    claimed = payload.get("maturity")
+    if claimed not in MATURITY_RANK or MATURITY_RANK[claimed] <= MATURITY_RANK[ceiling]:
+        return payload
+    log.info(
+        "Maturity ceiling: article %s claimed %s, capped to %s (%s)",
+        article.id, claimed, ceiling, article.canonical_url[:80],
+    )
+    payload["maturity"] = ceiling
+    payload["maturity_capped_from"] = claimed
+    return payload
+
+
 def check_rule_prefilter(article: Article) -> tuple[bool, str]:
     """Rule pre-filter before invoking any LLM.
 
@@ -675,6 +752,10 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
         )
         return False
 
+    # The source decides what a paper is; the model is not asked to re-derive it.
+    raw_payload = apply_maturity_ceiling(article, raw_payload)
+    classification = Classification.model_validate(raw_payload)
+
     Analysis.objects.create(
         article=article,
         stage=Analysis.Stage.TRIAGE,
@@ -749,6 +830,9 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
             exc,
         )
         return False
+
+    raw_payload = apply_maturity_ceiling(article, raw_payload)
+    classification = Classification.model_validate(raw_payload)
 
     Analysis.objects.create(
         article=article,
