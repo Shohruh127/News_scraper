@@ -3,6 +3,7 @@
 
 {{ summary_uz }}
 {% if why_it_matters_uz %}
-💡 <b>Nima uchun muhim:</b> {{ why_it_matters_uz }}{% endif %}{% if uzbekistan_application_uz %}
+💡 <b>Nima uchun muhim:</b> {{ why_it_matters_uz }}{% endif %}{% if leadership_uz %}
+💼 <b>Boshqaruv uchun:</b> {{ leadership_uz }}{% endif %}{% if uzbekistan_application_uz %}
 🇺🇿 <b>O'zbekistonda:</b> {{ uzbekistan_application_uz }}{% endif %}{% if secondary_sources %}
 <i>Yana: {% for sec in secondary_sources %}<a href="{{ sec.url }}">{{ sec.source_name|default:sec.title }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</i>{% endif %}
