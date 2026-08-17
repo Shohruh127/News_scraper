@@ -217,19 +217,43 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
     from . import llm
 
     # Overlap protection using Redis lock (T1.8)
+    # Records holder identity so a stale lock is identifiable (T1.15).
     lock_client = None
     lock_acquired = True
     try:
+        import os
+        import platform
+
         import redis
 
         lock_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
-        lock_acquired = bool(lock_client.set("news_radar:evening_pipeline", "1", nx=True, ex=3600))
+        holder = f"{platform.node()}:{os.getpid()}"
+        lock_acquired = bool(
+            lock_client.set(
+                "news_radar:evening_pipeline", holder, nx=True,
+                ex=settings.EVENING_LOCK_TTL,
+            )
+        )
     except Exception as exc:
         log.warning("Could not check Redis lock: %s", exc)
 
     if not lock_acquired:
-        log.warning("Evening pipeline already running (lock held). Skipping duplicate run.")
+        try:
+            current_holder = lock_client.get("news_radar:evening_pipeline")
+            holder_str = current_holder.decode() if current_holder else "unknown"
+        except Exception:
+            holder_str = "unknown"
+        log.warning(
+            "Evening pipeline already running (lock held by %s). Skipping.", holder_str
+        )
         return {"status": "skipped", "reason": "lock_held"}
+
+    def _refresh_lock():
+        """Refresh lock TTL to prevent stale-lock deadlocks (T1.15)."""
+        try:
+            lock_client.expire("news_radar:evening_pipeline", settings.EVENING_LOCK_TTL)
+        except Exception as exc:
+            log.debug("Lock refresh failed: %s", exc)
 
     try:
         # Phase 1: Fast triage on all untriaged fetched articles
@@ -241,12 +265,16 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
             triaged_count += 1
             if passed:
                 triage_passed += 1
+            if triaged_count % 20 == 0:
+                _refresh_lock()
 
         log.info(
             "Triage finished: %d triaged, %d passed to classification",
             triaged_count,
             triage_passed,
         )
+
+        _refresh_lock()
 
         # Phase 2: Deep classification on all survivors
         to_classify = list(Article.objects.filter(status=Article.Status.TRIAGED).order_by("id"))
@@ -257,6 +285,8 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
             classified_count += 1
             if passed:
                 classify_passed += 1
+            if classified_count % 10 == 0:
+                _refresh_lock()
 
         log.info(
             "Classification finished: %d classified, %d passed for digest",

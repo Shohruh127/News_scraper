@@ -60,6 +60,16 @@ class Command(BaseCommand):
         # Step 2: Triage and Classify
         self.stdout.write("\n2. Running triage and classification...")
         llm_result = tasks.triage_and_classify(trigger_publish_chain=False)
+
+        if llm_result.get("status") == "skipped":
+            self.stdout.write(
+                self.style.WARNING(
+                    f"   * Skipped: {llm_result.get('reason', 'unknown')}. "
+                    "Another pipeline instance is running."
+                )
+            )
+            return
+
         triaged_s = llm_result["triage_survivors"]
         classified_s = llm_result["classify_survivors"]
         self.stdout.write(

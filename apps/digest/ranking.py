@@ -327,3 +327,97 @@ def render_group_comment(digest: Digest) -> str:
             "total_items": len(items_data),
         },
     ).strip()
+
+
+def _item_data(item: DigestItem) -> dict:
+    """Build the template context for a single DigestItem.
+
+    Shared by render_item_post and render_item_appendix so both templates see the
+    same data shape and neither can drift out of sync.
+    """
+    # Reader-facing text comes from the translation stage only (ADR-005).
+    uz = (
+        item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
+        .order_by("-created_at")
+        .first()
+    )
+    uz_payload = uz.payload if uz else {}
+    summary_uz = uz_payload.get("summary_uz", "").strip()
+    if not summary_uz:
+        raise ValueError(
+            f"DigestItem #{item.position} (article {item.article_id}: "
+            f"'{item.article.title}') lacks editorial_uz with non-empty 'summary_uz'."
+        )
+
+    # English analysis for the technical appendix.
+    en = (
+        item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN)
+        .order_by("-created_at")
+        .first()
+    )
+    if not en:
+        raise ValueError(
+            f"DigestItem #{item.position} (article {item.article_id}: "
+            f"'{item.article.title}') lacks editorial_en analysis."
+        )
+    en_payload = en.payload or {}
+    technical = en_payload.get("technical", {})
+
+    cls = (
+        item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
+        .order_by("-created_at")
+        .first()
+        or en
+    )
+
+    secondary_sources = [
+        {
+            "title": sec.title,
+            "url": sec.canonical_url,
+            "source_name": sec.source.name if sec.source else "",
+        }
+        for sec in item.secondary_articles.all()
+    ]
+
+    return {
+        "position": item.position,
+        "title": item.article.title,
+        "url": item.article.canonical_url,
+        "source_name": item.article.source.name if item.article.source else "",
+        "topic": str(cls.topic if cls else "ai"),
+        "maturity": str(cls.maturity if cls else "product"),
+        # Uzbek fields
+        "headline_uz": uz_payload.get("headline_uz", item.article.title),
+        "summary_uz": summary_uz,
+        "why_it_matters_uz": uz_payload.get("why_it_matters_uz", ""),
+        "leadership_uz": uz_payload.get("leadership_uz", ""),
+        "uzbekistan_application_uz": (
+            uz_payload.get("uzbekistan_application_uz", "")
+            or en_payload.get("uzbekistan_application_uz", "")
+        ),
+        # Technical appendix fields (English)
+        "what_was_built": technical.get("what_was_built", ""),
+        "architecture": technical.get("architecture", ""),
+        "license": technical.get("license", ""),
+        "repo_url": technical.get("repo_url", ""),
+        "api_url": technical.get("api_url", ""),
+        "hardware": technical.get("hardware", ""),
+        "install": technical.get("install", ""),
+        "benchmarks": technical.get("benchmarks", ""),
+        "limitations": technical.get("limitations", ""),
+        "local_deployable": technical.get("local_deployable", False),
+        # Clustering
+        "secondary_sources": secondary_sources,
+        "score": item.score,
+    }
+
+
+def render_item_post(item: DigestItem) -> str:
+    """Render a single channel post for one news item."""
+    return render_to_string("digest/item_post.html", _item_data(item)).strip()
+
+
+def render_item_appendix(item: DigestItem) -> str:
+    """Render a single technical appendix for one news item."""
+    return render_to_string("digest/item_appendix.html", _item_data(item)).strip()
+

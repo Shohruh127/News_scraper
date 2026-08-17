@@ -33,8 +33,8 @@ EN_PAYLOAD = {
 }
 
 UZ_PAYLOAD = {
-    "headline_uz": "Qwen 2.4T ochiq model chiqardi",
-    "summary_uz": "Qwen 2.4 trillion parametrli ochiq model taqdim etdi.",
+    "headline_uz": "Qwen 2.4T open-weight model chiqardi",
+    "summary_uz": "Qwen 2.4 trillion parametrli open-weight model taqdim etdi.",
     "why_it_matters_uz": "Uni mahalliy serverda ishlatish mumkin.",
     "leadership_uz": "API'ga bog'liqlikni kamaytiradi.",
     "uzbekistan_application_uz": "Mahalliy jamoalar o'zida joylashtira oladi.",

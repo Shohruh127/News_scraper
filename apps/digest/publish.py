@@ -242,7 +242,16 @@ def publish_digest(
     digest: Digest,
     client: httpx.Client | None = None,
 ) -> dict:
-    """Publish digest post to channel and technical appendix to linked discussion group."""
+    """Publish each digest item as its own channel post with its own group appendix.
+
+    Per-item publishing (T1.14):
+    - Each DigestItem gets its own sendMessage → its own channel_message_id.
+    - Each post's auto-forward in the linked group is found, and a per-item appendix is
+      sent as a reply → its own group_message_id.
+    - Partial failure: if any item fails, the digest is marked FAILED and the admin alert
+      names the failed items. Already-sent posts are NOT rolled back.
+    - A small delay between sends respects Telegram's rate limit (~20 msg/min to a channel).
+    """
     # Kill switch: when PUBLISHING_ENABLED is False, compose and store but send nothing.
     # Leave digest status as COMPOSED, do not set published_at, write no message IDs.
     if not getattr(settings, "PUBLISHING_ENABLED", False):
@@ -264,71 +273,115 @@ def publish_digest(
     if not channel_id:
         raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
 
-    # Step 1: Render and send main channel post
-    channel_post_html = ranking.render_channel_post(digest)
-    res_post = send_message(chat_id=channel_id, text=channel_post_html, client=client)
-    channel_msg_id = res_post.get("result", {}).get("message_id")
+    group_id = getattr(settings, "TELEGRAM_GROUP_ID", "")
+    items = list(
+        digest.items.select_related("article", "article__source")
+        .prefetch_related(
+            "secondary_articles",
+            "secondary_articles__source",
+            "article__analyses",
+        )
+        .order_by("position")
+    )
 
-    if not channel_msg_id:
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=30)
+        close_client = True
+
+    sent_count = 0
+    failed_items: list[str] = []
+
+    send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
+    try:
+        for idx, item in enumerate(items):
+            # Rate-limit: configurable delay between sends (20 msg/min budget shared with appendix)
+            if idx > 0 and send_delay > 0:
+                time.sleep(send_delay)
+
+            # --- Channel post ---
+            try:
+                post_html = ranking.render_item_post(item)
+            except ValueError as exc:
+                log.error("Render failed for item #%s: %s", item.position, exc)
+                failed_items.append(f"#{item.position} (render: {exc})")
+                continue
+
+            res_post = send_message(chat_id=channel_id, text=post_html, client=client)
+            ch_msg_id = res_post.get("result", {}).get("message_id")
+
+            if not ch_msg_id:
+                log.error("sendMessage failed for item #%s: %s", item.position, res_post)
+                failed_items.append(f"#{item.position} (sendMessage failed)")
+                continue
+
+            item.channel_message_id = ch_msg_id
+            item.save(update_fields=["channel_message_id"])
+            sent_count += 1
+
+            # --- Group appendix ---
+            if group_id:
+                if send_delay > 0:
+                    time.sleep(min(send_delay / 2, 1.5))
+                fwd_id = find_group_forward_message_id(ch_msg_id, client=client)
+                if fwd_id:
+                    try:
+                        appendix_html = ranking.render_item_appendix(item)
+                    except ValueError as exc:
+                        log.error("Appendix render failed for item #%s: %s", item.position, exc)
+                        failed_items.append(f"#{item.position} (appendix render: {exc})")
+                        continue
+
+                    res_comment = send_message(
+                        chat_id=group_id,
+                        text=appendix_html,
+                        reply_to_message_id=fwd_id,
+                        client=client,
+                    )
+                    grp_msg_id = res_comment.get("result", {}).get("message_id")
+                    if grp_msg_id:
+                        item.group_message_id = grp_msg_id
+                        item.save(update_fields=["group_message_id"])
+                else:
+                    log.warning(
+                        "Auto-forward not found for item #%s (channel_msg %s)",
+                        item.position,
+                        ch_msg_id,
+                    )
+                    failed_items.append(
+                        f"#{item.position} (forward not found for msg {ch_msg_id})"
+                    )
+
+    finally:
+        if close_client:
+            client.close()
+
+    # --- Status decision ---
+    if failed_items:
         digest.status = Digest.Status.FAILED
         digest.save(update_fields=["status"])
-        send_admin_alert(f"Failed to post digest {digest.digest_date} to channel: {res_post}")
-        return {
-            "error": "Failed to post to channel",
-            "status": Digest.Status.FAILED,
-            "digest_id": digest.id,
-        }
-
-    # Step 2: Store channel_message_id on all items
-    digest.items.update(channel_message_id=channel_msg_id)
-
-    # Step 3: Find auto-forwarded message in linked group and reply with technical appendix
-    group_msg_id = None
-    group_id = getattr(settings, "TELEGRAM_GROUP_ID", "")
-    if group_id:
-        fwd_id = find_group_forward_message_id(channel_msg_id, client=client)
-        if not fwd_id:
-            # Defect 4: Missing appendix marks digest as failed, alerts admin, and stops
-            digest.status = Digest.Status.FAILED
-            digest.save(update_fields=["status"])
-            send_admin_alert(
-                f"Digest {digest.digest_date} posted to channel (msg {channel_msg_id}), "
-                f"but auto-forward in group {group_id} was NOT found. Marked FAILED."
-            )
-            return {
-                "error": "Missing auto-forward in group",
-                "status": Digest.Status.FAILED,
-                "digest_id": digest.id,
-                "channel_message_id": channel_msg_id,
-            }
-
-        group_comment_html = ranking.render_group_comment(digest)
-        res_comment = send_message(
-            chat_id=group_id,
-            text=group_comment_html,
-            reply_to_message_id=fwd_id,
-            client=client,
+        alert_msg = (
+            f"Digest {digest.digest_date}: {sent_count}/{len(items)} items posted. "
+            f"Failed: {', '.join(failed_items)}"
         )
-        group_msg_id = res_comment.get("result", {}).get("message_id")
-        if group_msg_id:
-            digest.items.update(group_message_id=group_msg_id)
+        send_admin_alert(alert_msg)
+        log.error(alert_msg)
+    else:
+        digest.status = Digest.Status.PUBLISHED
+        digest.published_at = timezone.now()
+        digest.save(update_fields=["status", "published_at"])
+        log.info(
+            "Digest %s published: %s items posted",
+            digest.digest_date,
+            sent_count,
+        )
 
-    # Step 4: Mark digest as published
-    digest.status = Digest.Status.PUBLISHED
-    digest.published_at = timezone.now()
-    digest.save(update_fields=["status", "published_at"])
-
-    log.info(
-        "Digest %s published: channel_msg_id=%s, group_msg_id=%s",
-        digest.digest_date,
-        channel_msg_id,
-        group_msg_id,
-    )
     return {
         "digest_id": digest.id,
         "digest_date": str(digest.digest_date),
-        "channel_message_id": channel_msg_id,
-        "group_message_id": group_msg_id,
-        "items_published": digest.items.count(),
+        "items_sent": sent_count,
+        "items_failed": len(failed_items),
+        "failed_items": failed_items,
         "status": digest.status,
     }
+

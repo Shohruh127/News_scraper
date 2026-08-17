@@ -1,0 +1,11 @@
+<b>🛠 {{ title }} — Texnik tahlil</b>
+{% if what_was_built %}<b>Nima qurildi:</b> {{ what_was_built }}{% endif %}
+{% if architecture %}<b>Arxitektura:</b> {{ architecture }}{% endif %}
+{% if license %}<b>Litsenziya:</b> {{ license }}{% endif %}
+{% if repo_url %}<b>Repo:</b> <a href="{{ repo_url }}">{{ repo_url }}</a>{% endif %}
+{% if api_url %}<b>API:</b> <a href="{{ api_url }}">{{ api_url }}</a>{% endif %}
+{% if install %}<b>O'rnatish:</b> <code>{{ install }}</code>{% endif %}
+<b>Mahalliy deploy:</b> {% if local_deployable %}Mavjud ✅{% else %}Mavjud emas ❌{% endif %}
+{% if benchmarks %}<b>Benchmarklar:</b> {{ benchmarks }}{% endif %}
+{% if limitations %}<b>Cheklovlar:</b> {{ limitations }}{% endif %}
+{% if uzbekistan_application_uz %}<b>O'zbekistonda qo'llanishi:</b> {{ uzbekistan_application_uz }}{% endif %}

@@ -19,6 +19,7 @@ from django.conf import settings
 from pydantic import BaseModel, Field, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from . import translation_gates
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Maturity, Topic
 
 log = logging.getLogger(__name__)
@@ -241,6 +242,8 @@ EDITORIAL_EN_PROMPT = (
     'benchmark number, repo URL, hardware requirement — leave that field as "". Never '
     "infer, never fill from background knowledge. An empty field is correct; an invented "
     "one is a defect.\n"
+    "- Headline rule: every proper noun in headline_en must appear verbatim in the article text. "
+    "Never invent or hallucinate names.\n"
     "- local_deployable: true only if weights or code can actually be self-hosted\n"
     '- evidence_level: "vendor_claim_only" unless the article cites independent validation\n\n'
     "## Language\n"
@@ -296,7 +299,25 @@ TRANSLATION_PROMPT = (
     "{fields}\n"
 )
 
-# Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3
+# Lightweight prompt for the fast triage pass (T1.17). Drops heavy taxonomy definitions
+# to make the 185-run triage pass fast and focused on noise rejection.
+TRIAGE_PROMPT_TEMPLATE = (
+    "You are a fast technical triage editor for an AI engineering news digest.\n\n"
+    "Classify the article below to filter out noise. Return JSON only conforming to the schema.\n\n"
+    "Rules:\n"
+    "- If the article contains no technical AI substance (e.g. general business, executive news, "
+    "marketing, consumer gadgets, non-AI), primary_topic MUST be 'irrelevant'.\n"
+    "- Score novelty, evidence, and production_readiness integers from 1 to 10.\n"
+    "- If it is AI technical news, choose the primary_topic and maturity that best describes it.\n"
+    "\n"
+    "ARTICLE\n"
+    "Title: {title}\n"
+    "Source: {source}\n"
+    "---\n"
+    "{text}\n"
+)
+
+# Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3 for deep classification
 CLASSIFICATION_PROMPT_TEMPLATE = (
     "You are a technical editor for an AI-engineering news digest read by "
     "engineers and technical decision-makers.\n\n"
@@ -361,8 +382,20 @@ def _get_base_url() -> str:
     return getattr(settings, "OLLAMA_BASE_URL", "").rstrip("/")
 
 
+_model_digest_cache: dict[str, str] = {}
+
+
 def fetch_model_digest(model_name: str, client: httpx.Client | None = None) -> str:
-    """Fetch or resolve the 64-char model digest from Ollama tags."""
+    """Fetch or resolve the 64-char model digest from Ollama tags.
+
+    Cached per process per model (T1.15): /api/tags is called once per model, not
+    once per classification. The cache lives for the process lifetime, which is correct
+    because a model digest only changes when the operator explicitly pulls a new version,
+    and the worker process would be restarted after that.
+    """
+    if model_name in _model_digest_cache:
+        return _model_digest_cache[model_name]
+
     base_url = _get_base_url()
     if not base_url:
         return ""
@@ -375,7 +408,9 @@ def fetch_model_digest(model_name: str, client: httpx.Client | None = None) -> s
         if r.status_code == 200:
             for m in r.json().get("models", []):
                 if m.get("name") == model_name or m.get("model") == model_name:
-                    return m.get("digest", "")
+                    digest = m.get("digest", "")
+                    _model_digest_cache[model_name] = digest
+                    return digest
     except Exception as exc:
         log.debug("Could not fetch digest for model %s: %s", model_name, exc)
     return ""
@@ -650,13 +685,14 @@ def classify_text(
     timeout: int,
     num_predict: int = 400,
     client: httpx.Client | None = None,
+    prompt_template: str = CLASSIFICATION_PROMPT_TEMPLATE,
 ) -> tuple[Classification, dict, int, str]:
     """Classify article text with Pydantic validation and 1-attempt recovery.
 
     Returns (classification_obj, raw_payload, latency_ms, digest).
     """
     truncated_text = text[:8000]
-    prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(
+    prompt = prompt_template.format(
         title=title,
         source=source_name,
         text=truncated_text,
@@ -700,7 +736,7 @@ def classify_text(
 
 
 def triage_article_logic(article: Article, client: httpx.Client | None = None) -> bool:
-    """Triage logic using the fast model. Sets article status to TRIAGED or SKIPPED."""
+    """Triage logic using the fast model and lightweight triage prompt (T1.17)."""
     passed, reason = check_rule_prefilter(article)
     if not passed:
         log.info("Rule prefilter rejected article %s (%s): %s", article.id, article.title, reason)
@@ -720,6 +756,7 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
             timeout=timeout,
             num_predict=1000,
             client=client,
+            prompt_template=TRIAGE_PROMPT_TEMPLATE,
         )
     except (ValidationError, json.JSONDecodeError) as exc:
         # Permanent model schema failure on this article after retry
@@ -923,6 +960,51 @@ def analyse_for_digest_logic(
                 provider=settings.TRANSLATION_PROVIDER,
                 ollama_model=settings.OLLAMA_FAST_MODEL,
             )
+
+            # Translation quality gates (T1.16)
+            violations = translation_gates.validate_translation(fields, payload)
+            if violations:
+                log.warning(
+                    "Translation gates failed for article %s: %s. Retrying once.",
+                    art.id,
+                    violations,
+                )
+                fields_json = json.dumps(fields, ensure_ascii=False, indent=2)
+                retry_prompt = (
+                    f"{TRANSLATION_PROMPT.format(fields=fields_json)}\n\n"
+                    "IMPORTANT: Your previous output failed translation quality gates:\n"
+                    + "\n".join(f"- {v}" for v in violations)
+                    + "\nPlease fix these specific errors and return valid JSON."
+                )
+                try:
+                    retry_payload, retry_ms, retry_model = editorial_chat(
+                        prompt=retry_prompt,
+                        schema=TRANSLATION_SCHEMA,
+                        num_predict=settings.TRANSLATION_NUM_PREDICT,
+                        client=client,
+                        provider=settings.TRANSLATION_PROVIDER,
+                        ollama_model=settings.OLLAMA_FAST_MODEL,
+                    )
+                    Translation.model_validate(retry_payload)
+                    retry_violations = translation_gates.validate_translation(fields, retry_payload)
+                    if retry_violations:
+                        log.error(
+                            "Translation gates failed permanently for article %s: %s.",
+                            art.id,
+                            retry_violations,
+                        )
+                        continue
+                    payload = retry_payload
+                    latency_ms += retry_ms
+                    model_tag = retry_model
+                except Exception as exc:
+                    log.error(
+                        "Translation gate recovery failed for article %s: %s.",
+                        art.id,
+                        exc,
+                    )
+                    continue
+
             created.append(_record(art, Analysis.Stage.EDITORIAL_UZ, model_tag,
                                    payload, latency_ms))
             log.info("Uzbek translation done for article %s", art.id)
@@ -946,13 +1028,12 @@ def _record(article, stage, model_tag: str, payload: dict, latency_ms: int) -> A
 
 def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, client=None,
                     provider: str | None = None, ollama_model: str | None = None):
-    """One editorial call with a single validation retry. Returns (payload, ms, model_tag)."""
+    """One editorial call with validation retry and empty technical block check (T1.17)."""
     try:
         payload, ms, model_tag = editorial_chat(
             prompt, schema, num_predict, client, provider, ollama_model
         )
         model_cls.model_validate(payload)
-        return payload, ms, model_tag
     except (ValidationError, json.JSONDecodeError) as exc:
         log.warning("Editorial validation failed, retrying once: %s", exc)
         recovery = (
@@ -963,4 +1044,25 @@ def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, clie
             recovery, schema, max(num_predict, 2000), client, provider, ollama_model
         )
         model_cls.model_validate(payload)
-        return payload, ms, model_tag
+
+    # Post-check for empty technical.what_was_built (T1.17)
+    tech_built = payload.get("technical", {}).get("what_was_built", "").strip()
+    if model_cls is EditorialEn and not tech_built:
+        log.warning("Empty what_was_built in English editorial, retrying once.")
+        recovery = (
+            f"{prompt}\n\nIMPORTANT: The 'what_was_built' field in 'technical' was empty. "
+            "You must provide a non-empty description of what was built or released."
+        )
+        try:
+            retry_payload, retry_ms, retry_model = editorial_chat(
+                recovery, schema, max(num_predict, 2000), client, provider, ollama_model
+            )
+            model_cls.model_validate(retry_payload)
+            if retry_payload.get("technical", {}).get("what_was_built", "").strip():
+                payload = retry_payload
+                ms += retry_ms
+                model_tag = retry_model
+        except Exception as exc:
+            log.debug("what_was_built recovery attempt failed: %s", exc)
+
+    return payload, ms, model_tag

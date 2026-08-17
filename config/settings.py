@@ -151,6 +151,18 @@ ARTICLE_MIN_CHARS = 400
 ARTICLE_MAX_AGE_DAYS = 7
 SOURCE_DEGRADED_AFTER = 3
 
+# --- Evening pipeline lock ---------------------------------------------------
+# A heartbeat exists so this TTL can be SHORT. The two work together: a live holder
+# refreshes roughly every 120s (every 20 articles at ~6s each), so 360s is refreshed
+# three times over before it can expire, while a dead holder releases the lock in six
+# minutes instead of sixty.
+#
+# The original failure this fixes: stopping a watcher shell on Windows did not kill its
+# python child, which kept running orphaned and held the lock. A 3600s TTL with a
+# heartbeat solves the opposite problem — a long job losing its lock — which was never
+# the problem here.
+EVENING_LOCK_TTL = env.int("EVENING_LOCK_TTL", default=360)
+
 # --- Ranking (ADR: weights are configuration, not code) ---------------------
 # Only dimensions available in M1 classification schema (CONTENT_SCHEMA.md §4).
 # technical_significance was removed (double-counted novelty + evidence).
