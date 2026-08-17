@@ -107,7 +107,7 @@ class TechnicalDetails(BaseModel):
 
 
 class DeepAnalysis(BaseModel):
-    """Matches CONTENT_SCHEMA.md §5 exactly."""
+    """Legacy single-step editorial (strategy C). Superseded by EditorialEn + Translation."""
 
     summary_uz: str
     why_it_matters_uz: str
@@ -115,6 +115,28 @@ class DeepAnalysis(BaseModel):
     technical: TechnicalDetails
     uzbekistan_application_uz: str
     evidence_level: str = Field(default="vendor_claim_only")
+
+
+class EditorialEn(BaseModel):
+    """English analysis. Verified independently of translation (ADR-005)."""
+
+    headline_en: str
+    summary_en: str
+    why_it_matters_en: str
+    leadership_en: str
+    uzbekistan_application_en: str
+    technical: TechnicalDetails
+    evidence_level: str = Field(default="vendor_claim_only")
+
+
+class Translation(BaseModel):
+    """Uzbek rendering of the *_en fields. `technical` is not translated."""
+
+    headline_uz: str
+    summary_uz: str
+    why_it_matters_uz: str
+    leadership_uz: str
+    uzbekistan_application_uz: str
 
 
 DEEP_ANALYSIS_SCHEMA: dict[str, Any] = {
@@ -155,26 +177,123 @@ DEEP_ANALYSIS_SCHEMA: dict[str, Any] = {
     ],
 }
 
-EDITORIAL_PROMPT_TEMPLATE = (
-    "You are a senior AI technical editor writing for an audience of engineering leaders "
-    "and AI engineers in Uzbekistan.\n\n"
-    "Perform a deep technical and editorial analysis of the article below. "
-    "Return JSON only conforming strictly to the schema.\n\n"
-    "## Strategy C and Editorial Rules:\n"
-    "1. Ground every claim strictly in the article text. If a detail (license, benchmark, repo, "
-    'architecture) is not in the source, leave it as an empty string (""). NEVER INVENT.\n'
-    "2. Write summary_uz, why_it_matters_uz, leadership_uz, and uzbekistan_application_uz "
-    "in clear, natural, grammatical Uzbek (Latin script).\n"
-    "3. Keep technical terminology, model names, metric names, and software names in English "
-    "(e.g., 'service tier', 'output token', 'Mean Absolute Error (MAE)', 'weights', 'checkpoint', "
-    "'fine-tuning', 'inference', 'benchmark', 'repo', 'latency').\n"
-    "4. local_deployable must be true ONLY if weights/code can be run self-hosted.\n"
-    "5. evidence_level must be 'vendor_claim_only' unless independently validated.\n\n"
+# --- Editorial: English analysis ---------------------------------------------
+# Separated from translation (ADR-005). English is verified on its own so that a poor
+# post can be attributed to comprehension or to translation, never to both at once.
+
+EDITORIAL_EN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "headline_en": {"type": "string"},
+        "summary_en": {"type": "string"},
+        "why_it_matters_en": {"type": "string"},
+        "leadership_en": {"type": "string"},
+        "uzbekistan_application_en": {"type": "string"},
+        "technical": {
+            "type": "object",
+            "properties": {
+                "what_was_built": {"type": "string"},
+                "architecture": {"type": "string"},
+                "license": {"type": "string"},
+                "repo_url": {"type": "string"},
+                "api_url": {"type": "string"},
+                "hardware": {"type": "string"},
+                "install": {"type": "string"},
+                "benchmarks": {"type": "string"},
+                "limitations": {"type": "string"},
+                "local_deployable": {"type": "boolean"},
+            },
+            "required": ["what_was_built", "limitations", "local_deployable"],
+        },
+        "evidence_level": {
+            "type": "string",
+            "enum": ["vendor_claim_only", "multiple_evidence"],
+        },
+    },
+    "required": [
+        "headline_en",
+        "summary_en",
+        "why_it_matters_en",
+        "leadership_en",
+        "uzbekistan_application_en",
+        "technical",
+        "evidence_level",
+    ],
+}
+
+EDITORIAL_EN_PROMPT = (
+    "You are a senior editor for a daily AI-engineering digest read by engineering "
+    "leaders and AI engineers in Uzbekistan.\n\n"
+    "Write the English analysis of the article below. Return JSON only.\n\n"
+    "## Voice — this is a news post, not a book report\n"
+    'Never refer to "the article", "this paper", "the post", or "the author". Write about '
+    "the news itself. Wrong: \"The article describes a new model.\" Right: \"Qwen released "
+    'a 2.4T open-weight model."\n'
+    "Lead with what happened. No preamble, no scene-setting.\n\n"
+    "## Length — enforced, not advisory\n"
+    "- headline_en: under 80 characters, states the news, no clickbait\n"
+    "- summary_en: exactly 2-3 sentences\n"
+    "- why_it_matters_en: exactly 1-2 sentences\n"
+    "- leadership_en: exactly 1-2 sentences, for a non-engineer decision maker\n"
+    "- uzbekistan_application_en: exactly 1 sentence, or empty if there is no honest one\n\n"
+    "## Grounding\n"
+    "Every claim must come from the article text. If a detail is absent — license, "
+    'benchmark number, repo URL, hardware requirement — leave that field as "". Never '
+    "infer, never fill from background knowledge. An empty field is correct; an invented "
+    "one is a defect.\n"
+    "- local_deployable: true only if weights or code can actually be self-hosted\n"
+    '- evidence_level: "vendor_claim_only" unless the article cites independent validation\n\n'
+    "## Language\n"
+    "Write in English only. Do not emit any other script or language, including single "
+    "words. This output is translated in a later stage.\n\n"
     "ARTICLE\n"
     "Title: {title}\n"
     "Source: {source}\n"
     "---\n"
     "{text}\n"
+)
+
+# --- Editorial: Uzbek translation --------------------------------------------
+
+TRANSLATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "headline_uz": {"type": "string"},
+        "summary_uz": {"type": "string"},
+        "why_it_matters_uz": {"type": "string"},
+        "leadership_uz": {"type": "string"},
+        "uzbekistan_application_uz": {"type": "string"},
+    },
+    "required": [
+        "headline_uz",
+        "summary_uz",
+        "why_it_matters_uz",
+        "leadership_uz",
+        "uzbekistan_application_uz",
+    ],
+}
+
+TRANSLATION_PROMPT = (
+    "Translate the fields below into Uzbek (Latin script). Return JSON only.\n\n"
+    "## You are translating, not writing\n"
+    "Do not add information, opinions, or sentences that are not in the source. Do not "
+    "remove any. Keep the same number of sentences per field.\n\n"
+    "## Keep in English\n"
+    "Model names, product names, company names, metric names, file formats, and "
+    "established technical terms: model, API, agent, framework, open-weight, weights, "
+    "checkpoint, benchmark, context, token, inference, latency, fine-tuning, quantization, "
+    "repo, MoE, embedding, prompt.\n"
+    "Do not transliterate these into Cyrillic-style Uzbek spellings. 'framework' stays "
+    "'framework', not 'freymvork'.\n\n"
+    "## Language\n"
+    "Output Uzbek Latin script only. Never emit Chinese, Russian, or any other script — "
+    "not even a single character. If a term has no natural Uzbek equivalent, keep the "
+    "English word.\n\n"
+    "## Natural Uzbek\n"
+    "Translate meaning, not word order. The result must read as though written by an "
+    "Uzbek technical journalist, not as a machine rendering of English syntax.\n\n"
+    "FIELDS TO TRANSLATE\n"
+    "{fields}\n"
 )
 
 # Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3
@@ -642,95 +761,104 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
     return article.status == Article.Status.CLASSIFIED
 
 
-def deep_analyze_text(
-    title: str,
-    source_name: str,
-    text: str,
-    num_predict: int = 1500,
-    client: httpx.Client | None = None,
-) -> tuple[DeepAnalysis, dict, int, str]:
-    """Deep technical and Uzbek editorial analysis. Provider chosen by LLM_PROVIDER.
-
-    Returns (deep_obj, raw_payload, latency_ms, model_tag).
-    """
-    truncated_text = text[:8000]
-    prompt = EDITORIAL_PROMPT_TEMPLATE.format(
-        title=title,
-        source=source_name,
-        text=truncated_text,
-    )
-
-    try:
-        raw_payload, latency_ms, model_tag = editorial_chat(
-            prompt=prompt,
-            schema=DEEP_ANALYSIS_SCHEMA,
-            num_predict=num_predict,
-            client=client,
-        )
-        deep_obj = DeepAnalysis.model_validate(raw_payload)
-        return deep_obj, raw_payload, latency_ms, model_tag
-    except (ValidationError, json.JSONDecodeError) as exc:
-        log.warning(
-            "Editorial validation error on first attempt for '%s': %s. Retrying once with error.",
-            title,
-            exc,
-        )
-        recovery_prompt = (
-            f"{prompt}\n\n"
-            f"IMPORTANT: Your previous output failed schema validation with error:\n{exc}\n"
-            "Please fix the error and return valid JSON conforming strictly to the schema."
-        )
-        raw_payload, latency_retry_ms, model_tag = editorial_chat(
-            prompt=recovery_prompt,
-            schema=DEEP_ANALYSIS_SCHEMA,
-            num_predict=max(num_predict, 2000),
-            client=client,
-        )
-        deep_obj = DeepAnalysis.model_validate(raw_payload)
-        return deep_obj, raw_payload, latency_retry_ms, model_tag
-
 
 def analyse_for_digest_logic(
     article_ids: list[int],
     client: httpx.Client | None = None,
 ) -> list[Analysis]:
-    """Run deep editorial analysis over the selected items to produce Uzbek text."""
-    articles = Article.objects.filter(id__in=article_ids).select_related("source")
-    created_analyses: list[Analysis] = []
+    """Two-stage editorial: English analysis for all items, then translation for all.
 
+    Batched by stage rather than per article, so the model loads once per stage. Returns
+    the translation analyses, since those are what rendering consumes.
+    """
+    articles = list(Article.objects.filter(id__in=article_ids).select_related("source"))
+
+    # --- Stage 1: English -----------------------------------------------------
+    en_by_article: dict[int, Analysis] = {}
     for art in articles:
-        # If editorial analysis already exists and is non-empty, avoid redundant LLM calls
         existing = (
-            art.analyses.filter(stage=Analysis.Stage.EDITORIAL).order_by("-created_at").first()
+            art.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN).order_by("-created_at").first()
         )
-        if existing and existing.payload.get("summary_uz"):
-            created_analyses.append(existing)
+        if existing and existing.payload.get("summary_en"):
+            en_by_article[art.id] = existing
             continue
-
         try:
-            deep_obj, raw_payload, latency_ms, model_tag = deep_analyze_text(
-                title=art.title,
-                source_name=art.source.name if art.source else "",
-                text=art.extracted_text,
+            payload, latency_ms, model_tag = _editorial_call(
+                prompt=EDITORIAL_EN_PROMPT.format(
+                    title=art.title,
+                    source=art.source.name if art.source else "",
+                    text=art.extracted_text[:8000],
+                ),
+                schema=EDITORIAL_EN_SCHEMA,
+                model_cls=EditorialEn,
                 num_predict=1500,
                 client=client,
             )
-            analysis = Analysis.objects.create(
-                article=art,
-                stage=Analysis.Stage.EDITORIAL,
-                model_tag=model_tag,
-                # MiMo exposes no model digest; only Ollama tags can drift silently.
-                model_digest=(
-                    fetch_model_digest(model_tag) if settings.LLM_PROVIDER != "mimo" else ""
-                ),
-                payload=raw_payload,
-                latency_ms=latency_ms,
-            )
-            created_analyses.append(analysis)
-            log.info("Editorial analysis completed for article %s (%s)", art.id, art.title)
+            en_by_article[art.id] = _record(art, Analysis.Stage.EDITORIAL_EN, model_tag,
+                                            payload, latency_ms)
+            log.info("English editorial done for article %s", art.id)
         except Exception as exc:
-            log.error(
-                "Failed deep editorial analysis for article %s (%s): %s", art.id, art.title, exc
-            )
+            log.error("English editorial failed for article %s (%s): %s", art.id, art.title, exc)
 
-    return created_analyses
+    # --- Stage 2: translation -------------------------------------------------
+    created: list[Analysis] = []
+    for art in articles:
+        en = en_by_article.get(art.id)
+        if en is None:
+            continue
+        existing = (
+            art.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).order_by("-created_at").first()
+        )
+        if existing and existing.payload.get("summary_uz"):
+            created.append(existing)
+            continue
+        try:
+            fields = {k: en.payload.get(k, "") for k in (
+                "headline_en", "summary_en", "why_it_matters_en",
+                "leadership_en", "uzbekistan_application_en",
+            )}
+            payload, latency_ms, model_tag = _editorial_call(
+                prompt=TRANSLATION_PROMPT.format(
+                    fields=json.dumps(fields, ensure_ascii=False, indent=2)
+                ),
+                schema=TRANSLATION_SCHEMA,
+                model_cls=Translation,
+                num_predict=1200,
+                client=client,
+            )
+            created.append(_record(art, Analysis.Stage.EDITORIAL_UZ, model_tag,
+                                   payload, latency_ms))
+            log.info("Uzbek translation done for article %s", art.id)
+        except Exception as exc:
+            log.error("Translation failed for article %s (%s): %s", art.id, art.title, exc)
+
+    return created
+
+
+def _record(article, stage, model_tag: str, payload: dict, latency_ms: int) -> Analysis:
+    return Analysis.objects.create(
+        article=article,
+        stage=stage,
+        model_tag=model_tag,
+        # MiMo exposes no digest; only Ollama tags can be repointed silently.
+        model_digest=fetch_model_digest(model_tag) if settings.LLM_PROVIDER != "mimo" else "",
+        payload=payload,
+        latency_ms=latency_ms,
+    )
+
+
+def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, client=None):
+    """One editorial call with a single validation retry. Returns (payload, ms, model_tag)."""
+    try:
+        payload, ms, model_tag = editorial_chat(prompt, schema, num_predict, client)
+        model_cls.model_validate(payload)
+        return payload, ms, model_tag
+    except (ValidationError, json.JSONDecodeError) as exc:
+        log.warning("Editorial validation failed, retrying once: %s", exc)
+        recovery = (
+            f"{prompt}\n\nIMPORTANT: your previous output failed validation:\n{exc}\n"
+            "Return valid JSON conforming strictly to the schema."
+        )
+        payload, ms, model_tag = editorial_chat(recovery, schema, max(num_predict, 2000), client)
+        model_cls.model_validate(payload)
+        return payload, ms, model_tag

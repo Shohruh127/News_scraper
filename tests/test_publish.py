@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.digest import publish, ranking, tasks
 from apps.digest.models import Analysis, Article, Digest, DigestItem, Source
+from tests.helpers import make_editorial
 
 
 @pytest.fixture
@@ -36,23 +37,7 @@ def test_digest(db):
         },
         latency_ms=8000,
     )
-    Analysis.objects.create(
-        article=art,
-        stage=Analysis.Stage.EDITORIAL,
-        model_tag="gemma4:31b",
-        payload={
-            "summary_uz": "Yangi model nashr qilindi.",
-            "why_it_matters_uz": "Muhim yangilik.",
-            "leadership_uz": "Boshqaruv uchun tavsiya.",
-            "technical": {
-                "what_was_built": "Model",
-                "local_deployable": True,
-            },
-            "uzbekistan_application_uz": "O'zbekistonda qo'llash mumkin.",
-            "evidence_level": "vendor_claim_only",
-        },
-        latency_ms=8000,
-    )
+    make_editorial(art)
     return ranking.compose_digest(timezone.localdate())
 
 

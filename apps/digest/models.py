@@ -94,6 +94,12 @@ class Analysis(models.Model):
     class Stage(models.TextChoices):
         TRIAGE = "triage"
         CLASSIFICATION = "classification"
+        #: English analysis. Separated from translation so a bad summary can be traced
+        #: to either comprehension or translation, not to an ambiguous single step.
+        EDITORIAL_EN = "editorial_en"
+        #: Uzbek translation of the *_en fields. `technical` stays English.
+        EDITORIAL_UZ = "editorial_uz"
+        #: Legacy single-step editorial (strategy C). Kept so old rows validate.
         EDITORIAL = "editorial"
 
     article = models.ForeignKey(Article, on_delete=models.CASCADE, related_name="analyses")

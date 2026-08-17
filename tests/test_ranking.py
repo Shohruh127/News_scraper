@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.digest import ranking
 from apps.digest.models import Analysis, Article, Digest, Source
+from tests.helpers import make_editorial
 
 
 @pytest.fixture
@@ -48,24 +49,7 @@ def classified_articles(db, source):
         },
         latency_ms=12000,
     )
-    Analysis.objects.create(
-        article=a1,
-        stage=Analysis.Stage.EDITORIAL,
-        model_tag="gemma4:31b",
-        payload={
-            "summary_uz": "30B ochiq model taqdim etildi.",
-            "why_it_matters_uz": "Ochiq model vaznlari yuklab olish uchun tayyor.",
-            "leadership_uz": "Lokal foydalanish mumkin.",
-            "technical": {
-                "what_was_built": "Open 30B model",
-                "limitations": "GPU required",
-                "local_deployable": True,
-            },
-            "uzbekistan_application_uz": "Lokal infratuzilmada ishlaydi.",
-            "evidence_level": "vendor_claim_only",
-        },
-        latency_ms=12000,
-    )
+    make_editorial(a1, summary_uz="30B ochiq model taqdim etildi.")
     articles.append(a1)
 
     # Art 2: ai_agents, live_product
@@ -91,24 +75,7 @@ def classified_articles(db, source):
         },
         latency_ms=11000,
     )
-    Analysis.objects.create(
-        article=a2,
-        stage=Analysis.Stage.EDITORIAL,
-        model_tag="gemma4:31b",
-        payload={
-            "summary_uz": "Agent framework yangilandi.",
-            "why_it_matters_uz": "Agentlar bilan ishlash osonlashdi.",
-            "leadership_uz": "Ish unumdorligini oshiradi.",
-            "technical": {
-                "what_was_built": "Agent framework v2",
-                "limitations": "None",
-                "local_deployable": False,
-            },
-            "uzbekistan_application_uz": "AI loyihalarida qo'llash mumkin.",
-            "evidence_level": "vendor_claim_only",
-        },
-        latency_ms=11000,
-    )
+    make_editorial(a2, summary_uz="MCP spetsifikatsiyasi yangilandi.")
     articles.append(a2)
 
     # Art 3: paper_only (hard excluded by ranking, NOT by triage)

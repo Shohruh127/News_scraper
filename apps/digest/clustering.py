@@ -1,72 +1,116 @@
-"""Canonical URL story clustering module.
+"""Story clustering — Tier A (ADR-004 §3, measured in docs/spike/DEDUP_MEASUREMENT.md).
 
-Rules (ADR-003 corrected):
-1. Exact canonical URL matching across different sources.
-2. Never cluster items from the same source (each release or post in a single source is distinct).
-3. Fuzzy matching and semantic clustering are deferred to M2.
-4. Highest scoring article in a cluster becomes the primary article; others become secondary.
-5. One DigestItem represents the cluster and links all sources as evidence.
+Canonical-URL duplicates never reach this module: `Article.canonical_url` is UNIQUE, so
+the database rejects them at ingestion. Clustering by URL here was dead code — it could
+not fire. The signal that actually works is text similarity.
+
+Tier A: character 5-gram Jaccard over the article text, threshold from settings.
+Measured over 17,020 pairs of live articles:
+
+    Qwen3.8-2.4T-A95B-FP8  vs  Qwen3.8-2.4T-A95B     0.900   must merge
+    ollama v0.32.10        vs  ollama v0.32.11       0.110   must not merge
+
+A 0.79 gap, and exactly one merge across the whole corpus with zero false positives.
+Titles score 0.000 on both cases and are useless for this.
+
+Source is deliberately ignored. The duplicate that reached the first published digest
+arrived twice through `hn`; ADR-003's same-source exclusion would have blocked it.
+
+Tier B — embedding cosine ~0.85 for the same story written independently by two outlets —
+is not built. It remains the open gap against PROJECT_PLAN.md §2.
 """
 
 import logging
+import re
+
+from django.conf import settings
 
 from .models import Analysis, Article
 
 log = logging.getLogger(__name__)
 
 
+def _shingles(text: str, k: int, limit: int) -> set[str]:
+    """Character k-gram set over normalised text."""
+    t = re.sub(r"\s+", " ", text[:limit].lower()).strip()
+    if len(t) < k:
+        return set()
+    return {t[i : i + k] for i in range(len(t) - k + 1)}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def text_similarity(a: Article, b: Article) -> float:
+    """Tier A similarity between two articles. 0.0 when either has no usable text."""
+    k = settings.CLUSTER_SHINGLE_SIZE
+    limit = settings.CLUSTER_TEXT_CHARS
+    return _jaccard(
+        _shingles(a.extracted_text or "", k, limit),
+        _shingles(b.extracted_text or "", k, limit),
+    )
+
+
 def cluster_candidates(
     candidates: list[tuple[Article, Analysis, float]],
+    threshold: float | None = None,
 ) -> list[tuple[Article, Analysis, float, list[Article]]]:
-    """Group cross-source duplicate stories sharing the same canonical URL.
+    """Group near-identical stories.
 
-    Input: list of (article, analysis, score)
-    Output: list of (primary_article, analysis, score, [secondary_article, ...])
+    Input:  [(article, analysis, score), ...]
+    Output: [(primary_article, analysis, score, [secondary_article, ...]), ...]
+
+    The highest-scoring member becomes the primary; the rest become evidence links on the
+    same DigestItem, so one story consumes one slot.
     """
     if not candidates:
         return []
 
-    # Each cluster: list of (article, analysis, score)
+    if threshold is None:
+        threshold = settings.CLUSTER_JACCARD_THRESHOLD
+
+    k = settings.CLUSTER_SHINGLE_SIZE
+    limit = settings.CLUSTER_TEXT_CHARS
+    # Shingle each article once; the comparison is O(n^2) but n is the candidate count,
+    # not the corpus. MinHash/LSH only becomes worthwhile past ~10k (ADR-004 §3).
+    shingles = {
+        art.id: _shingles(art.extracted_text or "", k, limit) for art, _, _ in candidates
+    }
+
     clusters: list[list[tuple[Article, Analysis, float]]] = []
-
     for cand in candidates:
-        art, _analysis, _score = cand
-        matched_cluster = None
-
-        if art.canonical_url:
-            for cluster in clusters:
-                for c_art, _c_analysis, _c_score in cluster:
-                    # Never cluster items from the same source
-                    if art.source_id and c_art.source_id and art.source_id == c_art.source_id:
-                        continue
-
-                    # Exact canonical URL match across different sources
-                    if art.canonical_url == c_art.canonical_url:
-                        matched_cluster = cluster
-                        log.info(
-                            "Clustered cross-source '%s' with '%s' by canonical URL: %s",
-                            art.title,
-                            c_art.title,
-                            art.canonical_url,
-                        )
-                        break
-
-                if matched_cluster is not None:
+        art = cand[0]
+        placed = False
+        for cluster in clusters:
+            for member, _, _ in cluster:
+                score = _jaccard(shingles[art.id], shingles[member.id])
+                if score >= threshold:
+                    log.info(
+                        "Clustered '%s' with '%s' (jaccard %.3f, sources %s/%s)",
+                        art.title[:50],
+                        member.title[:50],
+                        score,
+                        art.source_id,
+                        member.source_id,
+                    )
+                    cluster.append(cand)
+                    placed = True
                     break
-
-        if matched_cluster is not None:
-            matched_cluster.append(cand)
-        else:
+            if placed:
+                break
+        if not placed:
             clusters.append([cand])
 
-    result: list[tuple[Article, Analysis, float, list[Article]]] = []
+    result = []
     for cluster in clusters:
-        # Sort cluster members by score descending
         cluster.sort(key=lambda x: x[2], reverse=True)
         primary_art, primary_analysis, primary_score = cluster[0]
-        secondary_arts = [c[0] for c in cluster[1:]]
-        result.append((primary_art, primary_analysis, primary_score, secondary_arts))
+        result.append((primary_art, primary_analysis, primary_score, [c[0] for c in cluster[1:]]))
 
-    # Keep overall candidates sorted by primary score descending
     result.sort(key=lambda x: x[2], reverse=True)
+    if len(result) < len(candidates):
+        log.info("Clustering: %s candidates -> %s stories", len(candidates), len(result))
     return result

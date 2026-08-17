@@ -191,8 +191,9 @@ def render_channel_post(digest: Digest) -> str:
         .prefetch_related("secondary_articles", "secondary_articles__source")
         .all()
     ):
+        # The reader-facing text comes from the translation stage only (ADR-005).
         editorial = (
-            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL)
+            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
             .order_by("-created_at")
             .first()
         )
@@ -202,7 +203,7 @@ def render_channel_post(digest: Digest) -> str:
         if not summary_uz:
             raise ValueError(
                 f"DigestItem #{item.position} (article ID {item.article_id}: "
-                f"'{item.article.title}') lacks an editorial analysis with non-empty "
+                f"'{item.article.title}') lacks an editorial_uz analysis with non-empty "
                 "'summary_uz'. English fallback is prohibited."
             )
 
@@ -262,15 +263,17 @@ def render_group_comment(digest: Digest) -> str:
         .prefetch_related("secondary_articles", "secondary_articles__source")
         .all()
     ):
+        # The technical appendix reads the English stage: repo URLs, licences and install
+        # commands are English artefacts and are deliberately not translated (ADR-005).
         editorial = (
-            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL)
+            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN)
             .order_by("-created_at")
             .first()
         )
         if not editorial:
             raise ValueError(
                 f"DigestItem #{item.position} (article ID {item.article_id}: "
-                f"'{item.article.title}') lacks an editorial analysis for "
+                f"'{item.article.title}') lacks an editorial_en analysis for "
                 "technical appendix rendering."
             )
 

@@ -150,6 +150,15 @@ RANKING_WEIGHTS = {
 DIGEST_MAX_ITEMS = 7
 DIGEST_MAX_PER_TOPIC = 2
 
+# --- Clustering, Tier A (ADR-004 §3) ----------------------------------------
+# Character 5-gram Jaccard over article text. Measured in
+# docs/spike/DEDUP_MEASUREMENT.md: separates a real duplicate (0.900) from two
+# consecutive releases (0.110). The 0.79 gap means any value in 0.2-0.9 decides both
+# cases identically, so this threshold needs no tuning — do not treat it as a knob.
+CLUSTER_JACCARD_THRESHOLD = 0.80
+CLUSTER_SHINGLE_SIZE = 5
+CLUSTER_TEXT_CHARS = 6000
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

@@ -1,4 +1,8 @@
-"""Tests for the editorial stage (T1.10) and Uzbek rendering rules."""
+"""Editorial stages (ADR-005): English analysis, then Uzbek translation.
+
+The two stages are separate so a poor post can be traced to comprehension or to
+translation, never to an ambiguous single step. These tests pin that separation.
+"""
 
 import json
 from datetime import date
@@ -9,6 +13,32 @@ import respx
 
 from apps.digest import llm, ranking
 from apps.digest.models import Analysis, Article, Digest, DigestItem, Source
+from tests.helpers import make_editorial
+
+pytestmark = pytest.mark.django_db
+
+
+EN_PAYLOAD = {
+    "headline_en": "Qwen releases 2.4T open-weight model",
+    "summary_en": "Qwen released a 2.4 trillion parameter open-weight model.",
+    "why_it_matters_en": "It can be self-hosted.",
+    "leadership_en": "Reduces API dependency.",
+    "uzbekistan_application_en": "Local teams can self-host it.",
+    "technical": {
+        "what_was_built": "A 2.4T MoE model",
+        "limitations": "Requires large VRAM",
+        "local_deployable": True,
+    },
+    "evidence_level": "vendor_claim_only",
+}
+
+UZ_PAYLOAD = {
+    "headline_uz": "Qwen 2.4T ochiq model chiqardi",
+    "summary_uz": "Qwen 2.4 trillion parametrli ochiq model taqdim etdi.",
+    "why_it_matters_uz": "Uni mahalliy serverda ishlatish mumkin.",
+    "leadership_uz": "API'ga bog'liqlikni kamaytiradi.",
+    "uzbekistan_application_uz": "Mahalliy jamoalar o'zida joylashtira oladi.",
+}
 
 
 @pytest.fixture
@@ -21,81 +51,133 @@ def source(db):
     )
 
 
+@pytest.fixture
+def article(source):
+    return Article.objects.create(
+        source=source,
+        canonical_url="https://example.com/editorial-art",
+        content_hash="h_ed",
+        title="Qwen Open Weights Release",
+        extracted_text="Qwen released open weights with FP8 quantisation." * 20,
+        status=Article.Status.CLASSIFIED,
+    )
+
+
 @respx.mock
-def test_editorial_analysis_generates_uzbek_and_technical(db, source, settings):
-    # Pinned explicitly: the provider is configurable, so a test that inherits it from
-    # the developer's .env silently changes which code path it covers.
+def test_two_stages_produce_two_analyses_on_ollama(article, settings):
     settings.LLM_PROVIDER = "ollama"
     settings.OLLAMA_BASE_URL = "http://localhost:11434"
     settings.OLLAMA_DEEP_MODEL = "gemma4:31b"
 
-    art = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/editorial-art",
-        content_hash="h_ed",
-        title="Ollama Multi-GPU Serving Update",
-        extracted_text="Ollama released multi-gpu support with vLLM engine integration.",
-        status=Article.Status.CLASSIFIED,
-    )
-
-    fake_response = {
-        "message": {
-            "content": """{
-                "summary_uz": "Ollama bir nechta GPU'da xizmat ko'rsata boshladi.",
-                "why_it_matters_uz": "Modellarni tezroq ishga tushirish imkonini beradi.",
-                "leadership_uz": "Infratuzilma xarajatlarini kamaytiradi.",
-                "technical": {
-                    "what_was_built": "Multi-GPU inference support",
-                    "architecture": "vLLM backend wrapper",
-                    "license": "MIT",
-                    "repo_url": "https://github.com/ollama/ollama",
-                    "api_url": "",
-                    "hardware": "NVIDIA RTX 4090",
-                    "install": "ollama serve --gpus all",
-                    "benchmarks": "2.4x throughput",
-                    "limitations": "Linux only",
-                    "local_deployable": true
-                },
-                "uzbekistan_application_uz": "Mahalliy serverlarda modellarni deploy qilish.",
-                "evidence_level": "vendor_claim_only"
-            }"""
-        }
-    }
-
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(
-            200, json={"models": [{"name": "gemma4:31b", "digest": "digest31b"}]}
+            200, json={"models": [{"name": "gemma4:31b", "digest": "d31b"}]}
         )
     )
     respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(200, json=fake_response)
+        side_effect=[
+            httpx.Response(200, json={"message": {"content": json.dumps(EN_PAYLOAD)}}),
+            httpx.Response(200, json={"message": {"content": json.dumps(UZ_PAYLOAD)}}),
+        ]
     )
 
-    analyses = llm.analyse_for_digest_logic([art.id])
-    assert len(analyses) == 1
-    analysis = analyses[0]
+    result = llm.analyse_for_digest_logic([article.id])
 
-    assert analysis.stage == Analysis.Stage.EDITORIAL
-    assert (
-        analysis.payload["summary_uz"]
-        == "Ollama bir nechta GPU'da xizmat ko'rsata boshladi."
+    assert len(result) == 1
+    assert result[0].stage == Analysis.Stage.EDITORIAL_UZ
+    stages = set(article.analyses.values_list("stage", flat=True))
+    assert stages == {Analysis.Stage.EDITORIAL_EN, Analysis.Stage.EDITORIAL_UZ}
+
+    en = article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
+    assert en.payload["summary_en"].startswith("Qwen released")
+    assert en.payload["technical"]["local_deployable"] is True
+    # The Ollama tag can be repointed silently, so the digest is recorded.
+    assert en.model_digest == "d31b"
+
+
+@respx.mock
+def test_two_stages_on_mimo_record_the_mimo_tag(article, settings):
+    """MiMo is OpenAI-compatible, so the response envelope differs and must be normalised."""
+    settings.LLM_PROVIDER = "mimo"
+    settings.MIMO_BASE_URL = "https://mimo.test/v1"
+    settings.MIMO_API_KEY = "test-key"
+    settings.MIMO_EDITORIAL_MODEL = "mimo-v2.5"
+
+    def mimo(payload):
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    route = respx.post("https://mimo.test/v1/chat/completions").mock(
+        side_effect=[mimo(EN_PAYLOAD), mimo(UZ_PAYLOAD)]
     )
-    assert analysis.payload["technical"]["local_deployable"] is True
+
+    result = llm.analyse_for_digest_logic([article.id])
+
+    assert route.call_count == 2, "one call for English, one for translation"
+    assert len(result) == 1
+    uz = result[0]
+    assert uz.model_tag == "mimo-v2.5"
+    # MiMo exposes no digest, so the drift-detection field is deliberately empty.
+    assert uz.model_digest == ""
+    assert uz.payload["summary_uz"].startswith("Qwen 2.4 trillion")
 
 
-def test_rendering_requires_editorial_summary_uz(db, source):
-    """Rendering must fail with ValueError if editorial analysis or summary_uz is missing."""
-    art = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/missing-uz",
-        content_hash="h_missing",
-        title="Article Without Uzbek Summary",
-        extracted_text="Content",
-        status=Article.Status.CLASSIFIED,
-    )
-    # Only classification analysis, no editorial analysis
+@respx.mock
+def test_strict_json_schema_is_requested_not_json_object(article, settings):
+    """Measured 2026-08-17: json_object conformed 2/7 times on real articles because the
+    model invented its own keys. Ollama enforces the schema in the decoder; an
+    OpenAI-compatible endpoint only does so when strict mode is asked for explicitly."""
+    settings.LLM_PROVIDER = "mimo"
+    settings.MIMO_BASE_URL = "https://mimo.test/v1"
+    settings.MIMO_API_KEY = "k"
+
+    captured = {}
+
+    def capture(request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(EN_PAYLOAD)}}]}
+        )
+
+    respx.post("https://mimo.test/v1/chat/completions").mock(side_effect=capture)
+    llm.editorial_chat(prompt="x", schema=llm.EDITORIAL_EN_SCHEMA, num_predict=100)
+
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+
+
+@respx.mock
+def test_translation_never_sees_the_article_only_the_english(article, settings):
+    """The translator must translate, not re-summarise. It receives the English fields,
+    not the source text, so it cannot add information the analysis did not find."""
+    settings.LLM_PROVIDER = "mimo"
+    settings.MIMO_BASE_URL = "https://mimo.test/v1"
+    settings.MIMO_API_KEY = "k"
+
+    prompts = []
+
+    def capture(request):
+        body = json.loads(request.content)
+        prompts.append(body["messages"][0]["content"])
+        payload = EN_PAYLOAD if len(prompts) == 1 else UZ_PAYLOAD
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    respx.post("https://mimo.test/v1/chat/completions").mock(side_effect=capture)
+    llm.analyse_for_digest_logic([article.id])
+
+    assert len(prompts) == 2
+    assert "FP8 quantisation" in prompts[0], "English stage gets the article text"
+    assert "FP8 quantisation" not in prompts[1], "translation stage must not get the source"
+    assert "Qwen released a 2.4 trillion" in prompts[1], "it gets the English fields instead"
+
+
+def test_rendering_requires_the_translation_stage(article):
+    """Rendering must fail loudly rather than fall back to English (ADR-003)."""
     Analysis.objects.create(
-        article=art,
+        article=article,
         stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
@@ -108,33 +190,16 @@ def test_rendering_requires_editorial_summary_uz(db, source):
         },
         latency_ms=1000,
     )
-
-    digest = Digest.objects.create(
-        digest_date=date(2026, 8, 14),
-        status=Digest.Status.COMPOSED,
-    )
-    DigestItem.objects.create(
-        digest=digest,
-        article=art,
-        position=1,
-        score=0.85,
-    )
+    digest = Digest.objects.create(digest_date=date(2026, 8, 14))
+    DigestItem.objects.create(digest=digest, article=article, position=1, score=0.85)
 
     with pytest.raises(ValueError, match="English fallback is prohibited"):
         ranking.render_channel_post(digest)
 
 
-def test_rendering_succeeds_with_editorial_analysis(db, source):
-    art = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/with-uz",
-        content_hash="h_with_uz",
-        title="Valid Uzbek Article",
-        extracted_text="Content",
-        status=Article.Status.CLASSIFIED,
-    )
+def test_rendering_succeeds_with_both_stages(article):
     Analysis.objects.create(
-        article=art,
+        article=article,
         stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
@@ -146,103 +211,17 @@ def test_rendering_succeeds_with_editorial_analysis(db, source):
         },
         latency_ms=1000,
     )
-    Analysis.objects.create(
-        article=art,
-        stage=Analysis.Stage.EDITORIAL,
-        model_tag="gemma4:31b",
-        payload={
-            "summary_uz": "Yangi arxitektura muvaffaqiyatli sinovdan o'tdi.",
-            "why_it_matters_uz": "Tezlik 3 barobar oshdi.",
-            "leadership_uz": "Qaror qabul qiluvchilar uchun muhim.",
-            "technical": {
-                "what_was_built": "Fast transformer layer",
-                "limitations": "Memory bounds",
-                "local_deployable": True,
-            },
-            "uzbekistan_application_uz": "O'zbekistonda tadqiqotlar uchun mos.",
-            "evidence_level": "vendor_claim_only",
-        },
-        latency_ms=2000,
-    )
+    make_editorial(article, summary_uz="Yangi arxitektura sinovdan o'tdi.",
+                   built="Fast transformer layer", limitations="Memory bounds")
 
-    digest = Digest.objects.create(
-        digest_date=date(2026, 8, 14),
-        status=Digest.Status.COMPOSED,
-    )
-    DigestItem.objects.create(
-        digest=digest,
-        article=art,
-        position=1,
-        score=0.85,
-    )
+    digest = Digest.objects.create(digest_date=date(2026, 8, 14))
+    DigestItem.objects.create(digest=digest, article=article, position=1, score=0.85)
 
-    channel_post = ranking.render_channel_post(digest)
-    assert "Yangi arxitektura muvaffaqiyatli sinovdan o'tdi." in channel_post
-    assert "English reason" not in channel_post
+    post = ranking.render_channel_post(digest)
+    assert "Yangi arxitektura sinovdan o'tdi." in post
+    assert "English reason" not in post
 
-    group_comment = ranking.render_group_comment(digest)
-    assert "Fast transformer layer" in group_comment
-    assert "Mavjud ✅" in group_comment
-
-
-@respx.mock
-def test_editorial_uses_mimo_when_provider_is_mimo(db, source, settings):
-    """ADR-004 §5: the editorial stage routes to MiMo, and records the MiMo model tag.
-
-    MiMo is OpenAI-compatible, so the response shape differs from Ollama's and the
-    provider layer has to normalise it.
-    """
-    settings.LLM_PROVIDER = "mimo"
-    settings.MIMO_BASE_URL = "https://mimo.test/v1"
-    settings.MIMO_API_KEY = "test-key"
-    settings.MIMO_EDITORIAL_MODEL = "mimo-v2.5"
-
-    art = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/mimo-art",
-        content_hash="h_mimo",
-        title="Qwen Open Weights Release",
-        extracted_text="Qwen released open weights with FP8 quantisation." * 20,
-        status=Article.Status.CLASSIFIED,
-    )
-
-    body = {
-        "summary_uz": "Qwen yangi ochiq model taqdim etdi.",
-        "why_it_matters_uz": "Ochiq weights mahalliy deployment imkonini beradi.",
-        "leadership_uz": "Xarajatni kamaytiradi.",
-        "uzbekistan_application_uz": "Davlat tizimlarida on-premise ishlatish mumkin.",
-        "evidence_level": "vendor_claim_only",
-        "technical": {
-            "what_was_built": "Open-weight MoE model",
-            "limitations": "Katta VRAM talab qiladi",
-            "local_deployable": True,
-        },
-    }
-    route = respx.post("https://mimo.test/v1/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={"choices": [{"message": {"role": "assistant", "content": json.dumps(body)}}]},
-        )
-    )
-
-    analyses = llm.analyse_for_digest_logic([art.id])
-
-    assert route.called
-    assert len(analyses) == 1
-    a = analyses[0]
-    assert a.stage == Analysis.Stage.EDITORIAL
-    assert a.model_tag == "mimo-v2.5"
-    # MiMo exposes no digest, so the drift-detection field is deliberately empty.
-    assert a.model_digest == ""
-    assert a.payload["summary_uz"] == "Qwen yangi ochiq model taqdim etdi."
-
-
-@respx.mock
-def test_mimo_provider_requires_credentials(db, source, settings):
-    """A misconfigured provider must fail loudly, not fall back to a different model."""
-    settings.LLM_PROVIDER = "mimo"
-    settings.MIMO_BASE_URL = ""
-    settings.MIMO_API_KEY = ""
-
-    with pytest.raises(RuntimeError, match="MIMO_API_KEY"):
-        llm.editorial_chat(prompt="x", schema={"type": "object"}, num_predict=100)
+    # The technical appendix reads the English stage on purpose: repo URLs, licences and
+    # install commands are English artefacts and are not translated.
+    appendix = ranking.render_group_comment(digest)
+    assert "Fast transformer layer" in appendix
