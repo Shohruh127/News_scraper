@@ -66,6 +66,9 @@ def article(source):
 @respx.mock
 def test_two_stages_produce_two_analyses_on_ollama(article, settings):
     settings.LLM_PROVIDER = "ollama"
+    settings.EDITORIAL_EN_PROVIDER = "ollama"
+    settings.TRANSLATION_PROVIDER = "ollama"
+    settings.OLLAMA_FAST_MODEL = "gemma4:31b"
     settings.OLLAMA_BASE_URL = "http://localhost:11434"
     settings.OLLAMA_DEEP_MODEL = "gemma4:31b"
 
@@ -99,6 +102,8 @@ def test_two_stages_produce_two_analyses_on_ollama(article, settings):
 def test_two_stages_on_mimo_record_the_mimo_tag(article, settings):
     """MiMo is OpenAI-compatible, so the response envelope differs and must be normalised."""
     settings.LLM_PROVIDER = "mimo"
+    settings.EDITORIAL_EN_PROVIDER = "mimo"
+    settings.TRANSLATION_PROVIDER = "mimo"
     settings.MIMO_BASE_URL = "https://mimo.test/v1"
     settings.MIMO_API_KEY = "test-key"
     settings.MIMO_EDITORIAL_MODEL = "mimo-v2.5"
@@ -129,6 +134,8 @@ def test_strict_json_schema_is_requested_not_json_object(article, settings):
     model invented its own keys. Ollama enforces the schema in the decoder; an
     OpenAI-compatible endpoint only does so when strict mode is asked for explicitly."""
     settings.LLM_PROVIDER = "mimo"
+    settings.EDITORIAL_EN_PROVIDER = "mimo"
+    settings.TRANSLATION_PROVIDER = "mimo"
     settings.MIMO_BASE_URL = "https://mimo.test/v1"
     settings.MIMO_API_KEY = "k"
 
@@ -152,6 +159,8 @@ def test_translation_never_sees_the_article_only_the_english(article, settings):
     """The translator must translate, not re-summarise. It receives the English fields,
     not the source text, so it cannot add information the analysis did not find."""
     settings.LLM_PROVIDER = "mimo"
+    settings.EDITORIAL_EN_PROVIDER = "mimo"
+    settings.TRANSLATION_PROVIDER = "mimo"
     settings.MIMO_BASE_URL = "https://mimo.test/v1"
     settings.MIMO_API_KEY = "k"
 

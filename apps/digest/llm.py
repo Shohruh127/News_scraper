@@ -505,13 +505,23 @@ def editorial_chat(
     schema: dict,
     num_predict: int,
     client: httpx.Client | None = None,
+    provider: str | None = None,
+    ollama_model: str | None = None,
 ) -> tuple[dict, int, str]:
-    """Dispatch the editorial call to the configured provider.
+    """Dispatch an editorial call to a provider.
 
-    Returns (payload, latency_ms, model_tag). Only the editorial stage is routed this
-    way — triage and classification stay on local Ollama (ADR-004 §5).
+    Returns (payload, latency_ms, model_tag). Triage and classification always run on
+    local Ollama; only the two editorial stages are routed, and they are routed
+    independently — see EDITORIAL_EN_PROVIDER and TRANSLATION_PROVIDER.
+
+    `ollama_model` matters: translation belongs on the fast model. gemma4:latest lost
+    0/7 numbers in measurement, while gemma4:31b is the model that garbled Uzbek in the
+    first digest. Defaulting the whole Ollama branch to the deep model would have sent
+    translation to the wrong one.
     """
-    if settings.LLM_PROVIDER == "mimo":
+    if provider is None:
+        provider = settings.LLM_PROVIDER
+    if provider == "mimo":
         if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
             raise RuntimeError("LLM_PROVIDER=mimo but MIMO_API_KEY/MIMO_BASE_URL are unset")
         model = settings.MIMO_EDITORIAL_MODEL
@@ -525,7 +535,7 @@ def editorial_chat(
         )
         return payload, ms, model
 
-    model = settings.OLLAMA_DEEP_MODEL
+    model = ollama_model or settings.OLLAMA_DEEP_MODEL
     payload, ms = ollama_chat(
         model=model,
         prompt=prompt,
@@ -793,6 +803,7 @@ def analyse_for_digest_logic(
                 model_cls=EditorialEn,
                 num_predict=1500,
                 client=client,
+                provider=settings.EDITORIAL_EN_PROVIDER,
             )
             en_by_article[art.id] = _record(art, Analysis.Stage.EDITORIAL_EN, model_tag,
                                             payload, latency_ms)
@@ -823,8 +834,10 @@ def analyse_for_digest_logic(
                 ),
                 schema=TRANSLATION_SCHEMA,
                 model_cls=Translation,
-                num_predict=1200,
+                num_predict=settings.TRANSLATION_NUM_PREDICT,
                 client=client,
+                provider=settings.TRANSLATION_PROVIDER,
+                ollama_model=settings.OLLAMA_FAST_MODEL,
             )
             created.append(_record(art, Analysis.Stage.EDITORIAL_UZ, model_tag,
                                    payload, latency_ms))
@@ -847,10 +860,13 @@ def _record(article, stage, model_tag: str, payload: dict, latency_ms: int) -> A
     )
 
 
-def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, client=None):
+def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, client=None,
+                    provider: str | None = None, ollama_model: str | None = None):
     """One editorial call with a single validation retry. Returns (payload, ms, model_tag)."""
     try:
-        payload, ms, model_tag = editorial_chat(prompt, schema, num_predict, client)
+        payload, ms, model_tag = editorial_chat(
+            prompt, schema, num_predict, client, provider, ollama_model
+        )
         model_cls.model_validate(payload)
         return payload, ms, model_tag
     except (ValidationError, json.JSONDecodeError) as exc:
@@ -859,6 +875,8 @@ def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, clie
             f"{prompt}\n\nIMPORTANT: your previous output failed validation:\n{exc}\n"
             "Return valid JSON conforming strictly to the schema."
         )
-        payload, ms, model_tag = editorial_chat(recovery, schema, max(num_predict, 2000), client)
+        payload, ms, model_tag = editorial_chat(
+            recovery, schema, max(num_predict, 2000), client, provider, ollama_model
+        )
         model_cls.model_validate(payload)
         return payload, ms, model_tag

@@ -114,7 +114,22 @@ OLLAMA_MAX_CONCURRENCY = 2
 # The MiMo Token Plan forbids automated/backend use. This is accepted by the
 # project owner for the testing phase only, with a stated intention to move to a
 # local model or a backend-permitted tier before release. See ADR-004 §5.
+# Per-stage providers. Measured 2026-08-17 on the seven live digest items:
+#
+#   English analysis   MiMo    real reasoning; gemma4:31b garbled Uzbek and was slower
+#   Translation        Ollama  gemma4:latest lost 0/7 numbers and kept the glossary;
+#                              mimo-v2.5 changed 2.4 trillion to 2 trillion and
+#                              calqued open-weight in two posts
+#
+# Translation is a constrained task: the input is fixed and the output shape is fixed.
+# A stronger model spends its extra freedom changing things, and in translation any
+# change is an error. Heavy reasoning to the heavy model, fidelity to the local one.
 LLM_PROVIDER = env("LLM_PROVIDER", default="ollama")
+EDITORIAL_EN_PROVIDER = env("EDITORIAL_EN_PROVIDER", default=LLM_PROVIDER)
+TRANSLATION_PROVIDER = env("TRANSLATION_PROVIDER", default="ollama")
+#: Uzbek tokenises poorly, so a 1200-token cap truncated the JSON mid-object and the
+#: whole translation was lost. Measured: 2500 gives 7/7 twice, 1200 gave 2/7.
+TRANSLATION_NUM_PREDICT = env.int("TRANSLATION_NUM_PREDICT", default=2500)
 MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")
