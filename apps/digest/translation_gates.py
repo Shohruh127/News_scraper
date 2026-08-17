@@ -26,7 +26,6 @@ GLOSSARY = (
     "quantization",
     "latency",
     "checkpoint",
-    "embedding",
     "prompt",
     "MoE",
 )
@@ -38,15 +37,30 @@ CALQUES = {
     "framework": ["freymvork", "ramka"],
     "quantization": ["kvantlash", "kvantizatsiya"],
     "checkpoint": ["nazorat nuqtasi", "chekpoint"],
-    "embedding": ["joylashtirish", "ichiga joylashtirish"],
     "inference": ["xulosa chiqarish", "inferensiya"],
 }
 
+# `embedding` was removed from both lists. It is the one entry that is commonly an
+# ordinary English gerund rather than the ML term: a real article read "embedding
+# interactive quizzes to test comprehension", where `joylashtirish` is the correct
+# translation, and the gate rejected a good translation.
+#
+# The remaining terms carry the same risk in principle — `context`, `prompt` and `weights`
+# all have ordinary senses — but in AI news text they appear overwhelmingly in the
+# technical one. Detecting part of speech to do better would cost more than it saves;
+# if another term produces a false positive in practice, remove it the same way.
+
+
+#: Thousand separators differ by locale: English writes 5,000 and Uzbek writes 5000.
+#: Without normalising, the comma splits 5,000 into 5 and 000 and the gate reports both
+#: as missing from a translation that carried the number correctly. Measured on a real
+#: article: "5,000+ websites" against "5000+ veb-saytda" was rejected wrongly.
+_THOUSANDS = re.compile(r"(?<=\d)[,  ](?=\d{3}(?!\d))")
+
 
 def extract_numbers(text: str) -> set[str]:
-    """Extract numeric tokens (e.g. '2.4', '100', '0.32.11', unit suffixes like '2.4T')."""
-    # Match numbers with possible decimals or version points
-    return set(re.findall(r"\d+(?:\.\d+)*", text))
+    """Numeric tokens, with thousand separators removed so 5,000 == 5000 == 5 000."""
+    return set(re.findall(r"\d+(?:\.\d+)*", _THOUSANDS.sub("", text)))
 
 
 def check_numbers(en_fields: dict, uz_fields: dict) -> list[str]:

@@ -126,3 +126,33 @@ def test_validate_translation_full_suite():
     }
     bad_violations = translation_gates.validate_translation(en, uz_bad)
     assert len(bad_violations) >= 3
+
+
+def test_thousand_separators_do_not_trigger_the_number_gate():
+    """Measured false positive: English "5,000+ websites" against Uzbek "5000+ veb-saytda".
+
+    The comma split 5,000 into 5 and 000, so the gate reported both as missing from a
+    translation that had carried the number correctly. Locales differ on thousand
+    separators and the gate must not.
+    """
+    en = {"summary_en": "Scans hit 5,000+ websites across 1 000 000 requests."}
+    uz = {"summary_uz": "Skanerlar 5000+ veb-saytda 1000000 so'rov bilan ishladi."}
+    assert translation_gates.validate_translation(en, uz) == []
+
+
+def test_a_genuinely_changed_number_is_still_caught():
+    """The separator fix must not weaken the gate. mimo-v2.5 turned 2.4 trillion into 2."""
+    en = {"summary_en": "A 2.4 trillion parameter model."}
+    uz = {"summary_uz": "2 trillion parametrli model."}
+    assert any("2.4" in v for v in translation_gates.validate_translation(en, uz))
+
+
+def test_embedding_is_not_a_glossary_term():
+    """It is the one listed term that is commonly an ordinary English gerund.
+
+    A real article read "embedding interactive quizzes to test comprehension", where
+    `joylashtirish` is correct, and the gate rejected a good translation for it.
+    """
+    en = {"summary_en": "The methods include embedding interactive quizzes."}
+    uz = {"summary_uz": "Usullar interaktiv testlarni joylashtirishni o'z ichiga oladi."}
+    assert translation_gates.validate_translation(en, uz) == []
