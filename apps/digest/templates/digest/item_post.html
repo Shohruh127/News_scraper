@@ -1,9 +1,27 @@
-🔥 <b>{{ position }}. <a href="{{ url }}">{{ headline_uz }}</a></b>
-<i>#{{ topic }} | #{{ maturity }}{% if source_name %} | {{ source_name }}{% endif %}</i>
+{% comment %}
+One post per news item. Visible weight is the constraint: 15 of these arrive daily, and
+readers said the earlier version was too long.
 
-{{ summary_uz }}
-{% if why_it_matters_uz %}
-💡 <b>Nima uchun muhim:</b> {{ why_it_matters_uz }}{% endif %}{% if leadership_uz %}
-💼 <b>Boshqaruv uchun:</b> {{ leadership_uz }}{% endif %}{% if uzbekistan_application_uz %}
-🇺🇿 <b>O'zbekistonda:</b> {{ uzbekistan_application_uz }}{% endif %}{% if secondary_sources %}
-<i>Yana: {% for sec in secondary_sources %}<a href="{{ sec.url }}">{{ sec.source_name|default:sec.title }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</i>{% endif %}
+Structure follows what tech news channels converge on — a headline, one compact takeaway,
+then detail available on demand:
+
+  visible    headline + tags + summary        ~400 chars
+  collapsed  why it matters, leadership,      behind one tap
+             local angle, extra sources
+
+`<blockquote expandable>` produces an expandable_blockquote entity (Bot API 7.4) —
+verified against the live API, not assumed. Nothing is cut; it is folded.
+{% endcomment %}🔥 <b><a href="{{ url }}">{{ headline_uz }}</a></b>
+<i>#{{ topic }} · {{ source_name }}</i>
+
+{{ summary_uz }}{% if why_it_matters_uz or leadership_uz or uzbekistan_application_uz or secondary_sources %}
+<blockquote expandable>{% if why_it_matters_uz %}💡 <b>Nima uchun muhim</b>
+{{ why_it_matters_uz }}{% endif %}{% if leadership_uz %}
+
+💼 <b>Boshqaruv uchun</b>
+{{ leadership_uz }}{% endif %}{% if uzbekistan_application_uz %}
+
+🇺🇿 <b>O'zbekistonda</b>
+{{ uzbekistan_application_uz }}{% endif %}{% if secondary_sources %}
+
+🔗 {% for sec in secondary_sources %}<a href="{{ sec.url }}">{{ sec.source_name|default:sec.title }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}{% endif %}</blockquote>{% endif %}

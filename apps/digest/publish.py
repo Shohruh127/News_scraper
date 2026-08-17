@@ -47,7 +47,16 @@ def send_message(
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False,
+        # `disable_web_page_preview` was replaced by LinkPreviewOptions in Bot API 7.0.
+        # Previews are off by default: 15 posts a day each carrying a preview card makes
+        # the channel very tall, and auto-generated previews of arXiv and GitHub pages are
+        # generic. The headline is already a link. Set TELEGRAM_LINK_PREVIEW=true to show
+        # them, in which case they render small and below the text rather than dominating.
+        "link_preview_options": (
+            {"is_disabled": False, "prefer_small_media": True, "show_above_text": False}
+            if getattr(settings, "TELEGRAM_LINK_PREVIEW", False)
+            else {"is_disabled": True}
+        ),
     }
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
