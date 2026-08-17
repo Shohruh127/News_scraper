@@ -92,6 +92,91 @@ CLASSIFICATION_SCHEMA: dict[str, Any] = {
     ],
 }
 
+
+class TechnicalDetails(BaseModel):
+    what_was_built: str = ""
+    architecture: str = ""
+    license: str = ""
+    repo_url: str = ""
+    api_url: str = ""
+    hardware: str = ""
+    install: str = ""
+    benchmarks: str = ""
+    limitations: str = ""
+    local_deployable: bool = False
+
+
+class DeepAnalysis(BaseModel):
+    """Matches CONTENT_SCHEMA.md §5 exactly."""
+
+    summary_uz: str
+    why_it_matters_uz: str
+    leadership_uz: str
+    technical: TechnicalDetails
+    uzbekistan_application_uz: str
+    evidence_level: str = Field(default="vendor_claim_only")
+
+
+DEEP_ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "summary_uz": {"type": "string"},
+        "why_it_matters_uz": {"type": "string"},
+        "leadership_uz": {"type": "string"},
+        "technical": {
+            "type": "object",
+            "properties": {
+                "what_was_built": {"type": "string"},
+                "architecture": {"type": "string"},
+                "license": {"type": "string"},
+                "repo_url": {"type": "string"},
+                "api_url": {"type": "string"},
+                "hardware": {"type": "string"},
+                "install": {"type": "string"},
+                "benchmarks": {"type": "string"},
+                "limitations": {"type": "string"},
+                "local_deployable": {"type": "boolean"},
+            },
+            "required": ["what_was_built", "limitations", "local_deployable"],
+        },
+        "uzbekistan_application_uz": {"type": "string"},
+        "evidence_level": {
+            "type": "string",
+            "enum": ["vendor_claim_only", "multiple_evidence"],
+        },
+    },
+    "required": [
+        "summary_uz",
+        "why_it_matters_uz",
+        "leadership_uz",
+        "technical",
+        "uzbekistan_application_uz",
+        "evidence_level",
+    ],
+}
+
+EDITORIAL_PROMPT_TEMPLATE = (
+    "You are a senior AI technical editor writing for an audience of engineering leaders "
+    "and AI engineers in Uzbekistan.\n\n"
+    "Perform a deep technical and editorial analysis of the article below. "
+    "Return JSON only conforming strictly to the schema.\n\n"
+    "## Strategy C and Editorial Rules:\n"
+    "1. Ground every claim strictly in the article text. If a detail (license, benchmark, repo, "
+    'architecture) is not in the source, leave it as an empty string (""). NEVER INVENT.\n'
+    "2. Write summary_uz, why_it_matters_uz, leadership_uz, and uzbekistan_application_uz "
+    "in clear, natural, grammatical Uzbek (Latin script).\n"
+    "3. Keep technical terminology, model names, metric names, and software names in English "
+    "(e.g., 'service tier', 'output token', 'Mean Absolute Error (MAE)', 'weights', 'checkpoint', "
+    "'fine-tuning', 'inference', 'benchmark', 'repo', 'latency').\n"
+    "4. local_deployable must be true ONLY if weights/code can be run self-hosted.\n"
+    "5. evidence_level must be 'vendor_claim_only' unless independently validated.\n\n"
+    "ARTICLE\n"
+    "Title: {title}\n"
+    "Source: {source}\n"
+    "---\n"
+    "{text}\n"
+)
+
 # Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3
 CLASSIFICATION_PROMPT_TEMPLATE = (
     "You are a technical editor for an AI-engineering news digest read by "
@@ -103,7 +188,7 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
     "Not a tool that runs models — that is production_engineering.\n"
     "- ai_agents: A system where an LLM takes actions through tools: agent frameworks, "
     "tool calling, MCP/A2A, multi-agent orchestration, coding or browser agents. "
-    "Not any paper that merely uses the word \"agent\". "
+    'Not any paper that merely uses the word "agent". '
     "Not a tool release that happens to support agents — that is production_engineering.\n"
     "- new_approaches: A new method, architecture, training technique, or inference technique. "
     "This is the default for research papers. Not a named model release.\n"
@@ -128,7 +213,7 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
     "Do not force a technical category onto a business story.\n\n"
     "## maturity — what actually exists right now\n\n"
     "- production_deployment: Running in a named real organisation, with reported results. "
-    "Not \"could be deployed\".\n"
+    'Not "could be deployed".\n'
     "- live_product: A publicly usable product or API available today. "
     "A changelog for an already-shipped tool is live_product, not production_deployment.\n"
     "- reproducible_open_source: Code or weights are downloadable today at a working link.\n"
@@ -136,7 +221,7 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
     "- announcement_only: Announced, but nothing usable has been released.\n"
     "- paper_only: A research paper or preprint.\n\n"
     "The paper_only / reproducible_open_source boundary:\n"
-    "A paper is paper_only even when it promises code, says \"code will be released\", or links "
+    'A paper is paper_only even when it promises code, says "code will be released", or links '
     "a repository that does not yet exist. reproducible_open_source requires a link that resolves "
     "to real artifacts today. Excellent results do not raise maturity — only shipped artifacts do."
     "\n\n"
@@ -368,6 +453,7 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
 
     Analysis.objects.create(
         article=article,
+        stage=Analysis.Stage.TRIAGE,
         model_tag=model,
         model_digest=digest,
         payload=raw_payload,
@@ -379,13 +465,10 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
     # (M0.1: AVA-Encoder arXiv paper got production_deployment).
     # Maturity exclusion happens in ranking.select_digest_candidates()
     # after the 31B classification pass.
-    if (
-        classification.primary_topic == Topic.IRRELEVANT
-        or (
-            classification.novelty < 3
-            and classification.evidence < 3
-            and classification.production_readiness < 3
-        )
+    if classification.primary_topic == Topic.IRRELEVANT or (
+        classification.novelty < 3
+        and classification.evidence < 3
+        and classification.production_readiness < 3
     ):
         article.status = Article.Status.SKIPPED
     else:
@@ -445,6 +528,7 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
 
     Analysis.objects.create(
         article=article,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag=model,
         model_digest=digest,
         payload=raw_payload,
@@ -461,3 +545,105 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
 
     article.save(update_fields=["status"])
     return article.status == Article.Status.CLASSIFIED
+
+
+def deep_analyze_text(
+    title: str,
+    source_name: str,
+    text: str,
+    model: str,
+    timeout: int,
+    num_predict: int = 1500,
+    client: httpx.Client | None = None,
+) -> tuple[DeepAnalysis, dict, int, str]:
+    """Perform deep technical and Uzbek editorial analysis on an article."""
+    truncated_text = text[:8000]
+    prompt = EDITORIAL_PROMPT_TEMPLATE.format(
+        title=title,
+        source=source_name,
+        text=truncated_text,
+    )
+
+    digest = fetch_model_digest(model, client=client)
+    latency_ms = 0
+
+    try:
+        raw_payload, latency_ms = ollama_chat(
+            model=model,
+            prompt=prompt,
+            schema=DEEP_ANALYSIS_SCHEMA,
+            timeout=timeout,
+            num_predict=num_predict,
+            client=client,
+        )
+        deep_obj = DeepAnalysis.model_validate(raw_payload)
+        return deep_obj, raw_payload, latency_ms, digest
+    except (ValidationError, json.JSONDecodeError) as exc:
+        log.warning(
+            "Editorial validation error on first attempt for '%s': %s. Retrying once with error.",
+            title,
+            exc,
+        )
+        recovery_prompt = (
+            f"{prompt}\n\n"
+            f"IMPORTANT: Your previous output failed schema validation with error:\n{exc}\n"
+            "Please fix the error and return valid JSON conforming strictly to the schema."
+        )
+        raw_payload, latency_retry_ms = ollama_chat(
+            model=model,
+            prompt=recovery_prompt,
+            schema=DEEP_ANALYSIS_SCHEMA,
+            timeout=timeout,
+            num_predict=max(num_predict, 2000),
+            client=client,
+        )
+        deep_obj = DeepAnalysis.model_validate(raw_payload)
+        return deep_obj, raw_payload, latency_ms + latency_retry_ms, digest
+
+
+def analyse_for_digest_logic(
+    article_ids: list[int],
+    client: httpx.Client | None = None,
+) -> list[Analysis]:
+    """Run deep editorial analysis over the selected items to produce Uzbek text."""
+    model = getattr(settings, "OLLAMA_DEEP_MODEL", "gemma4:31b")
+    timeout = getattr(settings, "OLLAMA_DEEP_TIMEOUT", 180)
+
+    articles = Article.objects.filter(id__in=article_ids).select_related("source")
+    created_analyses: list[Analysis] = []
+
+    for art in articles:
+        # If editorial analysis already exists and is non-empty, avoid redundant LLM calls
+        existing = (
+            art.analyses.filter(stage=Analysis.Stage.EDITORIAL).order_by("-created_at").first()
+        )
+        if existing and existing.payload.get("summary_uz"):
+            created_analyses.append(existing)
+            continue
+
+        try:
+            deep_obj, raw_payload, latency_ms, digest = deep_analyze_text(
+                title=art.title,
+                source_name=art.source.name if art.source else "",
+                text=art.extracted_text,
+                model=model,
+                timeout=timeout,
+                num_predict=1500,
+                client=client,
+            )
+            analysis = Analysis.objects.create(
+                article=art,
+                stage=Analysis.Stage.EDITORIAL,
+                model_tag=model,
+                model_digest=digest,
+                payload=raw_payload,
+                latency_ms=latency_ms,
+            )
+            created_analyses.append(analysis)
+            log.info("Editorial analysis completed for article %s (%s)", art.id, art.title)
+        except Exception as exc:
+            log.error(
+                "Failed deep editorial analysis for article %s (%s): %s", art.id, art.title, exc
+            )
+
+    return created_analyses

@@ -21,8 +21,13 @@ TRACKING_PARAM = re.compile(r"^(utm_[a-z_]*|fbclid|gclid|mc_cid|mc_eid|ref|sourc
 
 #: Text that means the page did not actually load for us.
 BLOCKED_MARKERS = (
-    "enable javascript", "access denied", "captcha", "are you a robot",
-    "please verify you are human", "403 forbidden", "cloudflare",
+    "enable javascript",
+    "access denied",
+    "captcha",
+    "are you a robot",
+    "please verify you are human",
+    "403 forbidden",
+    "cloudflare",
 )
 
 
@@ -32,18 +37,17 @@ class ExtractionFailed(Exception):
 
 def canonical_url(url: str) -> str:
     p = urlparse(url.strip())
-    kept = [
-        kv for kv in p.query.split("&")
-        if kv and not TRACKING_PARAM.match(kv.split("=")[0])
-    ]
-    return urlunparse((
-        p.scheme.lower(),
-        p.netloc.lower(),
-        p.path.rstrip("/") or "/",
-        "",
-        "&".join(kept),
-        "",
-    ))
+    kept = [kv for kv in p.query.split("&") if kv and not TRACKING_PARAM.match(kv.split("=")[0])]
+    return urlunparse(
+        (
+            p.scheme.lower(),
+            p.netloc.lower(),
+            p.path.rstrip("/") or "/",
+            "",
+            "&".join(kept),
+            "",
+        )
+    )
 
 
 def content_hash(text: str) -> str:
@@ -69,9 +73,7 @@ def fetch_text(url: str) -> tuple[str, str]:
     if looks_blocked(text):
         raise ExtractionFailed(f"page looks blocked (bot wall or paywall): {url}")
     if len(text) < settings.ARTICLE_MIN_CHARS:
-        raise ExtractionFailed(
-            f"only {len(text)} chars, below {settings.ARTICLE_MIN_CHARS}: {url}"
-        )
+        raise ExtractionFailed(f"only {len(text)} chars, below {settings.ARTICLE_MIN_CHARS}: {url}")
     return text, "trafilatura"
 
 

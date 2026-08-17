@@ -33,8 +33,7 @@ class RetryableHTTPError(Exception):
 
 
 #: Retry only what can succeed on a second attempt.
-RETRYABLE = (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError,
-             RetryableHTTPError)
+RETRYABLE = (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, RetryableHTTPError)
 
 
 @retry(
@@ -73,6 +72,7 @@ def parse_date(value) -> datetime | None:
 
 # --------------------------------------------------------------------- fetchers
 
+
 def fetch_rss(source, client) -> list[dict]:
     feed = feedparser.parse(_get(client, source.url).text)
     return [
@@ -95,32 +95,41 @@ def fetch_github(source, client) -> list[dict]:
     for rel in _get(client, url).json():
         if rel.get("draft"):
             continue
-        out.append({
-            "url": rel["html_url"],
-            "title": f"{repo} {rel.get('name') or rel.get('tag_name', '')}".strip(),
-            "published_at": parse_date(rel.get("published_at")),
-            "raw_text": f"{rel.get('name') or ''}\n\n{rel.get('body') or ''}".strip(),
-            "meta": {"repo": repo, "tag": rel.get("tag_name"),
-                     "prerelease": rel.get("prerelease", False)},
-        })
+        out.append(
+            {
+                "url": rel["html_url"],
+                "title": f"{repo} {rel.get('name') or rel.get('tag_name', '')}".strip(),
+                "published_at": parse_date(rel.get("published_at")),
+                "raw_text": f"{rel.get('name') or ''}\n\n{rel.get('body') or ''}".strip(),
+                "meta": {
+                    "repo": repo,
+                    "tag": rel.get("tag_name"),
+                    "prerelease": rel.get("prerelease", False),
+                },
+            }
+        )
     return out
 
 
 def fetch_hn(source, client) -> list[dict]:
     min_points = source.config.get("min_points", 50)
-    url = ("https://hn.algolia.com/api/v1/search_by_date?tags=story"
-           f"&numericFilters=points%3E{min_points}&hitsPerPage=100")
+    url = (
+        "https://hn.algolia.com/api/v1/search_by_date?tags=story"
+        f"&numericFilters=points%3E{min_points}&hitsPerPage=100"
+    )
     out = []
     for h in _get(client, url).json().get("hits", []):
         if not h.get("url"):
             continue
-        out.append({
-            "url": h["url"],
-            "title": h.get("title", ""),
-            "published_at": parse_date(h.get("created_at")),
-            "raw_text": "",
-            "meta": {"points": h.get("points"), "hn_id": h.get("objectID")},
-        })
+        out.append(
+            {
+                "url": h["url"],
+                "title": h.get("title", ""),
+                "published_at": parse_date(h.get("created_at")),
+                "raw_text": "",
+                "meta": {"points": h.get("points"), "hn_id": h.get("objectID")},
+            }
+        )
     return out
 
 
@@ -141,13 +150,15 @@ def fetch_hf(source, client) -> list[dict]:
         summary = paper.get("summary", "").strip()
         if not paper_id or not title:
             continue
-        out.append({
-            "url": f"https://huggingface.co/papers/{paper_id}",
-            "title": title,
-            "published_at": parse_date(entry.get("publishedAt") or paper.get("publishedAt")),
-            "raw_text": f"{title}\n\n{summary}",
-            "meta": {"arxiv_id": paper_id, "upvotes": paper.get("upvotes")},
-        })
+        out.append(
+            {
+                "url": f"https://huggingface.co/papers/{paper_id}",
+                "title": title,
+                "published_at": parse_date(entry.get("publishedAt") or paper.get("publishedAt")),
+                "raw_text": f"{title}\n\n{summary}",
+                "meta": {"arxiv_id": paper_id, "upvotes": paper.get("upvotes")},
+            }
+        )
     return out
 
 

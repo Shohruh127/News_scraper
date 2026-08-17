@@ -1,9 +1,10 @@
 """Tests for ranking, candidate selection, digest composition, and template rendering."""
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 from django.db import IntegrityError
+from django.utils import timezone
 
 from apps.digest import ranking
 from apps.digest.models import Analysis, Article, Digest, Source
@@ -35,6 +36,7 @@ def classified_articles(db, source):
     )
     Analysis.objects.create(
         article=a1,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "frontier_models",
@@ -43,7 +45,24 @@ def classified_articles(db, source):
             "evidence": 9,
             "production_readiness": 8,
             "reason": "Open model",
+        },
+        latency_ms=12000,
+    )
+    Analysis.objects.create(
+        article=a1,
+        stage=Analysis.Stage.EDITORIAL,
+        model_tag="gemma4:31b",
+        payload={
             "summary_uz": "30B ochiq model taqdim etildi.",
+            "why_it_matters_uz": "Ochiq model vaznlari yuklab olish uchun tayyor.",
+            "leadership_uz": "Lokal foydalanish mumkin.",
+            "technical": {
+                "what_was_built": "Open 30B model",
+                "limitations": "GPU required",
+                "local_deployable": True,
+            },
+            "uzbekistan_application_uz": "Lokal infratuzilmada ishlaydi.",
+            "evidence_level": "vendor_claim_only",
         },
         latency_ms=12000,
     )
@@ -60,6 +79,7 @@ def classified_articles(db, source):
     )
     Analysis.objects.create(
         article=a2,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "ai_agents",
@@ -68,7 +88,24 @@ def classified_articles(db, source):
             "evidence": 8,
             "production_readiness": 9,
             "reason": "Agent update",
+        },
+        latency_ms=11000,
+    )
+    Analysis.objects.create(
+        article=a2,
+        stage=Analysis.Stage.EDITORIAL,
+        model_tag="gemma4:31b",
+        payload={
             "summary_uz": "Agent framework yangilandi.",
+            "why_it_matters_uz": "Agentlar bilan ishlash osonlashdi.",
+            "leadership_uz": "Ish unumdorligini oshiradi.",
+            "technical": {
+                "what_was_built": "Agent framework v2",
+                "limitations": "None",
+                "local_deployable": False,
+            },
+            "uzbekistan_application_uz": "AI loyihalarida qo'llash mumkin.",
+            "evidence_level": "vendor_claim_only",
         },
         latency_ms=11000,
     )
@@ -85,6 +122,7 @@ def classified_articles(db, source):
     )
     Analysis.objects.create(
         article=a3,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "new_approaches",
@@ -109,6 +147,7 @@ def classified_articles(db, source):
     )
     Analysis.objects.create(
         article=a4,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "frontier_models",
@@ -126,7 +165,6 @@ def classified_articles(db, source):
 
 
 def test_calculate_score_bonuses_and_penalties(db, source):
-    # GitHub URL bonus (+0.10) and reproducible_open_source bonus (+0.15)
     art = Article.objects.create(
         source=source,
         canonical_url="https://github.com/test/repo",
@@ -136,6 +174,7 @@ def test_calculate_score_bonuses_and_penalties(db, source):
     )
     analysis = Analysis.objects.create(
         article=art,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "production_engineering",
@@ -148,7 +187,6 @@ def test_calculate_score_bonuses_and_penalties(db, source):
     )
 
     score = ranking.calculate_score(art, analysis)
-    # Base (high scores) + open_source (+0.15) + github (+0.10) = well above 0.8
     assert score > 0.8
 
 
@@ -163,6 +201,7 @@ def test_low_evidence_penalty(db, source):
     )
     analysis_low = Analysis.objects.create(
         article=art,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "startups",
@@ -184,6 +223,7 @@ def test_low_evidence_penalty(db, source):
     )
     analysis_hi = Analysis.objects.create(
         article=art2,
+        stage=Analysis.Stage.CLASSIFICATION,
         model_tag="gemma4:31b",
         payload={
             "primary_topic": "startups",
@@ -200,7 +240,6 @@ def test_low_evidence_penalty(db, source):
 
 def test_hard_exclusion_and_candidate_selection(db, classified_articles):
     candidates = ranking.select_digest_candidates()
-    # 4 articles created: a1 and a2 are valid; a3 (paper_only) and a4 (announcement_only) excluded
     assert len(candidates) == 2
     articles_in_digest = [c[0] for c in candidates]
     assert classified_articles[0] in articles_in_digest
@@ -211,30 +250,79 @@ def test_hard_exclusion_and_candidate_selection(db, classified_articles):
 
 def test_no_padding_rule(db, classified_articles):
     """If only 2 items qualify, the digest must have exactly 2 items (never pad to 7)."""
-    digest = ranking.compose_digest(date(2026, 8, 14))
+    digest = ranking.compose_digest()
     assert digest.items.count() == 2
     assert digest.status == Digest.Status.COMPOSED
 
 
+def test_cross_digest_exclusion(db, classified_articles):
+    """Articles already published in a digest must never appear in subsequent digests."""
+    today = timezone.localdate()
+    d1 = ranking.compose_digest(today)
+    assert d1.items.count() == 2
+
+    # Attempt to compose for Day 2 — both qualifying articles are already in d1
+    candidates_day2 = ranking.select_digest_candidates(today + timedelta(days=1))
+    assert len(candidates_day2) == 0
+
+
+def test_target_date_window_backfill(db, source):
+    """Candidate selection respects target_date window rather than now()."""
+    target_d = date(2026, 8, 1)
+    target_dt = timezone.make_aware(datetime(2026, 8, 1, 12, 0, 0))
+
+    art = Article.objects.create(
+        source=source,
+        canonical_url="https://example.com/old-backfill-art",
+        content_hash="h_backfill",
+        title="Backfill Old Article",
+        extracted_text="Text " * 50,
+        status=Article.Status.CLASSIFIED,
+    )
+    Article.objects.filter(id=art.id).update(fetched_at=target_dt)
+
+    Analysis.objects.create(
+        article=art,
+        stage=Analysis.Stage.CLASSIFICATION,
+        model_tag="gemma4:31b",
+        payload={
+            "primary_topic": "ai_agents",
+            "maturity": "live_product",
+            "novelty": 8,
+            "evidence": 8,
+            "production_readiness": 8,
+        },
+        latency_ms=1000,
+    )
+
+    # Selecting for target_d finds it
+    cands_at_target = ranking.select_digest_candidates(target_d)
+    assert len(cands_at_target) == 1
+    assert cands_at_target[0][0].id == art.id
+
+    # Selecting for 15 days later (2026-08-16) does NOT find it because cutoff is 7 days
+    cands_later = ranking.select_digest_candidates(date(2026, 8, 16))
+    assert len(cands_later) == 0
+
+
 def test_compose_digest_idempotency_constraint(db, classified_articles):
-    """Calling compose_digest twice for the same date must raise IntegrityError."""
-    target_d = date(2026, 8, 14)
-    ranking.compose_digest(target_d)
+    today = timezone.localdate()
+    ranking.compose_digest(today)
 
     with pytest.raises(IntegrityError):
-        ranking.compose_digest(target_d)
+        ranking.compose_digest(today)
 
 
 def test_render_templates_snapshot(db, classified_articles):
-    target_d = date(2026, 8, 14)
-    digest = ranking.compose_digest(target_d)
+    today = timezone.localdate()
+    digest = ranking.compose_digest(today)
 
     post_html = ranking.render_channel_post(digest)
-    assert "2026-08-14" in post_html
+    assert str(today) in post_html
     assert "Open Model 30B Released" in post_html
     assert "30B ochiq model taqdim etildi." in post_html
     assert "<b>" in post_html and "</b>" in post_html
 
     comment_html = ranking.render_group_comment(digest)
-    assert "2026-08-14" in comment_html
+    assert str(today) in comment_html
     assert "Open Model 30B Released" in comment_html

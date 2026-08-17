@@ -3,6 +3,7 @@
 {% for item in items %}
 <b>{{ item.position }}. <a href="{{ item.url }}">{{ item.title }}</a></b>
 <i>Mavzu: #{{ item.topic }} | Bosqich: #{{ item.maturity }}</i>
-{{ item.summary_uz }}
+{{ item.summary_uz|safe }}
+{% if item.secondary_sources %}<i>Qo'shimcha manbalar: {% for sec in item.secondary_sources %}<a href="{{ sec.url }}">{{ sec.source_name|default:sec.title }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</i>{% endif %}
 {% endfor %}
 <i>💡 Texnik tahlil va arxitektura tafsilotlari muhokama guruhida (izohda).</i>

@@ -30,8 +30,10 @@ class Command(BaseCommand):
             if r.get("error"):
                 self.stdout.write(f"  {r['source']:<16}{'FAILED':>9}   {r['error'][:40]}")
             else:
-                self.stdout.write(f"  {r['source']:<16}{r['fetched']:>9}{r['created']:>7}"
-                                  f"{r['duplicate']:>7}{r['unusable']:>10}")
+                self.stdout.write(
+                    f"  {r['source']:<16}{r['fetched']:>9}{r['created']:>7}"
+                    f"{r['duplicate']:>7}{r['unusable']:>10}"
+                )
 
         total_new = sum(r.get("created", 0) for r in rows)
         self.stdout.write(f"\n  {total_new} new articles")

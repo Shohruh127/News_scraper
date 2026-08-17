@@ -77,8 +77,7 @@ class Article(models.Model):
     fetched_at = models.DateTimeField(auto_now_add=True)
     language = models.CharField(max_length=10, blank=True)
     extracted_text = models.TextField()
-    status = models.CharField(max_length=20, choices=Status, default=Status.FETCHED,
-                              db_index=True)
+    status = models.CharField(max_length=20, choices=Status, default=Status.FETCHED, db_index=True)
     meta = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -90,9 +89,20 @@ class Article(models.Model):
 
 
 class Analysis(models.Model):
-    """One LLM call. Both triage and classification land here."""
+    """One LLM call. Triage, classification, and editorial stages land here."""
+
+    class Stage(models.TextChoices):
+        TRIAGE = "triage"
+        CLASSIFICATION = "classification"
+        EDITORIAL = "editorial"
 
     article = models.ForeignKey(Article, on_delete=models.CASCADE, related_name="analyses")
+    stage = models.CharField(
+        max_length=20,
+        choices=Stage,
+        default=Stage.CLASSIFICATION,
+        db_index=True,
+    )
     model_tag = models.CharField(max_length=60)
     #: Ollama digest. On this server the 8B model has no tag but `latest`, so a
     #: repointed tag is only detectable through this field.
@@ -106,7 +116,7 @@ class Analysis(models.Model):
         verbose_name_plural = "analyses"
 
     def __str__(self):
-        return f"{self.model_tag} → {self.article_id}"
+        return f"{self.stage}:{self.model_tag} → {self.article_id}"
 
     @property
     def topic(self):
@@ -140,6 +150,9 @@ class Digest(models.Model):
 class DigestItem(models.Model):
     digest = models.ForeignKey(Digest, on_delete=models.CASCADE, related_name="items")
     article = models.ForeignKey(Article, on_delete=models.PROTECT)
+    secondary_articles = models.ManyToManyField(
+        Article, related_name="secondary_in_digest_items", blank=True
+    )
     position = models.PositiveSmallIntegerField()
     score = models.FloatField()
     channel_message_id = models.BigIntegerField(null=True, blank=True)
@@ -164,8 +177,7 @@ class Feedback(models.Model):
         NOT_USEFUL = "not_useful"
         WANT_TO_BUILD = "want_to_build"
 
-    digest_item = models.ForeignKey(DigestItem, on_delete=models.CASCADE,
-                                    related_name="feedback")
+    digest_item = models.ForeignKey(DigestItem, on_delete=models.CASCADE, related_name="feedback")
     user_id = models.BigIntegerField()
     reaction = models.CharField(max_length=20, choices=Reaction)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -173,8 +185,9 @@ class Feedback(models.Model):
     class Meta:
         ordering = ["-created_at"]
         constraints = [
-            models.UniqueConstraint(fields=["digest_item", "user_id"],
-                                    name="one_reaction_per_user_per_item"),
+            models.UniqueConstraint(
+                fields=["digest_item", "user_id"], name="one_reaction_per_user_per_item"
+            ),
         ]
 
     def __str__(self):

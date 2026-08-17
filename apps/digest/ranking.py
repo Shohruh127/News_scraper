@@ -8,16 +8,17 @@ Rules:
 5. Idempotency is enforced by the database unique constraint on Digest.digest_date.
 """
 
-import html
 from collections import Counter
 from datetime import date as dt_date
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import time as dt_time
 
 from django.conf import settings
 from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone
 
+from . import clustering
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Digest, DigestItem, Maturity, Topic
 
 
@@ -65,9 +66,8 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
     # Bonuses — only fields available in M1
     if analysis.maturity == Maturity.REPRODUCIBLE_OPEN_SOURCE:
         score += 0.15
-    if (
-        "github.com" in article.canonical_url
-        or (article.source and article.source.connector == "github")
+    if "github.com" in article.canonical_url or (
+        article.source and article.source.connector == "github"
     ):
         score += 0.10
 
@@ -80,25 +80,34 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
 
 def select_digest_candidates(
     target_date: dt_date | None = None,
-) -> list[tuple[Article, Analysis, float]]:
-    """Select and diversify top ranking articles for the digest.
+) -> list[tuple[Article, Analysis, float, list[Article]]]:
+    """Select, score, cluster, and diversify top ranking articles for the digest.
 
-    Enforces max per topic and total limits. Never pads.
+    Enforces:
+    - Relative cutoff to target_date
+    - Strict exclusion of articles already published in any previous digest
+    - Canonical URL dedup before topic diversification (same-source never merges)
+    - Max per topic and total limits
+    - Never pads.
     """
     if target_date is None:
         target_date = timezone.localdate()
 
     max_age_days = getattr(settings, "ARTICLE_MAX_AGE_DAYS", 7)
-    cutoff = timezone.now() - timedelta(days=max_age_days)
+    end_of_day = timezone.make_aware(datetime.combine(target_date, dt_time.max))
+    cutoff = end_of_day - timedelta(days=max_age_days)
 
     max_items = getattr(settings, "DIGEST_MAX_ITEMS", 7)
     max_per_topic = getattr(settings, "DIGEST_MAX_PER_TOPIC", 2)
 
-    # Query classified articles
+    # Query classified articles strictly excluding already published articles
     articles = (
         Article.objects.filter(
             status=Article.Status.CLASSIFIED,
+            digestitem__isnull=True,
+            secondary_in_digest_items__isnull=True,
             fetched_at__gte=cutoff,
+            fetched_at__lte=end_of_day,
         )
         .select_related("source")
         .prefetch_related("analyses")
@@ -106,7 +115,11 @@ def select_digest_candidates(
 
     scored_candidates: list[tuple[Article, Analysis, float]] = []
     for art in articles:
-        analysis = art.analyses.order_by("-created_at").first()
+        # Prefer classification stage analysis; fallback to latest
+        analysis = (
+            art.analyses.filter(stage=Analysis.Stage.CLASSIFICATION).order_by("-created_at").first()
+            or art.analyses.order_by("-created_at").first()
+        )
         if not analysis:
             continue
 
@@ -117,17 +130,20 @@ def select_digest_candidates(
         score = calculate_score(art, analysis)
         scored_candidates.append((art, analysis, score))
 
-    # Sort descending by score
+    # Sort descending by score before canonical URL dedup
     scored_candidates.sort(key=lambda x: x[2], reverse=True)
 
-    # Apply topic diversification limit
-    topic_counts: Counter = Counter()
-    selected: list[tuple[Article, Analysis, float]] = []
+    # Apply canonical URL dedup BEFORE topic diversification
+    clustered_candidates = clustering.cluster_candidates(scored_candidates)
 
-    for art, analysis, score in scored_candidates:
+    # Apply topic diversification limit on clusters
+    topic_counts: Counter = Counter()
+    selected: list[tuple[Article, Analysis, float, list[Article]]] = []
+
+    for art, analysis, score, secondary_arts in clustered_candidates:
         topic = analysis.topic
         if topic_counts[topic] < max_per_topic:
-            selected.append((art, analysis, score))
+            selected.append((art, analysis, score, secondary_arts))
             topic_counts[topic] += 1
             if len(selected) >= max_items:
                 break
@@ -150,37 +166,80 @@ def compose_digest(digest_date: dt_date | None = None) -> Digest:
         )
 
         candidates = select_digest_candidates(digest_date)
-        for pos, (article, _analysis, score) in enumerate(candidates, start=1):
-            DigestItem.objects.create(
+        for pos, (article, _analysis, score, secondary_arts) in enumerate(candidates, start=1):
+            item = DigestItem.objects.create(
                 digest=digest,
                 article=article,
                 position=pos,
                 score=score,
             )
+            if secondary_arts:
+                item.secondary_articles.set(secondary_arts)
 
     return digest
 
 
 def render_channel_post(digest: Digest) -> str:
-    """Render Telegram channel post HTML (leadership/overview format)."""
-    items_data = []
-    for item in digest.items.select_related("article", "article__source").all():
-        analysis = item.article.analyses.order_by("-created_at").first()
-        payload = analysis.payload if analysis else {}
-        summary_uz = payload.get("summary_uz") or payload.get("reason") or item.article.title
-        topic = analysis.topic if analysis else "ai"
-        maturity = analysis.maturity if analysis else "product"
+    """Render Telegram channel post HTML (leadership/overview format).
 
-        items_data.append({
-            "position": item.position,
-            "title": html.escape(item.article.title),
-            "url": item.article.canonical_url,
-            "source_name": html.escape(item.article.source.name if item.article.source else ""),
-            "topic": html.escape(str(topic)),
-            "maturity": html.escape(str(maturity)),
-            "summary_uz": html.escape(summary_uz),
-            "score": item.score,
-        })
+    Requires an editorial analysis with non-empty summary_uz for every item.
+    Missing Uzbek is a strict error, never a fallback to English.
+    """
+    items_data = []
+    for item in (
+        digest.items.select_related("article", "article__source")
+        .prefetch_related("secondary_articles", "secondary_articles__source")
+        .all()
+    ):
+        editorial = (
+            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL)
+            .order_by("-created_at")
+            .first()
+        )
+        payload = editorial.payload if editorial else {}
+        summary_uz = payload.get("summary_uz", "").strip()
+
+        if not summary_uz:
+            raise ValueError(
+                f"DigestItem #{item.position} (article ID {item.article_id}: "
+                f"'{item.article.title}') lacks an editorial analysis with non-empty "
+                "'summary_uz'. English fallback is prohibited."
+            )
+
+        # Classification info for tags
+        cls_analysis = (
+            item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
+            .order_by("-created_at")
+            .first()
+            or editorial
+        )
+        topic = cls_analysis.topic if cls_analysis else "ai"
+        maturity = cls_analysis.maturity if cls_analysis else "product"
+
+        # Clustered secondary sources
+        secondary_sources = [
+            {
+                "title": sec.title,
+                "url": sec.canonical_url,
+                "source_name": sec.source.name if sec.source else "",
+            }
+            for sec in item.secondary_articles.all()
+        ]
+
+        src_name = item.article.source.name if item.article.source else ""
+        items_data.append(
+            {
+                "position": item.position,
+                "title": item.article.title,
+                "url": item.article.canonical_url,
+                "source_name": src_name,
+                "topic": str(topic),
+                "maturity": str(maturity),
+                "summary_uz": summary_uz,
+                "score": item.score,
+                "secondary_sources": secondary_sources,
+            }
+        )
 
     return render_to_string(
         "digest/channel_post.html",
@@ -193,32 +252,69 @@ def render_channel_post(digest: Digest) -> str:
 
 
 def render_group_comment(digest: Digest) -> str:
-    """Render Telegram linked group comment HTML (technical appendix format)."""
+    """Render Telegram linked group comment HTML (technical appendix format).
+
+    Requires an editorial analysis for every item.
+    """
     items_data = []
-    for item in digest.items.select_related("article", "article__source").all():
-        analysis = item.article.analyses.order_by("-created_at").first()
-        payload = analysis.payload if analysis else {}
+    for item in (
+        digest.items.select_related("article", "article__source")
+        .prefetch_related("secondary_articles", "secondary_articles__source")
+        .all()
+    ):
+        editorial = (
+            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL)
+            .order_by("-created_at")
+            .first()
+        )
+        if not editorial:
+            raise ValueError(
+                f"DigestItem #{item.position} (article ID {item.article_id}: "
+                f"'{item.article.title}') lacks an editorial analysis for "
+                "technical appendix rendering."
+            )
+
+        payload = editorial.payload or {}
         technical = payload.get("technical", {})
 
-        items_data.append({
-            "position": item.position,
-            "title": html.escape(item.article.title),
-            "url": item.article.canonical_url,
-            "topic": html.escape(str(analysis.topic if analysis else "")),
-            "maturity": html.escape(str(analysis.maturity if analysis else "")),
-            "what_was_built": html.escape(technical.get("what_was_built", "")),
-            "architecture": html.escape(technical.get("architecture", "")),
-            "license": html.escape(technical.get("license", "")),
-            "repo_url": technical.get("repo_url", ""),
-            "api_url": technical.get("api_url", ""),
-            "hardware": html.escape(technical.get("hardware", "")),
-            "install": html.escape(technical.get("install", "")),
-            "benchmarks": html.escape(technical.get("benchmarks", "")),
-            "limitations": html.escape(technical.get("limitations", "")),
-            "local_deployable": technical.get("local_deployable", False),
-            "uzbekistan_application_uz": html.escape(payload.get("uzbekistan_application_uz", "")),
-            "reasoning_en": html.escape(payload.get("reasoning_en", "")),
-        })
+        cls_analysis = (
+            item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
+            .order_by("-created_at")
+            .first()
+            or editorial
+        )
+
+        secondary_sources = [
+            {
+                "title": sec.title,
+                "url": sec.canonical_url,
+                "source_name": sec.source.name if sec.source else "",
+            }
+            for sec in item.secondary_articles.all()
+        ]
+
+        items_data.append(
+            {
+                "position": item.position,
+                "title": item.article.title,
+                "url": item.article.canonical_url,
+                "topic": str(cls_analysis.topic if cls_analysis else ""),
+                "maturity": str(cls_analysis.maturity if cls_analysis else ""),
+                "what_was_built": technical.get("what_was_built", ""),
+                "architecture": technical.get("architecture", ""),
+                "license": technical.get("license", ""),
+                "repo_url": technical.get("repo_url", ""),
+                "api_url": technical.get("api_url", ""),
+                "hardware": technical.get("hardware", ""),
+                "install": technical.get("install", ""),
+                "benchmarks": technical.get("benchmarks", ""),
+                "limitations": technical.get("limitations", ""),
+                "local_deployable": technical.get("local_deployable", False),
+                "uzbekistan_application_uz": payload.get("uzbekistan_application_uz", ""),
+                "why_it_matters_uz": payload.get("why_it_matters_uz", ""),
+                "secondary_sources": secondary_sources,
+            }
+        )
 
     return render_to_string(
         "digest/group_comment.html",

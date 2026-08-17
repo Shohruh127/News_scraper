@@ -89,9 +89,13 @@ CELERY_RESULT_BACKEND = "django-db"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ROUTES = {
+    "digest.fetch_all_sources": {"queue": "fetch"},
     "digest.fetch_source": {"queue": "fetch"},
     "digest.triage_article": {"queue": "llm"},
     "digest.classify_article": {"queue": "llm"},
+    "digest.triage_and_classify": {"queue": "llm"},
+    "digest.analyse_for_digest": {"queue": "llm"},
+    "digest.compose_and_publish": {"queue": "publish"},
 }
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 

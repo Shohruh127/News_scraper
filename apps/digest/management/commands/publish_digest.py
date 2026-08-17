@@ -47,16 +47,18 @@ class Command(BaseCommand):
                 digest = ranking.compose_digest(target_date)
 
         if digest.items.count() == 0:
-            self.stdout.write(self.style.WARNING(
-                f"Digest {digest.digest_date} has 0 items. Nothing to publish."
-            ))
+            self.stdout.write(
+                self.style.WARNING(f"Digest {digest.digest_date} has 0 items. Nothing to publish.")
+            )
             return
 
         self.stdout.write(
             f"Publishing digest for {digest.digest_date} ({digest.items.count()} items)..."
         )
         res = publish.publish_digest(digest)
-        self.stdout.write(self.style.SUCCESS(
-            f"Successfully published digest {res['digest_date']}: "
-            f"channel_msg={res['channel_message_id']}, group_msg={res['group_message_id']}"
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Successfully published digest {res['digest_date']}: "
+                f"channel_msg={res['channel_message_id']}, group_msg={res['group_message_id']}"
+            )
+        )

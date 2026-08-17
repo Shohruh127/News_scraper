@@ -416,25 +416,37 @@ def test_eval_classifier_command(tmp_path):
         side_effect=[
             httpx.Response(
                 200,
-                json={"message": {"content": json.dumps({
-                    "primary_topic": "frontier_models",
-                    "maturity": "live_product",
-                    "novelty": 9,
-                    "evidence": 9,
-                    "production_readiness": 9,
-                    "reason": "Top frontier model",
-                })}},
+                json={
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "primary_topic": "frontier_models",
+                                "maturity": "live_product",
+                                "novelty": 9,
+                                "evidence": 9,
+                                "production_readiness": 9,
+                                "reason": "Top frontier model",
+                            }
+                        )
+                    }
+                },
             ),
             httpx.Response(
                 200,
-                json={"message": {"content": json.dumps({
-                    "primary_topic": "irrelevant",
-                    "maturity": "announcement_only",
-                    "novelty": 1,
-                    "evidence": 1,
-                    "production_readiness": 1,
-                    "reason": "Donation",
-                })}},
+                json={
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "primary_topic": "irrelevant",
+                                "maturity": "announcement_only",
+                                "novelty": 1,
+                                "evidence": 1,
+                                "production_readiness": 1,
+                                "reason": "Donation",
+                            }
+                        )
+                    }
+                },
             ),
         ]
     )
@@ -491,5 +503,3 @@ def test_eval_classifier_aborts_on_errors(tmp_path):
     output = out.getvalue()
     assert "EVALUATION ABORTED" in output
     assert "Precision" not in output
-
-

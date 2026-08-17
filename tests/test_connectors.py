@@ -41,14 +41,28 @@ def test_rss_returns_entries_with_dates():
 def test_github_skips_drafts_and_builds_text():
     s = src(connector="github", url="https://github.com/o/r", config={"repo": "o/r"})
     respx.get("https://api.github.com/repos/o/r/releases").mock(
-        return_value=httpx.Response(200, json=[
-            {"html_url": "https://github.com/o/r/releases/v2", "name": "v2",
-             "tag_name": "v2", "body": "changes here", "published_at": "2026-08-13T10:00:00Z",
-             "draft": False, "prerelease": False},
-            {"html_url": "https://github.com/o/r/releases/v3", "name": "v3",
-             "tag_name": "v3", "body": "wip", "published_at": "2026-08-14T10:00:00Z",
-             "draft": True},
-        ])
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "html_url": "https://github.com/o/r/releases/v2",
+                    "name": "v2",
+                    "tag_name": "v2",
+                    "body": "changes here",
+                    "published_at": "2026-08-13T10:00:00Z",
+                    "draft": False,
+                    "prerelease": False,
+                },
+                {
+                    "html_url": "https://github.com/o/r/releases/v3",
+                    "name": "v3",
+                    "tag_name": "v3",
+                    "body": "wip",
+                    "published_at": "2026-08-14T10:00:00Z",
+                    "draft": True,
+                },
+            ],
+        )
     )
     items = connectors.fetch(s)
     assert len(items) == 1
@@ -59,12 +73,27 @@ def test_github_skips_drafts_and_builds_text():
 def test_hn_drops_stories_without_a_url():
     s = src(connector="hn", url="https://hn.algolia.com/", config={"min_points": 50})
     respx.get(url__startswith="https://hn.algolia.com/api/").mock(
-        return_value=httpx.Response(200, json={"hits": [
-            {"url": "https://blog.example/x", "title": "Has url", "points": 120,
-             "created_at": "2026-08-14T08:00:00Z", "objectID": "1"},
-            {"url": None, "title": "Ask HN, no url", "points": 90,
-             "created_at": "2026-08-14T08:00:00Z", "objectID": "2"},
-        ]})
+        return_value=httpx.Response(
+            200,
+            json={
+                "hits": [
+                    {
+                        "url": "https://blog.example/x",
+                        "title": "Has url",
+                        "points": 120,
+                        "created_at": "2026-08-14T08:00:00Z",
+                        "objectID": "1",
+                    },
+                    {
+                        "url": None,
+                        "title": "Ask HN, no url",
+                        "points": 90,
+                        "created_at": "2026-08-14T08:00:00Z",
+                        "objectID": "2",
+                    },
+                ]
+            },
+        )
     )
     items = connectors.fetch(s)
     assert [i["title"] for i in items] == ["Has url"]
@@ -74,11 +103,20 @@ def test_hn_drops_stories_without_a_url():
 def test_hf_uses_the_abstract_as_text():
     s = src(connector="hf", url="https://huggingface.co/papers", config={"limit": 10})
     respx.get(url__startswith="https://huggingface.co/api/daily_papers").mock(
-        return_value=httpx.Response(200, json=[
-            {"publishedAt": "2026-08-14T00:00:00Z",
-             "paper": {"id": "2608.00001", "title": "A Paper", "summary": "abstract text",
-                       "upvotes": 12}},
-        ])
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "publishedAt": "2026-08-14T00:00:00Z",
+                    "paper": {
+                        "id": "2608.00001",
+                        "title": "A Paper",
+                        "summary": "abstract text",
+                        "upvotes": 12,
+                    },
+                },
+            ],
+        )
     )
     items = connectors.fetch(s)
     assert items[0]["url"] == "https://huggingface.co/papers/2608.00001"
@@ -89,8 +127,11 @@ def test_hf_uses_the_abstract_as_text():
 def test_html_raises_when_the_layout_changes():
     """A source that quietly returns nothing is the failure that goes unnoticed.
     Too few matches must raise, not return an empty list."""
-    s = src(connector="html", url="https://example.com/news",
-            config={"link_pattern": "/news/", "min_items": 5})
+    s = src(
+        connector="html",
+        url="https://example.com/news",
+        config={"link_pattern": "/news/", "min_items": 5},
+    )
     respx.get("https://example.com/news").mock(
         return_value=httpx.Response(200, text='<a href="/news/only-one">x</a>')
     )
@@ -100,21 +141,28 @@ def test_html_raises_when_the_layout_changes():
 
 @respx.mock
 def test_html_builds_absolute_urls():
-    s = src(connector="html", url="https://example.com/news",
-            config={"link_pattern": "/news/", "min_items": 1})
-    respx.get("https://example.com/news").mock(return_value=httpx.Response(
-        200, text='<a href="/news/alpha">a</a><a href="/news/beta">b</a>'))
+    s = src(
+        connector="html",
+        url="https://example.com/news",
+        config={"link_pattern": "/news/", "min_items": 1},
+    )
+    respx.get("https://example.com/news").mock(
+        return_value=httpx.Response(
+            200, text='<a href="/news/alpha">a</a><a href="/news/beta">b</a>'
+        )
+    )
     items = connectors.fetch(s)
-    assert {i["url"] for i in items} == {"https://example.com/news/alpha",
-                                         "https://example.com/news/beta"}
+    assert {i["url"] for i in items} == {
+        "https://example.com/news/alpha",
+        "https://example.com/news/beta",
+    }
     assert all(i["meta"]["needs_title"] for i in items)
 
 
 @respx.mock
 def test_404_is_not_retried():
     """Three attempts with backoff on a permanently dead URL is wasted time."""
-    route = respx.get("https://example.com/feed.xml").mock(
-        return_value=httpx.Response(404))
+    route = respx.get("https://example.com/feed.xml").mock(return_value=httpx.Response(404))
     with pytest.raises(httpx.HTTPStatusError):
         connectors.fetch(src())
     assert route.call_count == 1
@@ -122,8 +170,7 @@ def test_404_is_not_retried():
 
 @respx.mock
 def test_500_is_retried():
-    route = respx.get("https://example.com/feed.xml").mock(
-        return_value=httpx.Response(503))
+    route = respx.get("https://example.com/feed.xml").mock(return_value=httpx.Response(503))
     with pytest.raises(connectors.RetryableHTTPError):
         connectors.fetch(src())
     assert route.call_count == 3

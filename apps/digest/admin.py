@@ -7,21 +7,43 @@ from .models import Analysis, Article, Digest, DigestItem, Feedback, Source
 
 @admin.register(Source)
 class SourceAdmin(admin.ModelAdmin):
-    list_display = ("name", "connector", "stream", "enabled", "is_degraded",
-                    "consecutive_failures", "last_fetched_at", "priority")
+    list_display = (
+        "name",
+        "connector",
+        "stream",
+        "enabled",
+        "is_degraded",
+        "consecutive_failures",
+        "last_fetched_at",
+        "priority",
+    )
     list_filter = ("is_degraded", "enabled", "connector", "stream")
     list_editable = ("enabled", "priority")
     search_fields = ("name", "url")
-    readonly_fields = ("last_fetched_at", "consecutive_failures", "last_error",
-                       "last_alerted_on")
+    readonly_fields = ("last_fetched_at", "consecutive_failures", "last_error", "last_alerted_on")
     fieldsets = (
         (None, {"fields": ("name", "connector", "url", "stream", "priority", "enabled")}),
-        ("Connector config", {"fields": ("config",),
-                              "description": "For html sources: CSS selectors and min_items."}),
-        ("Health", {"fields": ("is_degraded", "consecutive_failures", "last_fetched_at",
-                               "last_error", "last_alerted_on"),
-                    "description": "A degraded source keeps being fetched. "
-                                   "Only a human disables it — see ADR-002."}),
+        (
+            "Connector config",
+            {
+                "fields": ("config",),
+                "description": "For html sources: CSS selectors and min_items.",
+            },
+        ),
+        (
+            "Health",
+            {
+                "fields": (
+                    "is_degraded",
+                    "consecutive_failures",
+                    "last_fetched_at",
+                    "last_error",
+                    "last_alerted_on",
+                ),
+                "description": "A degraded source keeps being fetched. "
+                "Only a human disables it — see ADR-002.",
+            },
+        ),
     )
 
     @admin.action(description="Clear failure counter and degraded flag")
@@ -54,15 +76,20 @@ class AnalysisAdmin(admin.ModelAdmin):
     list_display = ("article", "model_tag", "topic", "maturity", "latency_ms", "created_at")
     list_filter = ("model_tag",)
     search_fields = ("article__title",)
-    readonly_fields = ("article", "model_tag", "model_digest", "payload", "latency_ms",
-                       "created_at")
+    readonly_fields = (
+        "article",
+        "model_tag",
+        "model_digest",
+        "payload",
+        "latency_ms",
+        "created_at",
+    )
 
 
 class DigestItemInline(admin.TabularInline):
     model = DigestItem
     extra = 0
-    readonly_fields = ("article", "position", "score", "channel_message_id",
-                       "group_message_id")
+    readonly_fields = ("article", "position", "score", "channel_message_id", "group_message_id")
 
 
 @admin.register(Digest)

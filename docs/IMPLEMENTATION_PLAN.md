@@ -448,21 +448,23 @@ proving an item lacking `editorial` raises rather than falling back to English.
 
 ---
 
-### T1.11 — Minimal clustering (ADR-003)
+### T1.11 — Minimal clustering (ADR-003, corrected 2026-08-17)
 
 **Goal:** satisfy `PROJECT_PLAN.md` §2 — "one story from several sources is one post".
 
 **Files:** `apps/digest/clustering.py`, `ranking.py`, tests
 
-- Group by canonical URL, then by `rapidfuzz` title similarity above a configurable
-  threshold (start at 92, put it in `settings`).
+- Group by **exact canonical URL** across distinct sources.
+- **Never** cluster articles from the same source (consecutive releases are distinct news).
 - Clustering runs **before** topic diversification, so a cluster consumes one slot, not
   two.
 - One `DigestItem` per cluster, carrying every source link as evidence.
-- Embeddings, entity resolution and cross-day clustering remain M2.2.
+- Fuzzy title matching (`rapidfuzz`) was evaluated on 185 live articles and removed:
+  produced 0 valid cross-source merges but 12 false-positive same-source merges.
+  Fuzzy matching, embeddings, entity resolution and cross-day clustering remain M2.2.
 
-**Acceptance:** the Cerebras and OpenAI Ultrafast posts in `data/gold_set.jsonl`
-(`GOLD_SET_REVIEW.md` §3 item 5) collapse into one item with two source links.
+**Acceptance:** canonical URL dedup merges cross-source duplicates; same-source articles
+(e.g. consecutive Ollama releases) remain separate items.
 
 ---
 

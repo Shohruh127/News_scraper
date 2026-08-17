@@ -184,18 +184,22 @@ Uchta soddalashtirish v1 ga nisbatan:
 - **`job_runs` jadvali yo'q.** `django-celery-results` `TaskResult` modelini admin bilan
   birga beradi.
 
-### Manbalar (M1 uchun 6–8 ta)
+### Manbalar (M1 uchun 12 ta)
 
 | Manba | Connector | Oqim |
 |---|---|---|
 | OpenAI blog | RSS | frontier_models |
 | Anthropic news | **HTML** (rasmiy RSS yo'q) | frontier_models |
 | Google DeepMind blog | RSS `deepmind.google/blog/feed/basic/` | frontier_models |
-| Hugging Face papers | HTML/API | new_approaches |
+| Hugging Face papers | HF | new_approaches |
 | LangGraph releases | GitHub | ai_agents |
 | MCP spec/SDK releases | GitHub | ai_agents |
-| Hacker News (AI filter) | Algolia | discovery |
-| Ollama model library | HTML | frontier_models |
+| Ollama repo releases | GitHub | production_engineering |
+| Whisper releases | GitHub | speech_voice |
+| Faster-Whisper releases | GitHub | speech_voice |
+| NVIDIA developer blog | RSS | robotics |
+| arXiv cs.CR | RSS | safety_security |
+| Hacker News (AI filter) | HN | discovery / opportunistik |
 
 ### GATE 1 — o'tish sharti (ommaviy kanalga chiqishdan oldin)
 

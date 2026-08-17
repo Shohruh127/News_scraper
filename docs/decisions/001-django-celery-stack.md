@@ -45,8 +45,8 @@ instances. Celery expresses it as configuration:
 
 ```python
 task_routes = {
-    "ingest.fetch_source": {"queue": "fetch"},   # worker -c 10
-    "llm.classify":        {"queue": "llm"},     # worker -c <measured>
+    "ingest.fetch_source": {"queue": "fetch"},  # worker -c 10
+    "llm.classify": {"queue": "llm"},  # worker -c <measured>
 }
 ```
 

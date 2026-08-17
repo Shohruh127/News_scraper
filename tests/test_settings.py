@@ -49,4 +49,3 @@ def test_celery_beat_schedule_configured():
     assert sched["fetch-morning"]["task"] == "digest.fetch_all_sources"
     assert sched["triage-and-classify"]["task"] == "digest.triage_and_classify"
     assert sched["compose-and-publish"]["task"] == "digest.compose_and_publish"
-

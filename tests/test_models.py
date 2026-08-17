@@ -23,8 +23,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def source():
-    return Source.objects.create(name="openai", connector=Source.Connector.RSS,
-                                 url="https://openai.com/news/rss.xml")
+    return Source.objects.create(
+        name="openai", connector=Source.Connector.RSS, url="https://openai.com/news/rss.xml"
+    )
 
 
 def make_article(source, n=1):
@@ -41,18 +42,26 @@ def make_article(source, n=1):
 def test_canonical_url_is_unique(source):
     make_article(source, 1)
     with pytest.raises(IntegrityError), transaction.atomic():
-        Article.objects.create(source=source, canonical_url="https://example.com/a1",
-                               content_hash=f"{99:064d}", title="dup",
-                               extracted_text="y" * 500)
+        Article.objects.create(
+            source=source,
+            canonical_url="https://example.com/a1",
+            content_hash=f"{99:064d}",
+            title="dup",
+            extracted_text="y" * 500,
+        )
 
 
 def test_content_hash_is_unique(source):
     """Same text under a different URL must not create a second article."""
     make_article(source, 1)
     with pytest.raises(IntegrityError), transaction.atomic():
-        Article.objects.create(source=source, canonical_url="https://other.com/x",
-                               content_hash=f"{1:064d}", title="same text",
-                               extracted_text="x" * 500)
+        Article.objects.create(
+            source=source,
+            canonical_url="https://other.com/x",
+            content_hash=f"{1:064d}",
+            title="same text",
+            extracted_text="x" * 500,
+        )
 
 
 def test_digest_date_is_unique():
@@ -73,21 +82,28 @@ def test_article_cannot_appear_twice_in_one_digest(source):
 
 def test_one_reaction_per_user_per_item(source):
     d = Digest.objects.create(digest_date=dt.date(2026, 8, 14))
-    item = DigestItem.objects.create(digest=d, article=make_article(source, 1),
-                                     position=1, score=8.0)
-    Feedback.objects.create(digest_item=item, user_id=42,
-                            reaction=Feedback.Reaction.USEFUL)
+    item = DigestItem.objects.create(
+        digest=d, article=make_article(source, 1), position=1, score=8.0
+    )
+    Feedback.objects.create(digest_item=item, user_id=42, reaction=Feedback.Reaction.USEFUL)
     with pytest.raises(IntegrityError), transaction.atomic():
-        Feedback.objects.create(digest_item=item, user_id=42,
-                                reaction=Feedback.Reaction.NOT_USEFUL)
+        Feedback.objects.create(digest_item=item, user_id=42, reaction=Feedback.Reaction.NOT_USEFUL)
 
 
 def test_analysis_exposes_topic_and_maturity(source):
     a = make_article(source, 1)
     an = Analysis.objects.create(
-        article=a, model_tag="gemma4:latest", model_digest="c6eb396dbd5992bb",
-        payload={"primary_topic": "ai_agents", "maturity": "live_product",
-                 "novelty": 7, "evidence": 6, "production_readiness": 8, "reason": "x"},
+        article=a,
+        model_tag="gemma4:latest",
+        model_digest="c6eb396dbd5992bb",
+        payload={
+            "primary_topic": "ai_agents",
+            "maturity": "live_product",
+            "novelty": 7,
+            "evidence": 6,
+            "production_readiness": 8,
+            "reason": "x",
+        },
         latency_ms=5590,
     )
     assert an.topic == Topic.AI_AGENTS

@@ -49,15 +49,20 @@ an error, not a fallback to English.**
 
 Cost: 5 items × ~30s. Negligible against the 60-minute budget.
 
-### 2. Minimal clustering
+### 2. Canonical URL deduplication (Minimal clustering)
 
-Canonical URL, then `rapidfuzz` title similarity above a configurable threshold, applied
-**before** topic diversification. One cluster becomes one `DigestItem` carrying several
-source links.
+Exact **canonical URL** matching across distinct sources, applied **before** topic diversification.
+One cluster becomes one `DigestItem` carrying several source links (`secondary_articles`).
+Articles from the same source are **never** clustered together.
 
-Embeddings, entity resolution and cross-day clustering stay in M2.2. The M0.4 sample
-already contains a live case: the Cerebras and OpenAI posts about Ultrafast mode
-(`spike/GOLD_SET_REVIEW.md` §3, item 5).
+**Correction (2026-08-17):** Fuzzy title matching (`rapidfuzz`) was evaluated on 185 live articles
+and removed from M1:
+- Primary sources (OpenAI, Anthropic, GitHub) do not duplicate each other's posts.
+- Aggregators (HN) link to the original article, so canonical URL dedup already handles them.
+- Title fuzzy matching produced 0 valid cross-source merges, but caused 12 false-positive merges
+  within single sources (e.g. merging consecutive release tags like `ollama v0.32.11` ~ `v0.32.10`).
+- Fuzzy matching, embeddings, and entity resolution are deferred to M2.2 when secondary/newsletter
+  sources are introduced.
 
 ### 3. Source coverage that matches the taxonomy
 

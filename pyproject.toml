@@ -1,7 +1,7 @@
 [project]
 name = "news-scraper"
 version = "0.1.0"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
     "celery[redis]>=5.6.3",
     "django>=6.0.8",
@@ -32,7 +32,7 @@ testpaths = ["tests", "apps"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 # Migrations are generated, not written.
 exclude = ["**/migrations/*", "spikes"]
 

@@ -59,7 +59,7 @@ class Command(BaseCommand):
 
         # Step 2: Triage and Classify
         self.stdout.write("\n2. Running triage and classification...")
-        llm_result = tasks.triage_and_classify()
+        llm_result = tasks.triage_and_classify(trigger_publish_chain=False)
         triaged_s = llm_result["triage_survivors"]
         classified_s = llm_result["classify_survivors"]
         self.stdout.write(
@@ -71,9 +71,11 @@ class Command(BaseCommand):
         self.stdout.write(f"\n3. Composing and publishing digest for {target_date}...")
         existing_digest = Digest.objects.filter(digest_date=target_date).first()
         if existing_digest and existing_digest.status == Digest.Status.PUBLISHED:
-            self.stdout.write(self.style.WARNING(
-                f"   * Digest for {target_date} already published. Database refused duplicate run."
-            ))
+            self.stdout.write(
+                self.style.WARNING(
+                    f"   * Digest for {target_date} already published. Duplicate run refused."
+                )
+            )
             return
 
         res = tasks.compose_and_publish(str(target_date))

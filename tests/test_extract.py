@@ -18,6 +18,7 @@ def source():
 
 # --------------------------------------------------------------- canonical_url
 
+
 def test_tracking_params_collapse_to_one_url():
     a = extract.canonical_url("https://e.com/post?utm_source=x&utm_medium=y")
     b = extract.canonical_url("https://e.com/post")
@@ -29,11 +30,13 @@ def test_meaningful_query_params_are_kept():
 
 
 def test_host_case_and_trailing_slash_are_normalised():
-    assert (extract.canonical_url("https://Example.COM/post/")
-            == extract.canonical_url("https://example.com/post"))
+    assert extract.canonical_url("https://Example.COM/post/") == extract.canonical_url(
+        "https://example.com/post"
+    )
 
 
 # --------------------------------------------------------------- content_hash
+
 
 def test_whitespace_churn_does_not_create_a_new_article():
     assert extract.content_hash("Hello   world\n\n") == extract.content_hash("hello world")
@@ -45,11 +48,15 @@ def test_different_text_hashes_differently():
 
 # --------------------------------------------------------------- blocked pages
 
-@pytest.mark.parametrize("text", [
-    "Please enable JavaScript to continue",
-    "Access Denied — you do not have permission",
-    "Are you a robot? Complete the captcha",
-])
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Please enable JavaScript to continue",
+        "Access Denied — you do not have permission",
+        "Are you a robot? Complete the captcha",
+    ],
+)
 def test_bot_walls_are_detected(text):
     assert extract.looks_blocked(text)
 
@@ -60,35 +67,57 @@ def test_ordinary_article_text_is_not_flagged():
 
 # --------------------------------------------------------------- normalize
 
+
 def test_source_supplied_text_avoids_a_page_fetch(source):
     """GitHub and HF give us the body already; fetching the page again is wasted."""
-    item = {"url": "https://e.com/a", "title": "Release v2",
-            "published_at": timezone.now(), "raw_text": "x" * 900, "meta": {}}
+    item = {
+        "url": "https://e.com/a",
+        "title": "Release v2",
+        "published_at": timezone.now(),
+        "raw_text": "x" * 900,
+        "meta": {},
+    }
     fields = extract.normalize(item, source)
     assert fields["meta"]["extraction_method"] == "source"
     assert fields["title"] == "Release v2"
 
 
 def test_missing_date_falls_back_to_now_and_is_flagged(source):
-    item = {"url": "https://e.com/a", "title": "T", "published_at": None,
-            "raw_text": "y" * 900, "meta": {}}
+    item = {
+        "url": "https://e.com/a",
+        "title": "T",
+        "published_at": None,
+        "raw_text": "y" * 900,
+        "meta": {},
+    }
     fields = extract.normalize(item, source)
     assert fields["published_at"] is not None
     assert fields["meta"]["date_missing"] is True
 
 
 def test_untitled_item_is_rejected(source):
-    item = {"url": "https://e.com/a", "title": "", "published_at": timezone.now(),
-            "raw_text": "z" * 900, "meta": {}}
+    item = {
+        "url": "https://e.com/a",
+        "title": "",
+        "published_at": timezone.now(),
+        "raw_text": "z" * 900,
+        "meta": {},
+    }
     with pytest.raises(extract.ExtractionFailed, match="no title"):
         extract.normalize(item, source)
 
 
 # --------------------------------------------------------------- prefilter
 
+
 def make_item(url, days_old=0, text="q" * 900):
-    return {"url": url, "title": "T", "raw_text": text, "meta": {},
-            "published_at": timezone.now() - timedelta(days=days_old)}
+    return {
+        "url": url,
+        "title": "T",
+        "raw_text": text,
+        "meta": {},
+        "published_at": timezone.now() - timedelta(days=days_old),
+    }
 
 
 def test_prefilter_drops_items_older_than_the_window(source):
@@ -100,8 +129,13 @@ def test_prefilter_drops_items_older_than_the_window(source):
 
 def test_prefilter_drops_urls_already_stored(source):
     Article.objects.create(
-        source=source, canonical_url="https://e.com/known", content_hash="a" * 64,
-        title="known", published_at=timezone.now(), extracted_text="k" * 900)
+        source=source,
+        canonical_url="https://e.com/known",
+        content_hash="a" * 64,
+        title="known",
+        published_at=timezone.now(),
+        extracted_text="k" * 900,
+    )
     items = [make_item("https://e.com/known"), make_item("https://e.com/fresh")]
     todo, stale, already = tasks._prefilter(source, items)
     assert already == 1

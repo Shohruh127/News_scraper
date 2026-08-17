@@ -94,13 +94,15 @@ class Command(BaseCommand):
             except Exception as exc:
                 self.stderr.write(f"Row {idx} ({title[:30]}...) FAILED: {exc}")
                 error_count += 1
-                results.append({
-                    "title": title[:40],
-                    "human": f"{human_label}/{human_topic}/{human_maturity}",
-                    "pred": "ERROR",
-                    "latency_ms": 0,
-                    "match": False,
-                })
+                results.append(
+                    {
+                        "title": title[:40],
+                        "human": f"{human_label}/{human_topic}/{human_maturity}",
+                        "pred": "ERROR",
+                        "latency_ms": 0,
+                        "match": False,
+                    }
+                )
                 log_line = (
                     f"[{idx}/{len(rows)}] {title[:32]:<32} -> ERROR ({exc.__class__.__name__})"
                 )
@@ -122,13 +124,15 @@ class Command(BaseCommand):
             if human_maturity == pred_maturity:
                 maturity_correct += 1
 
-            results.append({
-                "title": title[:40],
-                "human": f"{human_label}/{human_topic}/{human_maturity}",
-                "pred": f"{pred_label}/{pred_topic}/{pred_maturity}",
-                "latency_ms": latency_ms,
-                "match": (human_label == pred_label),
-            })
+            results.append(
+                {
+                    "title": title[:40],
+                    "human": f"{human_label}/{human_topic}/{human_maturity}",
+                    "pred": f"{pred_label}/{pred_topic}/{pred_maturity}",
+                    "latency_ms": latency_ms,
+                    "match": (human_label == pred_label),
+                }
+            )
             log_line = (
                 f"[{idx}/{len(rows)}] {title[:32]:<32} -> "
                 f"Human: {human_label:<4} Pred: {pred_label:<4} ({latency_ms}ms)"
@@ -139,10 +143,12 @@ class Command(BaseCommand):
         success_count = len(rows) - error_count
         if error_count > 0:
             self.stdout.write("\n" + "=" * 60)
-            self.stdout.write(self.style.ERROR(
-                f"EVALUATION ABORTED: {error_count}/{len(rows)} rows failed "
-                f"(only {success_count} succeeded)."
-            ))
+            self.stdout.write(
+                self.style.ERROR(
+                    f"EVALUATION ABORTED: {error_count}/{len(rows)} rows failed "
+                    f"(only {success_count} succeeded)."
+                )
+            )
             self.stdout.write(
                 "Metrics are NOT reported because they would be misleading.\n"
                 "Fix the errors above and re-run."
@@ -183,12 +189,14 @@ class Command(BaseCommand):
         self.stdout.write(f"{'Actual DROP':<15} {d_k:<12} {d_d:<12}")
         self.stdout.write("-" * 60)
 
-        self.stdout.write(self.style.WARNING(
-            "\n[MANDATORY CAVEAT]\n"
-            "Both gold set labels and enum definitions share an AI origin (Claude).\n"
-            "Precision >= 0.80 is necessary but not sufficient to prove editorial quality.\n"
-            "Seven topics have 0 examples in this gold set.\n"
-        ))
+        self.stdout.write(
+            self.style.WARNING(
+                "\n[MANDATORY CAVEAT]\n"
+                "Both gold set labels and enum definitions share an AI origin (Claude).\n"
+                "Precision >= 0.80 is necessary but not sufficient to prove editorial quality.\n"
+                "Seven topics have 0 examples in this gold set.\n"
+            )
+        )
 
         if precision >= 0.80:
             msg = f"ACCEPTANCE CRITERIA MET: Precision {precision:.2f} >= 0.80"

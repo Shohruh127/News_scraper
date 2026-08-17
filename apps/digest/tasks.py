@@ -37,8 +37,13 @@ def fetch_source(source_id: int) -> dict:
     created, skipped, failed = _store(source, items)
     _record_success(source)
     log.info("%s: %s new, %s duplicate, %s unusable", source.name, created, skipped, failed)
-    return {"source": source.name, "fetched": len(items), "created": created,
-            "duplicate": skipped, "unusable": failed}
+    return {
+        "source": source.name,
+        "fetched": len(items),
+        "created": created,
+        "duplicate": skipped,
+        "unusable": failed,
+    }
 
 
 def _prefilter(source, items) -> tuple[list[dict], int, int]:
@@ -65,14 +70,21 @@ def _prefilter(source, items) -> tuple[list[dict], int, int]:
     # the canonical URL, which needs no network access.
     by_url = {extract.canonical_url(i["url"]): i for i in fresh}
     known = set(
-        Article.objects.filter(canonical_url__in=list(by_url))
-        .values_list("canonical_url", flat=True)
+        Article.objects.filter(canonical_url__in=list(by_url)).values_list(
+            "canonical_url", flat=True
+        )
     )
     todo = [item for url, item in by_url.items() if url not in known]
 
     already = len(fresh) - len(todo)
-    log.info("%s: %s items, %s stale, %s already known, %s to extract",
-             source.name, len(items), stale, already, len(todo))
+    log.info(
+        "%s: %s items, %s stale, %s already known, %s to extract",
+        source.name,
+        len(items),
+        stale,
+        already,
+        len(todo),
+    )
     return todo, stale, already
 
 
@@ -107,8 +119,9 @@ def _record_success(source) -> None:
     source.consecutive_failures = 0
     source.is_degraded = False
     source.last_error = ""
-    source.save(update_fields=["last_fetched_at", "consecutive_failures",
-                               "is_degraded", "last_error"])
+    source.save(
+        update_fields=["last_fetched_at", "consecutive_failures", "is_degraded", "last_error"]
+    )
 
 
 def _record_failure(source, exc: Exception) -> None:
@@ -121,10 +134,21 @@ def _record_failure(source, exc: Exception) -> None:
         _alert_once_per_day(source)
 
     # ADR-002: enabled is never touched here. Only a human disables a source.
-    source.save(update_fields=["consecutive_failures", "last_error", "last_fetched_at",
-                               "is_degraded", "last_alerted_on"])
-    log.warning("%s failed (%s consecutive): %s",
-                source.name, source.consecutive_failures, source.last_error)
+    source.save(
+        update_fields=[
+            "consecutive_failures",
+            "last_error",
+            "last_fetched_at",
+            "is_degraded",
+            "last_alerted_on",
+        ]
+    )
+    log.warning(
+        "%s failed (%s consecutive): %s",
+        source.name,
+        source.consecutive_failures,
+        source.last_error,
+    )
 
 
 def _alert_once_per_day(source) -> None:
@@ -137,10 +161,15 @@ def _alert_once_per_day(source) -> None:
         f"Source <b>{source.name}</b> is degraded ({source.consecutive_failures} "
         f"consecutive failures).\nLast error: <code>{source.last_error}</code>"
     )
-    log.error("SOURCE DEGRADED: %s — %s consecutive failures — %s",
-              source.name, source.consecutive_failures, source.last_error)
+    log.error(
+        "SOURCE DEGRADED: %s — %s consecutive failures — %s",
+        source.name,
+        source.consecutive_failures,
+        source.last_error,
+    )
     try:
         from . import publish
+
         publish.send_admin_alert(msg)
     except Exception as exc:
         log.warning("Could not dispatch admin alert for %s: %s", source.name, exc)
@@ -148,9 +177,13 @@ def _alert_once_per_day(source) -> None:
 
 # --- LLM Tasks (on 'llm' queue) ---------------------------------------------
 
+# --- LLM Tasks (on 'llm' queue) ---------------------------------------------
+
+
 @shared_task(name="digest.triage_article")
 def triage_article(article_id: int) -> dict:
     from . import llm
+
     article = Article.objects.get(pk=article_id)
     passed = llm.triage_article_logic(article)
     return {"article_id": article_id, "status": article.status, "passed": passed}
@@ -159,62 +192,103 @@ def triage_article(article_id: int) -> dict:
 @shared_task(name="digest.classify_article")
 def classify_article(article_id: int) -> dict:
     from . import llm
+
     article = Article.objects.get(pk=article_id)
     passed = llm.classify_article_logic(article)
     return {"article_id": article_id, "status": article.status, "passed": passed}
 
 
-@shared_task(name="digest.triage_and_classify")
-def triage_and_classify() -> dict:
-    """Run all triage first, then all classification to pay the model swap cost once."""
+@shared_task(name="digest.analyse_for_digest")
+def analyse_for_digest(article_ids: list[int]) -> dict:
+    """Task on 'llm' queue to run deep editorial analysis for selected digest candidates."""
     from . import llm
 
-    # Phase 1: Fast triage on all untriaged fetched articles
-    to_triage = list(Article.objects.filter(status=Article.Status.FETCHED).order_by("id"))
-    triaged_count, triage_passed = 0, 0
-    log.info("Starting triage batch on %d articles", len(to_triage))
-    for art in to_triage:
-        passed = llm.triage_article_logic(art)
-        triaged_count += 1
-        if passed:
-            triage_passed += 1
+    analyses = llm.analyse_for_digest_logic(article_ids)
+    return {"analysed": len(analyses), "article_ids": article_ids}
 
-    log.info(
-        "Triage finished: %d triaged, %d passed to classification",
-        triaged_count,
-        triage_passed,
-    )
 
-    # Phase 2: Deep classification on all survivors
-    to_classify = list(Article.objects.filter(status=Article.Status.TRIAGED).order_by("id"))
-    classified_count, classify_passed = 0, 0
-    log.info("Starting classification batch on %d articles", len(to_classify))
-    for art in to_classify:
-        passed = llm.classify_article_logic(art)
-        classified_count += 1
-        if passed:
-            classify_passed += 1
+@shared_task(name="digest.triage_and_classify")
+def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
+    """Run all triage first, then all classification to pay the model swap cost once.
 
-    log.info(
-        "Classification finished: %d classified, %d passed for digest",
-        classified_count,
-        classify_passed,
-    )
+    Acquires an overlap lock so two evening runs cannot overlap.
+    Triggers compose_and_publish at the end of the chain.
+    """
+    from . import llm
 
-    return {
-        "triaged": triaged_count,
-        "triage_survivors": triage_passed,
-        "classified": classified_count,
-        "classify_survivors": classify_passed,
-    }
+    # Overlap protection using Redis lock (T1.8)
+    lock_client = None
+    lock_acquired = True
+    try:
+        import redis
+
+        lock_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
+        lock_acquired = bool(lock_client.set("news_radar:evening_pipeline", "1", nx=True, ex=3600))
+    except Exception as exc:
+        log.warning("Could not check Redis lock: %s", exc)
+
+    if not lock_acquired:
+        log.warning("Evening pipeline already running (lock held). Skipping duplicate run.")
+        return {"status": "skipped", "reason": "lock_held"}
+
+    try:
+        # Phase 1: Fast triage on all untriaged fetched articles
+        to_triage = list(Article.objects.filter(status=Article.Status.FETCHED).order_by("id"))
+        triaged_count, triage_passed = 0, 0
+        log.info("Starting triage batch on %d articles", len(to_triage))
+        for art in to_triage:
+            passed = llm.triage_article_logic(art)
+            triaged_count += 1
+            if passed:
+                triage_passed += 1
+
+        log.info(
+            "Triage finished: %d triaged, %d passed to classification",
+            triaged_count,
+            triage_passed,
+        )
+
+        # Phase 2: Deep classification on all survivors
+        to_classify = list(Article.objects.filter(status=Article.Status.TRIAGED).order_by("id"))
+        classified_count, classify_passed = 0, 0
+        log.info("Starting classification batch on %d articles", len(to_classify))
+        for art in to_classify:
+            passed = llm.classify_article_logic(art)
+            classified_count += 1
+            if passed:
+                classify_passed += 1
+
+        log.info(
+            "Classification finished: %d classified, %d passed for digest",
+            classified_count,
+            classify_passed,
+        )
+
+        # Causal evening chain: trigger compose_and_publish
+        if trigger_publish_chain:
+            log.info("Triggering compose_and_publish task in evening chain")
+            compose_and_publish.delay()
+
+        return {
+            "triaged": triaged_count,
+            "triage_survivors": triage_passed,
+            "classified": classified_count,
+            "classify_survivors": classify_passed,
+        }
+    finally:
+        if lock_client and lock_acquired:
+            try:
+                lock_client.delete("news_radar:evening_pipeline")
+            except Exception as exc:
+                log.debug("Error releasing lock: %s", exc)
 
 
 @shared_task(name="digest.compose_and_publish")
 def compose_and_publish(digest_date_str: str | None = None) -> dict:
-    """Compose digest and publish to Telegram for a target date (defaults to today)."""
+    """Causal pipeline: select candidates -> editorial deep analysis -> compose -> publish."""
     from datetime import date as dt_date
 
-    from . import publish, ranking
+    from . import llm, publish, ranking
     from .models import Digest
 
     if digest_date_str:
@@ -222,26 +296,40 @@ def compose_and_publish(digest_date_str: str | None = None) -> dict:
     else:
         target_date = timezone.localdate()
 
-    try:
-        digest = ranking.compose_digest(target_date)
-    except IntegrityError:
-        log.warning("Digest for %s already exists. Using existing composed digest.", target_date)
-        digest = Digest.objects.get(digest_date=target_date)
-    except Exception as exc:
-        log.error("Failed to compose digest for %s: %s", target_date, exc)
-        publish.send_admin_alert(f"Failed to compose digest for {target_date}: {exc}")
-        return {"error": str(exc), "digest_date": str(target_date)}
-
-    if digest.status == Digest.Status.PUBLISHED:
+    # Step 1: Check if already published
+    existing = Digest.objects.filter(
+        digest_date=target_date, status=Digest.Status.PUBLISHED
+    ).first()
+    if existing:
         log.info("Digest for %s is already published.", target_date)
         return {"status": "already_published", "digest_date": str(target_date)}
 
     try:
+        # Step 2: Select candidates
+        candidates = ranking.select_digest_candidates(target_date)
+        candidate_article_ids = [c[0].id for c in candidates]
+
+        # Step 3: Run Editorial Stage on selected candidates
+        if candidate_article_ids:
+            log.info(
+                "Running editorial stage for %d candidate articles", len(candidate_article_ids)
+            )
+            llm.analyse_for_digest_logic(candidate_article_ids)
+
+        # Step 4: Compose Digest
+        try:
+            digest = ranking.compose_digest(target_date)
+        except IntegrityError:
+            log.warning(
+                "Digest for %s already exists. Using existing composed digest.", target_date
+            )
+            digest = Digest.objects.get(digest_date=target_date)
+
+        # Step 5: Publish Digest
         res = publish.publish_digest(digest)
         return res
+
     except Exception as exc:
-        log.error("Failed to publish digest for %s: %s", target_date, exc)
-        publish.send_admin_alert(f"Failed to publish digest for {target_date}: {exc}")
+        log.error("Failed in compose_and_publish for %s: %s", target_date, exc)
+        publish.send_admin_alert(f"Failed compose_and_publish for {target_date}: {exc}")
         return {"error": str(exc), "digest_date": str(target_date)}
-
-
