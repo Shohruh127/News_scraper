@@ -298,3 +298,54 @@ def test_archetype_definitions_are_in_the_prompt():
         assert name in EDITORIAL_EN_PROMPT, f"{name} is not defined in the prompt"
     assert "Pricing is not policy" in EDITORIAL_EN_PROMPT
 
+
+def test_archetype_fields_flattens_only_the_chosen_block():
+    """Only the chosen block is flattened, and only its non-empty strings."""
+    from apps.digest.llm import archetype_fields
+
+    payload = {
+        "archetype": "release",
+        "release_details": {
+            "what_changed_en": "repeat_penalty defaults to 1.0",
+            "benchmarks_en": "",
+            "availability_en": "   ",
+        },
+        "policy_details": {"who_issued_en": "should be ignored"},
+    }
+    assert archetype_fields(payload) == {
+        "what_changed_en": "repeat_penalty defaults to 1.0"
+    }
+
+
+def test_archetype_fields_is_empty_when_there_is_no_block():
+    """A post with no detail block translates its common fields and nothing else."""
+    from apps.digest.llm import archetype_fields
+
+    assert archetype_fields({"archetype": "release"}) == {}
+    assert archetype_fields({}) == {}
+
+
+def test_translation_schema_follows_the_fields_it_is_given():
+    """A block absent from the schema cannot be filled by a model that felt like filling it.
+
+    Measured 2026-08-18: given six visible blocks and no definitions, the model filled six
+    irrelevant ones.
+    """
+    from apps.digest.llm import translation_schema_for
+
+    schema = translation_schema_for(
+        {"headline_en": "x", "summary_en": "y", "what_changed_en": "z"}
+    )
+    assert set(schema["properties"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
+    assert set(schema["required"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
+    assert "policy_details" not in schema["properties"]
+
+
+def test_translation_schema_only_rewrites_a_trailing_suffix():
+    """`_en` is replaced at the end of the key, never in the middle of a word."""
+    from apps.digest.llm import translation_schema_for
+
+    schema = translation_schema_for({"deployment_en": "a", "residual_en": "b"})
+    assert set(schema["properties"]) == {"deployment_uz", "residual_uz"}
+
+

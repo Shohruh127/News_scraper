@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import httpx
 from django.conf import settings
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, create_model
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import translation_gates
@@ -403,6 +403,39 @@ TRANSLATION_SCHEMA: dict[str, Any] = {
         "uzbekistan_application_uz",
     ],
 }
+
+#: Fields translated for every post regardless of archetype.
+COMMON_TRANSLATED_FIELDS = (
+    "headline_en",
+    "summary_en",
+    "why_it_matters_en",
+    "leadership_en",
+    "uzbekistan_application_en",
+)
+
+
+def archetype_fields(payload: dict) -> dict[str, str]:
+    """The chosen archetype's detail block, flattened to top-level keys.
+
+    Flat rather than nested because `translation_gates.validate_translation` joins the values
+    of both dicts, and a nested dict stringifies into its own repr. The gates were built
+    generic over field names; only the schema was not.
+    """
+    block = payload.get(f"{payload.get('archetype', '')}_details") or {}
+    return {k: v for k, v in block.items() if isinstance(v, str) and v.strip()}
+
+
+def translation_schema_for(fields: dict) -> dict:
+    """A translation schema carrying exactly the fields the English stage produced.
+
+    Deriving it rather than fixing it removes the opportunity to fill an irrelevant block
+    instead of instructing against it.
+    """
+    props = {
+        (k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields
+    }
+    return {"type": "object", "properties": props, "required": list(props)}
+
 
 TRANSLATION_PROMPT = (
     "Translate the fields below into Uzbek (Latin script). Return JSON only.\n\n"
@@ -1087,16 +1120,19 @@ def analyse_for_digest_logic(
             created.append(existing)
             continue
         try:
-            fields = {k: en.payload.get(k, "") for k in (
-                "headline_en", "summary_en", "why_it_matters_en",
-                "leadership_en", "uzbekistan_application_en",
-            )}
+            fields = {k: en.payload.get(k, "") for k in COMMON_TRANSLATED_FIELDS}
+            fields.update(archetype_fields(en.payload))
+            uz_schema = translation_schema_for(fields)
+            uz_model = create_model(
+                "TranslationDynamic",
+                **{k: (str, ...) for k in uz_schema["properties"]},
+            )
             payload, latency_ms, model_tag = _editorial_call(
                 prompt=TRANSLATION_PROMPT.format(
                     fields=json.dumps(fields, ensure_ascii=False, indent=2)
                 ),
-                schema=TRANSLATION_SCHEMA,
-                model_cls=Translation,
+                schema=uz_schema,
+                model_cls=uz_model,
                 num_predict=settings.TRANSLATION_NUM_PREDICT,
                 client=client,
                 provider=settings.TRANSLATION_PROVIDER,
@@ -1121,13 +1157,13 @@ def analyse_for_digest_logic(
                 try:
                     retry_payload, retry_ms, retry_model = editorial_chat(
                         prompt=retry_prompt,
-                        schema=TRANSLATION_SCHEMA,
+                        schema=uz_schema,
                         num_predict=settings.TRANSLATION_NUM_PREDICT,
                         client=client,
                         provider=settings.TRANSLATION_PROVIDER,
                         ollama_model=settings.OLLAMA_FAST_MODEL,
                     )
-                    Translation.model_validate(retry_payload)
+                    uz_model.model_validate(retry_payload)
                     retry_violations = translation_gates.validate_translation(fields, retry_payload)
                     if retry_violations:
                         log.error(
