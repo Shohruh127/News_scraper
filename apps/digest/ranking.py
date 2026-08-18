@@ -8,6 +8,7 @@ Rules:
 5. Idempotency is enforced by the database unique constraint on Digest.digest_date.
 """
 
+import logging
 from collections import Counter
 from datetime import date as dt_date
 from datetime import datetime, timedelta
@@ -21,6 +22,8 @@ from django.utils import timezone
 
 from . import clustering
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Digest, DigestItem, Maturity, Topic
+
+log = logging.getLogger(__name__)
 
 
 def calculate_score(article: Article, analysis: Analysis) -> float:
@@ -354,6 +357,13 @@ def render_group_comment(digest: Digest) -> str:
     ).strip()
 
 
+#: Translated fields every post has. Anything else ending in `_uz` came from an archetype block.
+_COMMON_UZ_KEYS = frozenset({
+    "headline_uz", "summary_uz", "why_it_matters_uz",
+    "leadership_uz", "uzbekistan_application_uz",
+})
+
+
 def _item_data(item: DigestItem) -> dict:
     """Build the template context for a single DigestItem.
 
@@ -411,6 +421,13 @@ def _item_data(item: DigestItem) -> dict:
         "source_name": item.article.source.name if item.article.source else "",
         "topic": str(cls.topic if cls else "ai"),
         "maturity": str(cls.maturity if cls else "product"),
+        # The archetype lives in the English payload; its translated detail lines live in the
+        # Uzbek one, flattened there by the translation stage.
+        "archetype": en_payload.get("archetype", ""),
+        "detail": {
+            k: v for k, v in uz_payload.items()
+            if k.endswith("_uz") and k not in _COMMON_UZ_KEYS
+        },
         # Uzbek fields
         "headline_uz": uz_payload.get("headline_uz", item.article.title),
         "summary_uz": summary_uz,
@@ -437,9 +454,48 @@ def _item_data(item: DigestItem) -> dict:
     }
 
 
+#: archetype -> template. A value missing from this map falls back to the plain post, which is
+#: the rule the whole feature rests on: the archetype block is an enhancement, and its absence
+#: simplifies the layout rather than losing the post.
+ARCHETYPE_TEMPLATES = {
+    "release": "digest/item_release.html",
+    "agent_protocol": "digest/item_agent_protocol.html",
+    "risk_hardening": "digest/item_risk_hardening.html",
+    "policy": "digest/item_policy.html",
+    "research": "digest/item_research.html",
+    "company_product": "digest/item_company_product.html",
+}
+
+#: The field each template cannot render without. Absent -> fall back.
+ARCHETYPE_REQUIRED = {
+    "release": ("what_changed_uz",),
+    "agent_protocol": ("connects_uz",),
+    "risk_hardening": ("risk_uz", "mitigation_uz"),
+    "policy": ("who_issued_uz", "who_must_comply_uz"),
+    "research": ("claim_uz",),
+    "company_product": ("what_they_do_uz",),
+}
+
+
 def render_item_post(item: DigestItem) -> str:
-    """Render a single channel post for one news item."""
-    return render_to_string("digest/item_post.html", _item_data(item)).strip()
+    """Render one channel post, choosing a template from the article's archetype."""
+    data = _item_data(item)
+    archetype = data.get("archetype", "")
+    template = ARCHETYPE_TEMPLATES.get(archetype)
+
+    if template is None:
+        if archetype:
+            log.info("Unknown archetype %r on item #%s; using the plain post",
+                     archetype, item.position)
+        return render_to_string("digest/item_post.html", data).strip()
+
+    missing = [f for f in ARCHETYPE_REQUIRED[archetype] if not data["detail"].get(f)]
+    if missing:
+        log.warning("Archetype %s on item #%s lacks %s; using the plain post",
+                    archetype, item.position, ", ".join(missing))
+        return render_to_string("digest/item_post.html", data).strip()
+
+    return render_to_string(template, data).strip()
 
 
 def render_item_appendix(item: DigestItem) -> str:

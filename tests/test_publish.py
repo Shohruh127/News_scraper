@@ -23,6 +23,39 @@ def zero_send_delay(settings):
 
 
 @pytest.fixture
+def digest_item_factory(db):
+    """Build one renderable DigestItem with a chosen archetype and detail block."""
+
+    def _make(archetype, detail):
+        source = Source.objects.create(
+            name=f"src_{archetype}",
+            connector=Source.Connector.RSS,
+            url="https://example.com/rss",
+            priority=80,
+        )
+        article = Article.objects.create(
+            source=source,
+            canonical_url=f"https://example.com/{archetype}",
+            content_hash=f"h_{archetype}",
+            title="Fixture article",
+            extracted_text="Body " * 60,
+            status=Article.Status.CLASSIFIED,
+        )
+        en, uz = make_editorial(article)
+        en.payload["archetype"] = archetype
+        en.save(update_fields=["payload"])
+        uz.payload.update(detail)
+        uz.save(update_fields=["payload"])
+
+        digest = Digest.objects.create(digest_date=timezone.localdate())
+        return DigestItem.objects.create(
+            digest=digest, article=article, position=1, score=0.9
+        )
+
+    return _make
+
+
+@pytest.fixture
 def digest_15(db):
     """Create a digest with 15 items, each with full editorial analyses."""
     src = Source.objects.create(
@@ -373,3 +406,39 @@ def test_send_admin_alert_and_source_failure_trigger(db, settings):
     assert src.is_degraded is True
     assert src.consecutive_failures == 3
     assert route.call_count == 1
+
+
+@pytest.mark.django_db
+def test_unknown_archetype_falls_back_without_raising(digest_item_factory):
+    """An archetype we do not recognise must simplify the layout, never lose the post."""
+    item = digest_item_factory(archetype="teleportation", detail={})
+
+    html = ranking.render_item_post(item)
+
+    assert "Yangi model chiqdi" in html
+
+
+@pytest.mark.django_db
+def test_missing_required_detail_falls_back(digest_item_factory):
+    """A release with no `what_changed_uz` renders as a plain post rather than an empty one."""
+    item = digest_item_factory(archetype="release", detail={})
+
+    html = ranking.render_item_post(item)
+
+    assert "Yangi model chiqdi" in html
+    assert "🚀" not in html
+
+
+@pytest.mark.django_db
+def test_archetype_selects_its_template(digest_item_factory):
+    """A release with its required field renders the release template."""
+    item = digest_item_factory(
+        archetype="release",
+        detail={"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
+    )
+
+    html = ranking.render_item_post(item)
+
+    assert "🚀" in html
+    assert "repeat_penalty endi 1.0 ga teng" in html
+

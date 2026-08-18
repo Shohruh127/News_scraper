@@ -1,0 +1,25 @@
+{% comment %}
+The invariant frame. Six archetype templates extend this and fill two blocks.
+
+Shared rather than copied because the headline link, the tag line and the
+`<blockquote expandable>` syntax would otherwise be written six times. That syntax was
+verified against the live API rather than assumed, and writing it six times is six chances
+to get it wrong.
+
+  lead    the visible part — this is where channel uniformity is decided, because a reader
+          scrolling past sees only this
+  detail  archetype-specific lines and their order, inside the collapsed block
+{% endcomment %}{% block lead %}🔥 <b><a href="{{ url }}">{{ headline_uz }}</a></b>
+<i>#{{ topic }} · {{ source_name }}</i>{% endblock %}
+
+{{ summary_uz }}
+<blockquote expandable>{% block detail %}{% endblock %}{% if why_it_matters_uz %}💡 <b>Nima uchun muhim</b>
+{{ why_it_matters_uz }}{% endif %}{% if leadership_uz %}
+
+💼 <b>Boshqaruv uchun</b>
+{{ leadership_uz }}{% endif %}{% if uzbekistan_application_uz %}
+
+🇺🇿 <b>O'zbekistonda</b>
+{{ uzbekistan_application_uz }}{% endif %}{% if secondary_sources %}
+
+🔗 {% for sec in secondary_sources %}<a href="{{ sec.url }}">{{ sec.source_name|default:sec.title }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}{% endif %}</blockquote>
