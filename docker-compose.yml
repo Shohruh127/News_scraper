@@ -34,6 +34,8 @@ services:
   # `.dockerignore` keeps `.env` out of the build so it cannot go stale there again.
   #
   # After editing `.env`, apply it with `docker compose up -d <service>`.
+  # After editing Python or a template, run `docker compose build` FIRST -- the source is
+  # baked in by `COPY . .`, so `up -d` alone recreates the container from the old image.
   # `docker compose restart` does NOT work: it restarts the existing container with the
   # environment it was created with, so the file is re-read only when the container is
   # recreated. Measured 2026-08-18 -- restart reported the old value, up -d the new one.

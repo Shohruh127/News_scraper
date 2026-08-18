@@ -79,6 +79,24 @@ container with the environment it was created with. Measured 2026-08-18: after a
 value to `.env`, `restart` reported the old one and `up -d` the new one. This matters most
 for `PUBLISHING_ENABLED`: flipping the kill switch with `restart` silently does nothing.
 
+**Applying a code change.** Editing Python or a template needs `docker compose build` before
+`docker compose up -d`. `up -d` alone recreates the container from the **existing image**, and
+the source lives in that image because the Dockerfile ends with `COPY . .`.
+
+Measured 2026-08-18, after the archetype work was committed and the containers recreated
+without a rebuild: `subject_key` was present but `ARCHETYPES` was not, and
+`/app/config/settings.py` still read `default=False` for `TELEGRAM_LINK_PREVIEW` while the repo
+read `default=True`. The next scheduled run would have published the old format.
+
+So there are two separate rules, and confusing them is silent:
+
+| what changed | what to run |
+|---|---|
+| a value in `.env` | `docker compose up -d <service>` |
+| Python, a template, a dependency | `docker compose build` then `docker compose up -d` |
+
+`docker compose restart` applies neither.
+
 **`data/` is not in the image.** `.dockerignore` excludes it, so `eval_classifier` cannot
 find `data/gold_set.jsonl` inside a container. Run it from the host, or pass `--gold-set`
 with a path that exists in the container. Nothing in the scheduled pipeline reads `data/`.
