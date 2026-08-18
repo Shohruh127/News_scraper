@@ -156,3 +156,57 @@ def test_embedding_is_not_a_glossary_term():
     en = {"summary_en": "The methods include embedding interactive quizzes."}
     uz = {"summary_uz": "Usullar interaktiv testlarni joylashtirishni o'z ichiga oladi."}
     assert translation_gates.validate_translation(en, uz) == []
+
+
+def test_headline_case_gate_allows_acronym_with_uzbek_suffix():
+    """Gate 3: an acronym that took an Uzbek case suffix is not Title Case.
+
+    Measured on a live run: `CVEni` was rejected twice and article 851 lost its
+    translation permanently, although `CVE` is the English term the glossary requires
+    to be preserved. Uzbek agglutinates onto the borrowed token, so the result is
+    neither all-caps nor equal to the English word.
+    """
+    en_headline = "New CVE Affects the MoE Router in vLLM"
+    uz_headline = "Yangi CVEni MoEga tegishli router muammosi"
+
+    assert translation_gates.check_headline_case(en_headline, uz_headline) == []
+
+
+def test_headline_case_gate_still_catches_title_case_next_to_acronyms():
+    """The suffix allowance must not blanket-approve the rest of the headline."""
+    en_headline = "New CVE Affects the MoE Router"
+    uz_headline = "Yangi CVEni Router Muammosi Aniqlandi"
+
+    violations = translation_gates.check_headline_case(en_headline, uz_headline)
+    assert any("Muammosi" in v for v in violations)
+    assert not any("CVEni" in v for v in violations)
+
+
+def test_glossary_allows_ordinary_sense_but_still_catches_calque():
+    """A term with an ordinary English sense may be translated, but not calqued.
+
+    Measured on article 830: English read `legal frameworks`, an ordinary-sense phrase.
+    The gate demanded the English word, and the retry it forced produced
+    `huquqiy frameworkga` instead of the natural `huquqiy asoslarga` -- then passed.
+    """
+    en = {"uzbekistan_application_en": "Success depends on adoption and legal frameworks."}
+
+    natural = {
+        "uzbekistan_application_uz": "Muvaffaqiyat joriy etish va huquqiy asoslarga bog'liq."
+    }
+    assert translation_gates.check_glossary(en, natural) == []
+
+    calqued = {"uzbekistan_application_uz": "Muvaffaqiyat huquqiy ramka bilan bog'liq."}
+    violations = translation_gates.check_glossary(en, calqued)
+    assert any("ramka" in v for v in violations)
+
+
+def test_glossary_does_not_require_context_at_all():
+    """`context` is out of the required list, in either its bare or compound form.
+
+    Measured on article 839: the model rendered `context window` as `kontekst oynasi`,
+    which is correct Uzbek, and the gate blocked the whole post for it three times.
+    """
+    en = {"summary_en": "The context window grew to 262144 tokens."}
+    uz = {"summary_uz": "Kontekst oynasi 262144 tokengacha kengaydi."}
+    assert translation_gates.check_glossary(en, uz) == []
