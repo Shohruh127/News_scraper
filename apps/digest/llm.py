@@ -413,6 +413,37 @@ COMMON_TRANSLATED_FIELDS = (
     "uzbekistan_application_en",
 )
 
+#: Technical fields that are prose and therefore translated. Measured 2026-08-18 over 37
+#: stored rows: what_was_built 37 values averaging 14 words, limitations 29 at 20 words,
+#: architecture 15 at 24, benchmarks 15 at 23, hardware 5 at 11 — all full sentences.
+#:
+#: repo_url and api_url are single URLs. license was empty in every row. `install` is
+#: excluded because it is mixed: two of its five values were prose and one was the bare
+#: command `ollama run muse-glimmer`, which the appendix renders inside <code>. Translating a
+#: command is worse than leaving a phrase in English, because someone may run the result.
+TECHNICAL_PROSE_FIELDS = (
+    "what_was_built",
+    "architecture",
+    "limitations",
+    "benchmarks",
+    "hardware",
+)
+
+
+def technical_fields(payload: dict) -> dict[str, str]:
+    """The technical block's prose, suffixed `_en` so the dynamic schema yields `_uz`.
+
+    The suffix exists only inside the translation call. The stored payload keeps its plain
+    names, so nothing needs migrating and old digests keep rendering.
+    """
+    block = payload.get("technical") or {}
+    return {
+        f"{name}_en": block[name]
+        for name in TECHNICAL_PROSE_FIELDS
+        if isinstance(block.get(name), str) and block[name].strip()
+    }
+
+
 
 def archetype_fields(payload: dict) -> dict[str, str]:
     """The chosen archetype's detail block, flattened to top-level keys.
@@ -1122,6 +1153,7 @@ def analyse_for_digest_logic(
         try:
             fields = {k: en.payload.get(k, "") for k in COMMON_TRANSLATED_FIELDS}
             fields.update(archetype_fields(en.payload))
+            fields.update(technical_fields(en.payload))
             uz_schema = translation_schema_for(fields)
             uz_model = create_model(
                 "TranslationDynamic",

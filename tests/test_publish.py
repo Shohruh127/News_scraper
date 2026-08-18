@@ -519,3 +519,34 @@ def test_visible_part_stays_short(digest_item_factory, archetype, emoji, require
     assert len(visible) < 600
 
 
+@pytest.mark.django_db
+def test_appendix_prefers_uzbek_and_falls_back_to_english(digest_item_factory):
+    """A stored digest from before this change still renders, in English.
+
+    `_item_data` prefers the `_uz` value. Old payloads have none, so they fall back rather
+    than rendering blank labels.
+    """
+    item = digest_item_factory(archetype="release", detail={})
+
+    en = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
+    en.payload["technical"] = {
+        "what_was_built": "An English sentence",
+        "limitations": "An English limitation",
+        "local_deployable": True,
+    }
+    en.save(update_fields=["payload"])
+
+    html = ranking.render_item_appendix(item)
+    assert "An English sentence" in html
+
+    uz = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_UZ)
+    uz.payload["what_was_built_uz"] = "O'zbekcha jumla"
+    uz.save(update_fields=["payload"])
+
+    html = ranking.render_item_appendix(item)
+    assert "O'zbekcha jumla" in unescape(html)
+    assert "An English sentence" not in html
+    assert "An English limitation" in html
+
+
+

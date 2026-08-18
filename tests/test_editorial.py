@@ -38,6 +38,8 @@ UZ_PAYLOAD = {
     "why_it_matters_uz": "Uni mahalliy serverda ishlatish mumkin.",
     "leadership_uz": "API'ga bog'liqlikni kamaytiradi.",
     "uzbekistan_application_uz": "Mahalliy jamoalar o'zida joylashtira oladi.",
+    "what_was_built_uz": "2.4T MoE model",
+    "limitations_uz": "Katta VRAM talab qiladi",
 }
 
 
@@ -347,5 +349,68 @@ def test_translation_schema_only_rewrites_a_trailing_suffix():
 
     schema = translation_schema_for({"deployment_en": "a", "residual_en": "b"})
     assert set(schema["properties"]) == {"deployment_uz", "residual_uz"}
+
+
+def test_technical_fields_selects_prose_and_suffixes_it():
+    """Prose is translated; URLs and commands are not.
+
+    `install` is excluded because it is mixed: of five stored values two were prose and one was
+    the bare command `ollama run muse-glimmer`. A mangled command is actively wrong — someone
+    may run it — while an untranslated short phrase is merely suboptimal. The appendix already
+    renders it inside <code>.
+    """
+    from apps.digest.llm import technical_fields
+
+    payload = {
+        "technical": {
+            "what_was_built": "A minor version update for the checkpoint library.",
+            "architecture": "Uses a custom database called DeltaDB.",
+            "limitations": "Limited to American Sign Language.",
+            "benchmarks": "Scores 70 BLEURT on FLEURS-ASL.",
+            "hardware": "Spare smartphone or PC with a webcam.",
+            "install": "ollama run muse-glimmer",
+            "repo_url": "https://github.com/langchain-ai/langgraph",
+            "api_url": "https://example.com/api",
+            "license": "",
+            "local_deployable": True,
+        }
+    }
+
+    out = technical_fields(payload)
+
+    assert set(out) == {
+        "what_was_built_en",
+        "architecture_en",
+        "limitations_en",
+        "benchmarks_en",
+        "hardware_en",
+    }
+    assert out["what_was_built_en"].startswith("A minor version update")
+
+
+def test_technical_fields_skips_empty_values():
+    """A field the model could not ground stays out of the translation call."""
+    from apps.digest.llm import technical_fields
+
+    payload = {"technical": {"what_was_built": "Something", "architecture": "   "}}
+
+    assert technical_fields(payload) == {"what_was_built_en": "Something"}
+
+
+def test_technical_fields_handles_a_missing_block():
+    """An article with no technical block must not raise."""
+    from apps.digest.llm import technical_fields
+
+    assert technical_fields({}) == {}
+
+
+def test_technical_prose_reaches_the_translation_schema():
+    """The `_en` suffix is what makes the existing dynamic schema produce `_uz`."""
+    from apps.digest.llm import technical_fields, translation_schema_for
+
+    fields = technical_fields({"technical": {"benchmarks": "7-8% faster prefill"}})
+
+    assert set(translation_schema_for(fields)["properties"]) == {"benchmarks_uz"}
+
 
 

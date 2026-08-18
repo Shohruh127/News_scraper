@@ -437,16 +437,19 @@ def _item_data(item: DigestItem) -> dict:
             uz_payload.get("uzbekistan_application_uz", "")
             or en_payload.get("uzbekistan_application_uz", "")
         ),
-        # Technical appendix fields (English)
-        "what_was_built": technical.get("what_was_built", ""),
-        "architecture": technical.get("architecture", ""),
+        # Technical appendix. Prose comes from the translation when it exists and from the
+        # English otherwise, so digests stored before appendix translation still render.
+        # URLs and the install command are never translated.
+        "what_was_built": uz_payload.get("what_was_built_uz")
+        or technical.get("what_was_built", ""),
+        "architecture": uz_payload.get("architecture_uz") or technical.get("architecture", ""),
+        "hardware": uz_payload.get("hardware_uz") or technical.get("hardware", ""),
+        "benchmarks": uz_payload.get("benchmarks_uz") or technical.get("benchmarks", ""),
+        "limitations": uz_payload.get("limitations_uz") or technical.get("limitations", ""),
         "license": technical.get("license", ""),
         "repo_url": technical.get("repo_url", ""),
         "api_url": technical.get("api_url", ""),
-        "hardware": technical.get("hardware", ""),
         "install": technical.get("install", ""),
-        "benchmarks": technical.get("benchmarks", ""),
-        "limitations": technical.get("limitations", ""),
         "local_deployable": technical.get("local_deployable", False),
         # Clustering
         "secondary_sources": secondary_sources,
