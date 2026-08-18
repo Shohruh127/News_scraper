@@ -1,0 +1,13 @@
+{% extends "digest/item_base.html" %}
+{% block lead %}🔬 <b><a href="{{ url }}">{{ headline_uz }}</a></b>
+<i>#{{ topic }} · {{ source_name }}</i>{% endblock %}
+{% block detail %}🧪 <b>Da'vo</b>
+{{ detail.claim_uz }}{% if detail.evidence_strength_uz %}
+
+📊 <b>Dalil kuchi</b>
+{{ detail.evidence_strength_uz }}{% endif %}{% if detail.reproducible_uz %}
+
+♻️ <b>Takrorlanadimi</b>
+{{ detail.reproducible_uz }}{% endif %}
+
+{% endblock %}

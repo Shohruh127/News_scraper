@@ -2,6 +2,12 @@
 {% block lead %}🚀 <b><a href="{{ url }}">{{ headline_uz }}</a></b>
 <i>#{{ topic }} · {{ source_name }}</i>{% endblock %}
 {% block detail %}📦 <b>Nima o'zgardi</b>
-{{ detail.what_changed_uz }}
+{{ detail.what_changed_uz }}{% if detail.benchmarks_uz %}
+
+⚡ <b>O'lchovlar</b>
+{{ detail.benchmarks_uz }}{% endif %}{% if detail.availability_uz %}
+
+🔓 <b>Qanday olinadi</b>
+{{ detail.availability_uz }}{% endif %}
 
 {% endblock %}

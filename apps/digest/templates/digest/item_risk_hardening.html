@@ -1,0 +1,13 @@
+{% extends "digest/item_base.html" %}
+{% block lead %}🛡 <b><a href="{{ url }}">{{ headline_uz }}</a></b>
+<i>#{{ topic }} · {{ source_name }}</i>{% endblock %}
+{% block detail %}⚠️ <b>Xavf</b>
+{{ detail.risk_uz }}
+
+🩹 <b>Nima qilingan</b>
+{{ detail.mitigation_uz }}{% if detail.residual_uz %}
+
+🔍 <b>Nima hal bo'lmagan</b>
+{{ detail.residual_uz }}{% endif %}
+
+{% endblock %}

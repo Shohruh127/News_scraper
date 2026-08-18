@@ -7,6 +7,8 @@ Acceptance criteria from REMAINING_WORK.md:
 4. Kill switch leaves digest COMPOSED with no message IDs.
 """
 
+from html import unescape
+
 import httpx
 import pytest
 import respx
@@ -441,4 +443,79 @@ def test_archetype_selects_its_template(digest_item_factory):
 
     assert "🚀" in html
     assert "repeat_penalty endi 1.0 ga teng" in html
+
+
+ARCHETYPE_CASES = [
+    ("release", "🚀",
+     {"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
+     {"benchmarks_uz": "Prefill 7–8% tezroq",
+      "availability_uz": "GitHub relizlaridan yuklab olinadi"}),
+    ("agent_protocol", "🔌",
+     {"connects_uz": "IDE ni ma'lumotlar bazasiga ulaydi"},
+     {"deployment_uz": "Self-hosted va Ollama bilan ishlaydi"}),
+    ("risk_hardening", "🛡",
+     {"risk_uz": "Suv belgisini o'chirish oson",
+      "mitigation_uz": "Kriptografik imzo qo'shildi"},
+     {"residual_uz": "Qisqa matnlarda hamon ishonchsiz"}),
+    ("policy", "⚖️",
+     {"who_issued_uz": "Yevropa Ittifoqi",
+      "who_must_comply_uz": "Generativ model provayderlari"},
+     {"deadline_uz": "2027-yil 1-avgust"}),
+    ("research", "🔬",
+     {"claim_uz": "Ixchamlash uzun sessiyalarni saqlaydi"},
+     {"evidence_strength_uz": "Bitta laboratoriya, mustaqil takror yo'q",
+      "reproducible_uz": "Kod ochiq emas"}),
+    ("company_product", "🏢",
+     {"what_they_do_uz": "Konteyner obrazlarini avtomatik tozalaydi"},
+     {"availability_uz": "Enterprise mijozlar uchun ochiq"}),
+]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
+def test_archetype_renders_with_every_field(
+    digest_item_factory, archetype, emoji, required, optional
+):
+    item = digest_item_factory(archetype=archetype, detail={**required, **optional})
+
+    html = ranking.render_item_post(item)
+    unescaped = unescape(html)
+
+    assert emoji in html
+    for value in {**required, **optional}.values():
+        assert value in unescaped
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
+def test_archetype_renders_with_no_optional_fields(
+    digest_item_factory, archetype, emoji, required, optional
+):
+    """The path most posts actually take.
+
+    `benchmarks` is populated 40% of the time, so two release posts in three walk this branch.
+    The full case is the one easy to imagine and the rarer one in production.
+    """
+    item = digest_item_factory(archetype=archetype, detail=required)
+
+    html = ranking.render_item_post(item)
+    unescaped = unescape(html)
+
+    assert emoji in html
+    for value in required.values():
+        assert value in unescaped
+    for value in optional.values():
+        assert value not in unescaped
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
+def test_visible_part_stays_short(digest_item_factory, archetype, emoji, required, optional):
+    """Everything new lives inside the collapsed block, so the visible length must not grow."""
+    item = digest_item_factory(archetype=archetype, detail={**required, **optional})
+
+    visible = ranking.render_item_post(item).split("<blockquote expandable>")[0]
+
+    assert len(visible) < 600
+
 

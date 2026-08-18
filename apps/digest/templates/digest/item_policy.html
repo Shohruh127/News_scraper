@@ -1,0 +1,13 @@
+{% extends "digest/item_base.html" %}
+{% block lead %}⚖️ <b><a href="{{ url }}">{{ headline_uz }}</a></b>
+<i>#{{ topic }} · {{ source_name }}</i>{% endblock %}
+{% block detail %}🏛 <b>Kim chiqardi</b>
+{{ detail.who_issued_uz }}
+
+👥 <b>Kim majbur</b>
+{{ detail.who_must_comply_uz }}{% if detail.deadline_uz %}
+
+📅 <b>Qachondan</b>
+{{ detail.deadline_uz }}{% endif %}
+
+{% endblock %}
