@@ -315,3 +315,139 @@ def test_render_templates_snapshot(db, classified_articles):
 )
 def test_subject_key(url, expected):
     assert ranking.subject_key(url) == expected
+
+@pytest.fixture
+def repetition_articles(db, source):
+    """Create three releases for Ollama, two for DeepSeek, and two for Anthropic."""
+    spec = [
+        (
+            "https://github.com/ollama/ollama/releases/tag/v0.32.10",
+            "production_engineering",
+            9,
+            "Ollama changes the default repeat penalty for local inference runs. ",
+        ),
+        (
+            "https://github.com/ollama/ollama/releases/tag/v0.32.9",
+            "production_engineering",
+            8,
+            "Nemotron Lightning arrives with fresh agent tooling and driver support. ",
+        ),
+        (
+            "https://github.com/ollama/ollama/releases/tag/v0.32.8",
+            "production_engineering",
+            7,
+            "Muse Glimmer joins the coding lineup for editor integrations everywhere. ",
+        ),
+        (
+            "https://api-docs.deepseek.com/guides/v4-pro",
+            "frontier_models",
+            6,
+            "A quiet publication describes the reasoning system behind version four. ",
+        ),
+        (
+            "https://api-docs.deepseek.com/news/pricing",
+            "frontier_models",
+            5,
+            "Peak and off peak tariffs now apply across every inference endpoint. ",
+        ),
+        (
+            "https://www.anthropic.com/news/claude-opus-5",
+            "frontier_models",
+            4,
+            "Introducing the most capable frontier assistant this laboratory has built. ",
+        ),
+        (
+            "https://www.anthropic.com/news/fable-5-safeguards",
+            "safety_security",
+            3,
+            "Biology risk evaluations were tightened substantially during this quarter. ",
+        ),
+    ]
+    made = []
+    for index, (url, topic, novelty, body) in enumerate(spec):
+        article = Article.objects.create(
+            source=source,
+            canonical_url=url,
+            content_hash=f"rep{index}",
+            title=f"Repetition fixture {index}",
+            extracted_text=body * 30,
+            status=Article.Status.CLASSIFIED,
+        )
+        Analysis.objects.create(
+            article=article,
+            stage=Analysis.Stage.CLASSIFICATION,
+            model_tag="gemma4:31b",
+            payload={
+                "primary_topic": topic,
+                "maturity": "live_product",
+                "novelty": novelty,
+                "evidence": novelty,
+                "production_readiness": novelty,
+                "reason": "fixture",
+            },
+            latency_ms=1000,
+        )
+        make_editorial(article)
+        made.append(article)
+    return made
+
+
+def _selected_urls(candidates):
+    return [article.canonical_url for article, _, _, _ in candidates]
+
+
+def test_repetitive_subjects_are_dropped(repetition_articles):
+    urls = _selected_urls(ranking.select_digest_candidates())
+
+    assert "https://github.com/ollama/ollama/releases/tag/v0.32.10" in urls
+    assert "https://github.com/ollama/ollama/releases/tag/v0.32.9" not in urls
+    assert "https://github.com/ollama/ollama/releases/tag/v0.32.8" not in urls
+    assert "https://api-docs.deepseek.com/guides/v4-pro" in urls
+    assert "https://api-docs.deepseek.com/news/pricing" not in urls
+
+
+def test_same_subject_different_topic_both_survive(repetition_articles):
+    urls = _selected_urls(ranking.select_digest_candidates())
+
+    assert "https://www.anthropic.com/news/claude-opus-5" in urls
+    assert "https://www.anthropic.com/news/fable-5-safeguards" in urls
+
+
+def test_backfill_keeps_the_digest_at_its_cap(repetition_articles, settings):
+    settings.DIGEST_MAX_ITEMS = 3
+
+    assert len(ranking.select_digest_candidates()) == 3
+
+
+def test_rule_is_silent_when_every_subject_is_distinct(db, source):
+    bodies = [
+        "Alpha describes a storage engine rewrite with measured throughput gains. ",
+        "Bravo reports on a scheduler that reorders work across many machines. ",
+        "Charlie documents a compiler pass that removes redundant memory loads. ",
+    ]
+    for index, body in enumerate(bodies):
+        article = Article.objects.create(
+            source=source,
+            canonical_url=f"https://site{index}.example/post",
+            content_hash=f"dist{index}",
+            title=f"Distinct story {index}",
+            extracted_text=body * 30,
+            status=Article.Status.CLASSIFIED,
+        )
+        Analysis.objects.create(
+            article=article,
+            stage=Analysis.Stage.CLASSIFICATION,
+            model_tag="gemma4:31b",
+            payload={
+                "primary_topic": "ai_agents",
+                "maturity": "live_product",
+                "novelty": 8,
+                "evidence": 8,
+                "production_readiness": 8,
+                "reason": "fixture",
+            },
+            latency_ms=1000,
+        )
+        make_editorial(article)
+
+    assert len(ranking.select_digest_candidates()) == 3

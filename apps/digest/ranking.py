@@ -116,6 +116,7 @@ def select_digest_candidates(
 
     max_items = getattr(settings, "DIGEST_MAX_ITEMS", 7)
     max_per_topic = getattr(settings, "DIGEST_MAX_PER_TOPIC", 2)
+    max_per_subject = getattr(settings, "DIGEST_MAX_PER_SUBJECT", 1)
 
     # Query classified articles strictly excluding already published articles
     articles = (
@@ -153,17 +154,24 @@ def select_digest_candidates(
     # Apply canonical URL dedup BEFORE topic diversification
     clustered_candidates = clustering.cluster_candidates(scored_candidates)
 
-    # Apply topic diversification limit on clusters
+    # Diversification, applied to clusters so a merged story is counted once.
     topic_counts: Counter = Counter()
+    subject_counts: Counter = Counter()
     selected: list[tuple[Article, Analysis, float, list[Article]]] = []
 
     for art, analysis, score, secondary_arts in clustered_candidates:
         topic = analysis.topic
-        if topic_counts[topic] < max_per_topic:
-            selected.append((art, analysis, score, secondary_arts))
-            topic_counts[topic] += 1
-            if len(selected) >= max_items:
-                break
+        subject = (subject_key(art.canonical_url), topic)
+        if topic_counts[topic] >= max_per_topic:
+            continue
+        if subject_counts[subject] >= max_per_subject:
+            continue
+
+        selected.append((art, analysis, score, secondary_arts))
+        topic_counts[topic] += 1
+        subject_counts[subject] += 1
+        if len(selected) >= max_items:
+            break
 
     return selected
 
