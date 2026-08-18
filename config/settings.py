@@ -204,3 +204,15 @@ LOGGING = {
         "trafilatura": {"level": "CRITICAL", "propagate": False},
     },
 }
+
+# --- Paper sources -----------------------------------------------------------
+# Papers are filtered out of every digest by construction: `maturity_ceiling` caps a
+# paper URL at `paper_only` and EXCLUDED_MATURITIES excludes that from ranking. Triaging
+# them therefore spends the model for a result that cannot be published.
+#
+# Measured 2026-08-18: 216 of 411 stored articles came from paper domains and consumed
+# 169 triage and classification calls, and not one had ever reached a digest.
+#
+# Set to False when M2 artifact verification lands. That feature admits a paper whose
+# promised repository actually resolves, and it cannot judge articles never triaged.
+SKIP_PAPER_DOMAINS = env.bool("SKIP_PAPER_DOMAINS", default=True)

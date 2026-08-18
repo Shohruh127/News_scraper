@@ -12,7 +12,7 @@ essentially every abstract. The source is ground truth and needs no inference.
 
 import pytest
 
-from apps.digest.llm import apply_maturity_ceiling, maturity_ceiling
+from apps.digest.llm import apply_maturity_ceiling, check_rule_prefilter, maturity_ceiling
 from apps.digest.models import Article, Maturity, Source
 
 pytestmark = pytest.mark.django_db
@@ -83,3 +83,57 @@ def test_unknown_maturity_is_left_alone(hn):
     a = art(hn, "https://arxiv.org/abs/2608.2")
     payload = apply_maturity_ceiling(a, {"maturity": "something_else"})
     assert payload["maturity"] == "something_else"
+
+
+@pytest.mark.django_db
+def test_prefilter_skips_paper_domains_before_any_llm_call():
+    """A paper is rejected before triage, because it can never reach a digest.
+
+    Measured 2026-08-18: paper domains were 216 of 411 stored articles and had consumed
+    169 triage and classification calls without ever producing a digest item.
+    """
+    source = Source.objects.create(
+        name="hn", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.01234",
+        title="A Paper About Agents",
+        extracted_text="x" * 2000,
+    )
+    passed, reason = check_rule_prefilter(paper)
+    assert passed is False
+    assert "Paper domain" in reason
+
+
+@pytest.mark.django_db
+def test_prefilter_keeps_non_paper_articles_from_the_same_source():
+    """The rule is keyed on the URL, so `hn` still delivers everything else it finds."""
+    source = Source.objects.create(
+        name="hn2", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    product = Article.objects.create(
+        source=source,
+        canonical_url="https://github.com/ollama/ollama/releases/tag/v0.32.10",
+        title="Ollama v0.32.10",
+        extracted_text="x" * 2000,
+    )
+    passed, _ = check_rule_prefilter(product)
+    assert passed is True
+
+
+@pytest.mark.django_db
+def test_paper_prefilter_can_be_switched_off_for_m2(settings):
+    """M2 artifact verification needs papers triaged again; one setting restores them."""
+    settings.SKIP_PAPER_DOMAINS = False
+    source = Source.objects.create(
+        name="hn3", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.09999",
+        title="Another Paper",
+        extracted_text="x" * 2000,
+    )
+    passed, _ = check_rule_prefilter(paper)
+    assert passed is True

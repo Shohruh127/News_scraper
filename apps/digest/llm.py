@@ -676,6 +676,19 @@ def check_rule_prefilter(article: Article) -> tuple[bool, str]:
     if text_length < min_chars:
         return False, f"Text too short: {text_length} chars < {min_chars}"
 
+    # A paper cannot reach a digest today, so triaging one spends the model for nothing.
+    # `maturity_ceiling` caps it at `paper_only` and EXCLUDED_MATURITIES removes that from
+    # ranking, both by construction rather than by score. Reusing the ceiling here rather
+    # than rematching PAPER_DOMAINS keeps the two rules from drifting apart, and covers
+    # the `hf` connector case as well.
+    #
+    # Measured 2026-08-18: 216 of 411 stored articles came from these domains and consumed
+    # 169 triage and classification calls between them. Not one has ever appeared in a
+    # digest, as an item or as a secondary source.
+    skip_papers = getattr(settings, "SKIP_PAPER_DOMAINS", True)
+    if skip_papers and maturity_ceiling(article) == Maturity.PAPER_ONLY:
+        return False, "Paper domain: excluded from ranking by maturity, so never triaged"
+
     return True, ""
 
 
