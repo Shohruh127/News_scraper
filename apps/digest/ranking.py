@@ -12,6 +12,7 @@ from collections import Counter
 from datetime import date as dt_date
 from datetime import datetime, timedelta
 from datetime import time as dt_time
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.db import transaction
@@ -77,6 +78,22 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
 
     return round(max(0.0, score), 4)
 
+
+
+def subject_key(url: str) -> str:
+    """Return the subject identity derived from an article URL.
+
+    The network location without a leading www. is used for ordinary hosts. For code
+    hosts that carry many unrelated projects, the first path segment (the owner or
+    namespace) is included so separate projects remain distinct subjects.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().split(":")[0].removeprefix("www.")
+    if host in getattr(settings, "SUBJECT_CODE_HOSTS", ()):
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        if segments:
+            return f"{host}/{segments[0]}"
+    return host
 
 def select_digest_candidates(
     target_date: dt_date | None = None,

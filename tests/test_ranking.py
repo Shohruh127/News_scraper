@@ -293,3 +293,25 @@ def test_render_templates_snapshot(db, classified_articles):
     comment_html = ranking.render_group_comment(digest)
     assert str(today) in comment_html
     assert "Open Model 30B Released" in comment_html
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://github.com/ollama/ollama/releases/tag/v0.32.10", "github.com/ollama"),
+        ("https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.12.15", "github.com/k2-fsa"),
+        ("https://www.anthropic.com/news/claude-opus-5", "anthropic.com"),
+        ("https://anthropic.com/news/fable-5-safeguards", "anthropic.com"),
+        ("https://api-docs.deepseek.com/guides/v4-pro", "api-docs.deepseek.com"),
+        ("https://api-docs.deepseek.com/news/pricing", "api-docs.deepseek.com"),
+        ("https://gds.blog.gov.uk/2026/08/06/a-post/", "gds.blog.gov.uk"),
+        ("https://technology.blog.gov.uk/2026/07/07/another/", "technology.blog.gov.uk"),
+        (
+            "https://raw.githubusercontent.com/ollama/ollama/main/README.md",
+            "raw.githubusercontent.com",
+        ),
+        ("https://github.com", "github.com"),
+        ("https://example.com:8443/post", "example.com"),
+    ],
+)
+def test_subject_key(url, expected):
+    assert ranking.subject_key(url) == expected

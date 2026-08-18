@@ -216,3 +216,14 @@ LOGGING = {
 # Set to False when M2 artifact verification lands. That feature admits a paper whose
 # promised repository actually resolves, and it cannot judge articles never triaged.
 SKIP_PAPER_DOMAINS = env.bool("SKIP_PAPER_DOMAINS", default=True)
+
+# --- Subject diversity -------------------------------------------------------
+# Digest #11 opened with three consecutive releases from the same project. The existing
+# topic cap correctly allowed them because they were distinct releases; subject variety
+# needs its own independent limit.
+#
+# See docs/superpowers/specs/2026-08-18-digest-subject-diversity-design.md
+DIGEST_MAX_PER_SUBJECT = env.int("DIGEST_MAX_PER_SUBJECT", default=1)
+#: Hosts that carry many unrelated projects, where the owner segment is part of the identity.
+#: Matched by exact equality, so raw.githubusercontent.com is an ordinary host.
+SUBJECT_CODE_HOSTS = ("github.com", "gitlab.com", "huggingface.co")
