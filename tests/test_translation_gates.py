@@ -64,20 +64,36 @@ def test_glossary_gate_catches_calques():
     assert any("open-weight" in v and "ochiq-og'irlikli" in v for v in violations)
 
 
-def test_glossary_gate_catches_missing_english_terms():
-    """Gate 2: translating away required technical terms must fail."""
+def test_glossary_does_not_require_a_term_to_survive_verbatim():
+    """The presence half of this gate was removed, on its own record.
+
+    Measured 2026-08-18: it fired three times in one live run -- `context` twice and
+    `framework` once -- and every firing was a false positive. One of them lost a post
+    entirely. Over the same corpus the terms it guarded survived anyway: `model` 21/21,
+    `agent` 18/18, `API` 7/7, `inference` 4/4. It caught nothing and cost three posts.
+
+    Calque detection stays, because a specific wrong rendering is evidence on its own.
+    """
     en_fields = {
         "headline_en": "New Framework for AI Agent Benchmark",
         "summary_en": "A new framework for agent evaluation.",
     }
-    uz_fields_bad = {
+    uz_fields = {
         "headline_uz": "Sun'iy intellekt vakillari uchun yangi tizim",
         "summary_uz": "Yangi dasturiy ta'minot sinovdan o'tkazildi.",
     }
 
-    violations = translation_gates.check_glossary(en_fields, uz_fields_bad)
-    assert len(violations) > 0
-    assert any("framework" in v or "agent" in v or "benchmark" in v for v in violations)
+    assert translation_gates.check_glossary(en_fields, uz_fields) == []
+
+
+def test_calque_detection_still_fires_after_the_presence_check_is_gone():
+    """`framework` may become `asos`, never `ramka`."""
+    en_fields = {"summary_en": "A new framework for agent evaluation."}
+    uz_fields = {"summary_uz": "Agentlarni baholash uchun yangi ramka."}
+
+    violations = translation_gates.check_glossary(en_fields, uz_fields)
+
+    assert any("ramka" in v for v in violations)
 
 
 def test_headline_case_gate_catches_title_case():

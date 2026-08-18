@@ -2,8 +2,8 @@
 
 Three mechanical checks that catch the highest-severity translation defects:
 1. Numbers: every numeric token in English must appear in Uzbek.
-2. Glossary: technical terms required to stay in English must appear in Uzbek and
-   not be calqued/transliterated into Uzbek.
+2. Calques: a term must not be rendered as a known-wrong Uzbek form. Terms are no longer
+   required to appear verbatim -- see the note above CALQUES.
 3. Headline case: Uzbek does not use English Title Case.
 """
 
@@ -12,25 +12,17 @@ import re
 
 log = logging.getLogger(__name__)
 
-# Established technical terms that prompt requires to stay in English
-#: Terms required to appear verbatim in the Uzbek. Every entry here must have no
-#: ordinary English sense, or the gate rejects correct translations -- see the note below.
-GLOSSARY = (
-    "open-weight",
-    "weights",
-    "benchmark",
-    "inference",
-    "token",
-    "agent",
-    "API",
-    "quantization",
-    "latency",
-    "checkpoint",
-    "prompt",
-    "MoE",
-)
-
-# Known bad transliterations / calques measured in live runs
+# The presence requirement -- "a term in the English must appear verbatim in the Uzbek" -- was
+# removed on 2026-08-18 after being measured rather than assumed.
+#
+# In one live run it fired three times, on `context` twice and `framework` once, and all three
+# were false positives; one lost a post. Over the same corpus the terms it guarded survived
+# without it: model 21/21, agent 18/18, API 7/7, inference 4/4, open-weight 3/3. The prompt
+# does this work, not the gate.
+#
+# Calque detection below stays. It looks for a specific wrong rendering rather than the absence
+# of a right one, so it cannot fire on a correct translation: `framework` may legitimately
+# become `asos`, but never `ramka`.
 CALQUES = {
     "open-weight": ["ochiq-og'irlikli", "ochiq og'irlikli", "ochiq vaznli", "ochiq-vaznli"],
     "weights": ["og'irliklar", "og'irliklari", "vaznlar", "vaznlari"],
@@ -39,29 +31,6 @@ CALQUES = {
     "checkpoint": ["nazorat nuqtasi", "chekpoint"],
     "inference": ["xulosa chiqarish", "inferensiya"],
 }
-
-# `context` and `framework` were removed from GLOSSARY on 2026-08-18 for the same reason
-# as `embedding`, with evidence from a live run of 15 translations:
-#
-#   article 839  one article used both `context window` (technical) and `loss of context`
-#                (ordinary) -- the gate cannot tell them apart. Narrowing the entry to the
-#                compound did not help: the model rendered it `kontekst oynasi`, which is
-#                correct Uzbek, and the post was blocked a third time. The word is out.
-#   article 830  English read `legal frameworks`; the retry the gate forced produced
-#                `huquqiy frameworkga` instead of the natural `huquqiy asoslarga`, and
-#                then passed. A gate that degrades the text it approves is worse than
-#                no gate. Both words appear in `uzbekistan_application_uz`, which
-#                discusses policy and adoption and is where ordinary senses concentrate.
-#
-# `embedding` was removed from both lists earlier. It is the one entry that is commonly an
-# ordinary English gerund rather than the ML term: a real article read "embedding
-# interactive quizzes to test comprehension", where `joylashtirish` is the correct
-# translation, and the gate rejected a good translation.
-#
-# The remaining terms carry the same risk in principle — `context`, `prompt` and `weights`
-# all have ordinary senses — but in AI news text they appear overwhelmingly in the
-# technical one. Detecting part of speech to do better would cost more than it saves;
-# if another term produces a false positive in practice, remove it the same way.
 
 
 #: Thousand separators differ by locale: English writes 5,000 and Uzbek writes 5000.
@@ -94,7 +63,7 @@ def check_numbers(en_fields: dict, uz_fields: dict) -> list[str]:
 
 
 def check_glossary(en_fields: dict, uz_fields: dict) -> list[str]:
-    """Gate 2: terms that appear in English must stay in English in Uzbek."""
+    """Gate 2: terms that appear in English must not be calqued/transliterated in Uzbek."""
     en_text = " ".join(str(v) for v in en_fields.values())
     uz_text = " ".join(str(v) for v in uz_fields.values())
     uz_lower = uz_text.lower()
@@ -111,14 +80,6 @@ def check_glossary(en_fields: dict, uz_fields: dict) -> list[str]:
         for bad in bad_forms:
             if bad.lower() in uz_lower:
                 violations.append(f"Glossary violation: '{term}' was translated as '{bad}'")
-
-    # Presence requirement: only for terms that cannot be anything but the technical one.
-    for term in GLOSSARY:
-        t_low = term.lower()
-        if t_low in en_lower and t_low not in uz_lower:
-            violations.append(
-                f"Glossary violation: English term '{term}' is missing from Uzbek translation"
-            )
 
     return violations
 
