@@ -66,3 +66,17 @@ def test_celery_beat_schedule_configured():
     assert sched["fetch-morning"]["task"] == "digest.fetch_all_sources"
     assert sched["triage-and-classify"]["task"] == "digest.triage_and_classify"
     assert sched["compose-and-publish"]["task"] == "digest.compose_and_publish"
+
+
+def test_link_preview_defaults_to_on_when_unset(monkeypatch):
+    """Link preview is the approved image delivery mechanism (Option A, 2026-08-18).
+
+    Guards against someone disabling it by accident in a refactor.
+    """
+    import environ
+
+    monkeypatch.delenv("TELEGRAM_LINK_PREVIEW", raising=False)
+    assert (
+        environ.Env(TELEGRAM_LINK_PREVIEW=(bool, True))("TELEGRAM_LINK_PREVIEW") is True
+    )
+

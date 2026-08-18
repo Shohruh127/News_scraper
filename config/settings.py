@@ -147,9 +147,10 @@ TELEGRAM_CHANNEL_ID = env("TELEGRAM_CHANNEL_ID", default="")
 TELEGRAM_GROUP_ID = env("TELEGRAM_GROUP_ID", default="")
 TELEGRAM_ADMIN_CHAT_ID = env("TELEGRAM_ADMIN_CHAT_ID", default="")
 PUBLISHING_ENABLED = env("PUBLISHING_ENABLED")
-#: Off by default: 15 posts a day each with a preview card makes the channel very
-#: tall, and previews of arXiv and GitHub pages are generic. The headline is a link.
-TELEGRAM_LINK_PREVIEW = env.bool("TELEGRAM_LINK_PREVIEW", default=False)
+#: On by default: link preview is the approved image delivery mechanism (Option A, 2026-08-18).
+#: Telegram unfurls the article URL and fetches og:image without our code downloading or storing
+#: images, preserving the 4096-char sendMessage limit and working gracefully when no image exists.
+TELEGRAM_LINK_PREVIEW = env.bool("TELEGRAM_LINK_PREVIEW", default=True)
 
 # --- Ingestion --------------------------------------------------------------
 USER_AGENT = "news-radar/0.1 (+daily AI digest)"
