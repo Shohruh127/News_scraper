@@ -184,6 +184,25 @@ license, or a benchmark number. Any field it cannot ground in the article text s
 vendor's claim. In M1 this is always `vendor_claim_only`; the verification layer arrives
 in M2.3.
 
+### `archetype` — the shape of the post
+
+Measured 2026-08-18 on six real items: with no definitions the model scored 0/6 and filled six
+irrelevant detail blocks, including `HIGH` severity for a change to a default sampling parameter.
+With the definitions below it scored 5/6 and filled none. They are load-bearing.
+
+| value | boundary |
+|---|---|
+| `release` | A named product or model shipped a new version. A changelog, a release note, a version number. This is the default for any version bump. |
+| `agent_protocol` | A protocol or framework for connecting tools to models, where the news IS the connection mechanism. Not a runtime that happens to run agents. |
+| `risk_hardening` | A risk, a weakness, or work done to reduce one. There must be something that can go wrong and someone acting on it. |
+| `policy` | A rule issued by a government or standards body, with someone obliged to comply. Pricing is not policy. |
+| `research` | A method or a finding with a claim and evidence, not a shipped artifact. |
+| `company_product` | A company entering a market or making a commercial launch, where the company is the news rather than the version. |
+
+Exactly one `<archetype>_details` block is filled. Every field inside it is optional in the
+schema: 11 stored security articles contained one CVE identifier, no CVSS score and no
+affected-version range, so a required field would be invented rather than found.
+
 ---
 
 ## 6. Models

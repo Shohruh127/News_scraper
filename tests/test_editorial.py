@@ -234,3 +234,67 @@ def test_rendering_succeeds_with_both_stages(article):
     # install commands are English artefacts and are not translated.
     appendix = ranking.render_group_comment(digest)
     assert "Fast transformer layer" in appendix
+
+
+def test_archetype_enum_matches_the_detail_blocks():
+    """Every archetype must have a block, and every block an archetype."""
+    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_SCHEMA
+
+    props = EDITORIAL_EN_SCHEMA["properties"]
+    assert set(props["archetype"]["enum"]) == set(ARCHETYPES)
+    for name in ARCHETYPES:
+        assert f"{name}_details" in props, f"{name} has no detail block"
+
+
+def test_no_detail_field_is_required_in_the_schema():
+    """A strict schema does not make the model know an answer, it makes it produce one.
+
+    Measured 2026-08-18: a change to a default sampling parameter was given HIGH severity.
+    """
+    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_SCHEMA
+
+    top_required = EDITORIAL_EN_SCHEMA["required"]
+    for name in ARCHETYPES:
+        block = EDITORIAL_EN_SCHEMA["properties"][f"{name}_details"]
+        assert not block.get("required"), f"{name}_details marks fields required"
+        assert f"{name}_details" not in top_required
+
+
+def test_editorial_model_accepts_one_block_and_none():
+    """The model validates a payload with a single block, and one with no block at all."""
+    from apps.digest.llm import EditorialEn
+
+    common = {
+        "headline_en": "Ollama v0.32.10 changes the default repeat penalty",
+        "summary_en": "The release changes a default and speeds up prefill.",
+        "why_it_matters_en": "It standardises behaviour across engines.",
+        "leadership_en": "A routine update with a measurable speedup.",
+        "uzbekistan_application_en": "Local teams running Ollama benefit directly.",
+        "technical": {
+            "what_was_built": "Ollama v0.32.10",
+            "limitations": "Applies to NVFP4 MLX models only",
+            "local_deployable": True,
+        },
+        "evidence_level": "vendor_claim_only",
+    }
+
+    with_block = EditorialEn(
+        archetype="release",
+        release_details={"what_changed_en": "repeat_penalty now defaults to 1.0"},
+        **common,
+    )
+    assert with_block.release_details.what_changed_en.startswith("repeat_penalty")
+    assert with_block.risk_hardening_details is None
+
+    without_block = EditorialEn(archetype="release", **common)
+    assert without_block.release_details is None
+
+
+def test_archetype_definitions_are_in_the_prompt():
+    """The definitions moved accuracy from 0/6 to 5/6, so their absence is a defect."""
+    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_PROMPT
+
+    for name in ARCHETYPES:
+        assert name in EDITORIAL_EN_PROMPT, f"{name} is not defined in the prompt"
+    assert "Pricing is not policy" in EDITORIAL_EN_PROMPT
+

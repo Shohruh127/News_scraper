@@ -118,6 +118,58 @@ class DeepAnalysis(BaseModel):
     evidence_level: str = Field(default="vendor_claim_only")
 
 
+#: The shape of a post. Boundary definitions live in CONTENT_SCHEMA.md §5 and are quoted into
+#: EDITORIAL_EN_PROMPT verbatim, because measurement showed they carry the accuracy: without
+#: them the model scored 0/6 and filled six irrelevant blocks; with them, 5/6 and none.
+ARCHETYPES = (
+    "release",
+    "agent_protocol",
+    "risk_hardening",
+    "policy",
+    "research",
+    "company_product",
+)
+
+
+class ReleaseDetails(BaseModel):
+    what_changed_en: str = ""
+    benchmarks_en: str = ""
+    availability_en: str = ""
+
+
+class AgentProtocolDetails(BaseModel):
+    connects_en: str = ""
+    deployment_en: str = ""
+
+
+class RiskHardeningDetails(BaseModel):
+    """No severity enum. Of 11 stored security articles, none carried a CVSS score, so a
+    three-value enum with no "not stated" option would be invented nine times in eleven.
+    A stated CVE or severity belongs inside `risk_en`, quoted rather than classified."""
+
+    risk_en: str = ""
+    mitigation_en: str = ""
+    residual_en: str = ""
+
+
+class PolicyDetails(BaseModel):
+    who_issued_en: str = ""
+    who_must_comply_en: str = ""
+    deadline_en: str = ""
+
+
+class ResearchDetails(BaseModel):
+    #: Deliberately not `evidence_level`, which is a frozen enum meaning something else.
+    claim_en: str = ""
+    evidence_strength_en: str = ""
+    reproducible_en: str = ""
+
+
+class CompanyProductDetails(BaseModel):
+    what_they_do_en: str = ""
+    availability_en: str = ""
+
+
 class EditorialEn(BaseModel):
     """English analysis. Verified independently of translation (ADR-005)."""
 
@@ -128,6 +180,13 @@ class EditorialEn(BaseModel):
     uzbekistan_application_en: str
     technical: TechnicalDetails
     evidence_level: str = Field(default="vendor_claim_only")
+    archetype: str = "release"
+    release_details: ReleaseDetails | None = None
+    agent_protocol_details: AgentProtocolDetails | None = None
+    risk_hardening_details: RiskHardeningDetails | None = None
+    policy_details: PolicyDetails | None = None
+    research_details: ResearchDetails | None = None
+    company_product_details: CompanyProductDetails | None = None
 
 
 class Translation(BaseModel):
@@ -210,6 +269,53 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["vendor_claim_only", "multiple_evidence"],
         },
+        "archetype": {"type": "string", "enum": list(ARCHETYPES)},
+        "release_details": {
+            "type": "object",
+            "properties": {
+                "what_changed_en": {"type": "string"},
+                "benchmarks_en": {"type": "string"},
+                "availability_en": {"type": "string"},
+            },
+        },
+        "agent_protocol_details": {
+            "type": "object",
+            "properties": {
+                "connects_en": {"type": "string"},
+                "deployment_en": {"type": "string"},
+            },
+        },
+        "risk_hardening_details": {
+            "type": "object",
+            "properties": {
+                "risk_en": {"type": "string"},
+                "mitigation_en": {"type": "string"},
+                "residual_en": {"type": "string"},
+            },
+        },
+        "policy_details": {
+            "type": "object",
+            "properties": {
+                "who_issued_en": {"type": "string"},
+                "who_must_comply_en": {"type": "string"},
+                "deadline_en": {"type": "string"},
+            },
+        },
+        "research_details": {
+            "type": "object",
+            "properties": {
+                "claim_en": {"type": "string"},
+                "evidence_strength_en": {"type": "string"},
+                "reproducible_en": {"type": "string"},
+            },
+        },
+        "company_product_details": {
+            "type": "object",
+            "properties": {
+                "what_they_do_en": {"type": "string"},
+                "availability_en": {"type": "string"},
+            },
+        },
     },
     "required": [
         "headline_en",
@@ -219,14 +325,34 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
         "uzbekistan_application_en",
         "technical",
         "evidence_level",
+        "archetype",
     ],
 }
+
+#: Quoted verbatim from CONTENT_SCHEMA.md §5. Measured: 0/6 without, 5/6 with.
+ARCHETYPE_DEFINITIONS = (
+    "## Choose exactly one archetype\n"
+    "release          A named product or model shipped a new version. A changelog, a release\n"
+    "                 note, a version number. This is the default for any version bump.\n"
+    "agent_protocol   A protocol or framework for connecting tools to models, where the news\n"
+    "                 IS the connection mechanism. Not a runtime that happens to run agents.\n"
+    "risk_hardening   A risk, a weakness, or work done to reduce one. There must be something\n"
+    "                 that can go wrong and someone acting on it.\n"
+    "policy           A rule issued by a government or standards body, with someone obliged to\n"
+    "                 comply. Pricing is not policy.\n"
+    "research         A method or a finding with a claim and evidence, not a shipped artifact.\n"
+    "company_product  A company entering a market or making a commercial launch, where the\n"
+    "                 company is the news rather than the version.\n\n"
+    "Fill ONLY the detail block for the archetype you chose. Leave every other block absent.\n"
+    "Omit any field whose value is not stated in the article. Never infer a severity.\n\n"
+)
 
 EDITORIAL_EN_PROMPT = (
     "You are a senior editor for a daily AI-engineering digest read by engineering "
     "leaders and AI engineers in Uzbekistan.\n\n"
     "Write the English analysis of the article below. Return JSON only.\n\n"
-    "## Voice — this is a news post, not a book report\n"
+    + ARCHETYPE_DEFINITIONS
+    + "## Voice — this is a news post, not a book report\n"
     'Never refer to "the article", "this paper", "the post", or "the author". Write about '
     "the news itself. Wrong: \"The article describes a new model.\" Right: \"Qwen released "
     'a 2.4T open-weight model."\n'
