@@ -61,9 +61,13 @@ the seed file, so a fresh environment comes up with eleven sources missing.
 
 ### Context an engineer new to this repo needs
 
-`Article.status` moves `fetched → skipped | classified`. `skipped` covers both the rule
-prefilter (paper domains, text too short) and an LLM rejection, so "not classified" is not the
-same as "rejected by the model".
+`Article.status` moves `fetched → triaged → classified | skipped`. Four states, not three.
+An earlier version of this plan said three, and the command built from it could not tell a
+rejected article from one still in the queue — see
+`docs/superpowers/plans/2026-08-18-source-yield-in-flight.md`.
+
+`skipped` covers both the rule prefilter (paper domains, text too short) and an LLM rejection,
+so "not classified" is not the same as "rejected by the model", and `triaged` is neither.
 
 A `DigestItem` row means the article was *selected* into a digest. A non-null
 `channel_message_id` on that row means it was actually *published*. The gap between the two is

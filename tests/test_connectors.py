@@ -205,7 +205,12 @@ def test_source_yield_counts_the_funnel():
     )
     made = []
     for i, status in enumerate(
-        [Article.Status.CLASSIFIED, Article.Status.CLASSIFIED, Article.Status.SKIPPED]
+        [
+            Article.Status.CLASSIFIED,
+            Article.Status.CLASSIFIED,
+            Article.Status.SKIPPED,
+            Article.Status.TRIAGED,
+        ]
     ):
         made.append(
             Article.objects.create(
@@ -227,9 +232,15 @@ def test_source_yield_counts_the_funnel():
     call_command("source_yield", stdout=out)
     line = next(li for li in out.getvalue().splitlines() if "yield_src" in li)
 
-    assert "3" in line       # articles
-    assert "2" in line       # classified
-    assert "1" in line       # published, the one with a channel_message_id
+    # Positional, not "is this digit somewhere in the line". The previous assertions passed
+    # while a whole column was missing, because the digits they looked for appeared anyway.
+    cols = line.split()
+    assert cols[0] == "yield_src"
+    assert cols[1] == "4", "ARTS counts every article the source produced"
+    assert cols[2] == "1", "TRIAGED counts articles still moving, not rejected ones"
+    assert cols[3] == "2", "CLASSIF counts articles that finished classification"
+    assert cols[4] == "2", "DIGEST counts articles ranking selected"
+    assert cols[5] == "1", "PUBLISHED counts articles that reached a reader"
 
 
 @pytest.mark.django_db

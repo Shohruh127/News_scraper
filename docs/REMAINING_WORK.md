@@ -112,6 +112,7 @@ with a path that exists in the container. Nothing in the scheduled pipeline read
 | Subject diversity | `(subject_key, topic)`, cap 1. Network location, plus owner segment for code hosts |
 | Maturity ceiling | URL-keyed. arXiv/HF-papers → `paper_only`. A HuggingFace *model card* is not a paper |
 | Paper prefilter | 216 of 411 articles were paper domains, consumed 169 LLM calls, produced 0 digest items |
+| Article status machine | `fetched → triaged → classified \| skipped`. Four states. Reading it as three made `source_yield` report a queue as a rejection |
 | Ollama concurrency | 2. Eight parallel requests are slower than serial |
 | Telegram limits | message 4096 chars, photo caption **1024** chars — both measured against the live API |
 | Pipeline timings | fetch 97s · compose + editorial 329s · publish 12 posts + 12 appendices 82.6s |
