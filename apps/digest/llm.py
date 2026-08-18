@@ -929,7 +929,8 @@ def analyse_for_digest_logic(
                 provider=settings.EDITORIAL_EN_PROVIDER,
             )
             en_by_article[art.id] = _record(art, Analysis.Stage.EDITORIAL_EN, model_tag,
-                                            payload, latency_ms)
+                                            payload, latency_ms,
+                                            settings.EDITORIAL_EN_PROVIDER)
             log.info("English editorial done for article %s", art.id)
         except Exception as exc:
             log.error("English editorial failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1008,7 +1009,7 @@ def analyse_for_digest_logic(
                     continue
 
             created.append(_record(art, Analysis.Stage.EDITORIAL_UZ, model_tag,
-                                   payload, latency_ms))
+                                   payload, latency_ms, settings.TRANSLATION_PROVIDER))
             log.info("Uzbek translation done for article %s", art.id)
         except Exception as exc:
             log.error("Translation failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1016,13 +1017,17 @@ def analyse_for_digest_logic(
     return created
 
 
-def _record(article, stage, model_tag: str, payload: dict, latency_ms: int) -> Analysis:
+def _record(article, stage, model_tag: str, payload: dict, latency_ms: int,
+            provider: str) -> Analysis:
     return Analysis.objects.create(
         article=article,
         stage=stage,
         model_tag=model_tag,
-        # MiMo exposes no digest; only Ollama tags can be repointed silently.
-        model_digest=fetch_model_digest(model_tag) if settings.LLM_PROVIDER != "mimo" else "",
+        # MiMo exposes no digest; only Ollama tags can be repointed silently. The provider
+        # is per stage, so the global LLM_PROVIDER cannot answer this: with
+        # LLM_PROVIDER=mimo it blanked the digest on translation rows, which are produced
+        # by Ollama and are exactly the ones a repointed tag would corrupt unnoticed.
+        model_digest=fetch_model_digest(model_tag) if provider != "mimo" else "",
         payload=payload,
         latency_ms=latency_ms,
     )
