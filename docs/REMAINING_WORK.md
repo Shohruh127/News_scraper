@@ -71,6 +71,18 @@ unenforced — a mutation test found it, reading the code did not. Expect that l
 | Edit and delete on a real post | ✅ | 16 posts deleted; one channel post edited and reverted with entities intact |
 | 7 consecutive automatic days | ⏳ | not started, by decision — see §3 |
 
+### Operating notes
+
+**Applying a config change.** Edit `.env`, then `docker compose up -d <service>`.
+`docker compose restart` does **not** pick the change up — it restarts the existing
+container with the environment it was created with. Measured 2026-08-18: after adding a
+value to `.env`, `restart` reported the old one and `up -d` the new one. This matters most
+for `PUBLISHING_ENABLED`: flipping the kill switch with `restart` silently does nothing.
+
+**`data/` is not in the image.** `.dockerignore` excludes it, so `eval_classifier` cannot
+find `data/gold_set.jsonl` inside a container. Run it from the host, or pass `--gold-set`
+with a path that exists in the container. Nothing in the scheduled pipeline reads `data/`.
+
 ### Measured facts an executor will need
 
 | Fact | Value |
