@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.venv
+__pycache__/
+*.pyc
+.pytest_cache
+.ruff_cache
+data/
+staticfiles/
+graphify-out/
+docs/
+spikes/
