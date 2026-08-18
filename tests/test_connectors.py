@@ -189,3 +189,94 @@ def test_parse_date_always_returns_aware_datetimes():
     d = connectors.parse_date("2026-08-14T10:00:00")
     assert d is not None and d.tzinfo is not None
     assert timezone.is_aware(d)
+
+
+@pytest.mark.django_db
+def test_source_yield_counts_the_funnel():
+    """Each stage is counted separately, because they answer different questions."""
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from apps.digest.models import Article, Digest, DigestItem, Source
+
+    src = Source.objects.create(
+        name="yield_src", connector=Source.Connector.RSS, url="https://example.com/rss"
+    )
+    made = []
+    for i, status in enumerate(
+        [Article.Status.CLASSIFIED, Article.Status.CLASSIFIED, Article.Status.SKIPPED]
+    ):
+        made.append(
+            Article.objects.create(
+                source=src,
+                canonical_url=f"https://example.com/y{i}",
+                content_hash=f"y{i}",
+                title=f"Article {i}",
+                extracted_text="Body " * 60,
+                status=status,
+            )
+        )
+    digest = Digest.objects.create(digest_date=timezone.localdate())
+    DigestItem.objects.create(
+        digest=digest, article=made[0], position=1, score=0.9, channel_message_id=42
+    )
+    DigestItem.objects.create(digest=digest, article=made[1], position=2, score=0.8)
+
+    out = StringIO()
+    call_command("source_yield", stdout=out)
+    line = next(li for li in out.getvalue().splitlines() if "yield_src" in li)
+
+    assert "3" in line       # articles
+    assert "2" in line       # classified
+    assert "1" in line       # published, the one with a channel_message_id
+
+
+@pytest.mark.django_db
+def test_source_yield_lists_a_source_that_produced_nothing():
+    """A zero is the measurement. A source missing from the report cannot be judged."""
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from apps.digest.models import Source
+
+    Source.objects.create(
+        name="silent_src", connector=Source.Connector.RSS, url="https://example.com/quiet"
+    )
+
+    out = StringIO()
+    call_command("source_yield", stdout=out)
+
+    assert "silent_src" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_source_yield_days_window_excludes_older_articles():
+    """`--days` answers "what has this source done lately", not "ever"."""
+    from datetime import timedelta
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from apps.digest.models import Article, Source
+
+    src = Source.objects.create(
+        name="window_src", connector=Source.Connector.RSS, url="https://example.com/w"
+    )
+    old = Article.objects.create(
+        source=src,
+        canonical_url="https://example.com/old",
+        content_hash="old",
+        title="Old",
+        extracted_text="Body " * 60,
+        status=Article.Status.CLASSIFIED,
+    )
+    Article.objects.filter(pk=old.pk).update(fetched_at=timezone.now() - timedelta(days=30))
+
+    out = StringIO()
+    call_command("source_yield", "--days", "7", stdout=out)
+    line = next(li for li in out.getvalue().splitlines() if "window_src" in li)
+
+    assert line.split()[1] == "0"
+

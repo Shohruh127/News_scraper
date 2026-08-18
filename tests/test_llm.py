@@ -1,6 +1,7 @@
 """Tests for LLM integration, classification, rule pre-filters, and tasks."""
 
 import json
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -322,7 +323,11 @@ def test_triage_validation_failure_marks_skipped(db, sample_article):
 
 
 @respx.mock
-def test_triage_and_classify_batch(db, source):
+def test_triage_and_classify_batch(db, source, monkeypatch):
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True
+    monkeypatch.setattr("redis.Redis.from_url", lambda url: mock_redis)
+
     art1 = Article.objects.create(
         source=source,
         canonical_url="https://example.com/art1",
