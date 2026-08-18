@@ -280,3 +280,30 @@ def test_source_yield_days_window_excludes_older_articles():
 
     assert line.split()[1] == "0"
 
+
+def test_seed_covers_every_source_added_since_the_file_was_written():
+    """A source added by a one-off script is invisible to a fresh environment.
+
+    Measured 2026-08-18: the seed held 12 sources and the database held 23. Eleven had been
+    inserted directly and never reached the file.
+    """
+    from apps.digest.management.commands.seed_sources import SOURCES
+
+    names = {entry["name"] for entry in SOURCES}
+    added_2026_08_18 = {
+        "nextgov",
+        "fedscoop",
+        "statescoop",
+        "ec_digital",
+        "gds_uk",
+        "gh_sherpa_onnx",
+        "gh_pyannote",
+        "gh_whisperx",
+        "techcrunch_ai",
+        "crunchbase_news",
+        "sifted",
+    }
+
+    assert added_2026_08_18 <= names, f"missing from the seed: {added_2026_08_18 - names}"
+
+
