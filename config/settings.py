@@ -222,6 +222,13 @@ SKIP_PAPER_DOMAINS = env.bool("SKIP_PAPER_DOMAINS", default=True)
 # topic cap correctly allowed them because they were distinct releases; subject variety
 # needs its own independent limit.
 #
+# Unlike CLUSTER_JACCARD_THRESHOLD, this one IS a knob. That threshold is settled by a
+# 0.79 separation gap in the measurement: any value from 0.2 to 0.9 decides both known
+# cases identically, so changing it is meaningless. The choice between one and two items
+# per subject is settled by no measurement at all -- it is a judgement about how the
+# channel should read. 1 is the default because it produced the correct result on digest
+# #11, and 2 is a defensible choice, not a mistake.
+#
 # See docs/superpowers/specs/2026-08-18-digest-subject-diversity-design.md
 DIGEST_MAX_PER_SUBJECT = env.int("DIGEST_MAX_PER_SUBJECT", default=1)
 #: Hosts that carry many unrelated projects, where the owner segment is part of the identity.

@@ -79,7 +79,6 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
     return round(max(0.0, score), 4)
 
 
-
 def subject_key(url: str) -> str:
     """Return the subject identity derived from an article URL.
 
@@ -94,6 +93,7 @@ def subject_key(url: str) -> str:
         if segments:
             return f"{host}/{segments[0]}"
     return host
+
 
 def select_digest_candidates(
     target_date: dt_date | None = None,

@@ -309,6 +309,13 @@ def test_render_templates_snapshot(db, classified_articles):
             "https://raw.githubusercontent.com/ollama/ollama/main/README.md",
             "raw.githubusercontent.com",
         ),
+        # Exact equality, not a suffix test. These two are what a suffix match would
+        # swallow -- both really do end in "github.com", and mygithub.com is an unrelated
+        # domain that would get its first path segment glued onto the key.
+        # raw.githubusercontent.com above does NOT test this: it ends in
+        # "githubusercontent.com", so a suffix match leaves it alone either way.
+        ("https://gist.github.com/someuser/abc123", "gist.github.com"),
+        ("https://mygithub.com/owner/repo", "mygithub.com"),
         ("https://github.com", "github.com"),
         ("https://example.com:8443/post", "example.com"),
     ],
