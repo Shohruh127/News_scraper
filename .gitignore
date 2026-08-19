@@ -52,9 +52,14 @@ spikes/.venv/
 # Raw scraped data
 data/raw/
 
+# Documentation & spikes (kept local)
+docs/
+spikes/
+
 # OS
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
 
