@@ -121,13 +121,21 @@ def check_headline_case(en_headline: str, uz_headline: str) -> list[str]:
     if not uz_headline or not en_headline:
         return []
 
-    en_words = en_headline.split()
-    en_caps = {w.strip(",.:;\"'()") for w in en_words if w and w[0].isupper()}
+    # Extract all capitalized words and components (e.g., Copilot from Copilot-Approved, Delta from Delta:)
+    en_raw_tokens = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", en_headline)
+    en_caps = set()
+    for w in en_raw_tokens:
+        if w and w[0].isupper():
+            en_caps.add(w)
+            for part in re.split(r"[-_]", w):
+                if part and part[0].isupper():
+                    en_caps.add(part)
+                    en_caps.add(_acronym_stem(part))
 
     uz_words = uz_headline.split()
     violations = []
     for i, raw_word in enumerate(uz_words):
-        word = raw_word.strip(",.:;\"'()")
+        word = raw_word.strip(",.:;\"'()«»“”")
         if i == 0 or not word:
             continue  # First word is always allowed to be capitalized
         if word[0].isupper():
@@ -136,11 +144,20 @@ def check_headline_case(en_headline: str, uz_headline: str) -> list[str]:
                 continue
             if _is_suffixed_acronym(word, en_caps):
                 continue
+            # Allow suffixed borrowed nouns: Delta'ni -> Delta, Repo'dagi -> Repo, Solverning -> Solver
+            stem = _acronym_stem(word)
+            apostrophe_stem = re.split(r"['’`]", word)[0]
+            if stem in en_caps or apostrophe_stem in en_caps:
+                continue
+            # Check singular/plural stem match against English capitalized words
+            if any(stem.startswith(cap) or apostrophe_stem.startswith(cap) for cap in en_caps if len(cap) >= 3):
+                continue
             violations.append(
                 f"Headline case violation: '{word}' is capitalized in Uzbek headline (Title Case)"
             )
 
     return violations
+
 
 
 def validate_translation(en_fields: dict, uz_fields: dict) -> list[str]:
