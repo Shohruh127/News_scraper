@@ -63,11 +63,21 @@ class AnalysisInline(admin.TabularInline):
 
 @admin.register(Article)
 class ArticleAdmin(admin.ModelAdmin):
-    list_display = ("title", "source", "status", "published_at", "fetched_at")
-    list_filter = ("status", "source", "language")
+    list_display = (
+        "title", "source", "status", "artifact_verified", "published_at", "fetched_at"
+    )
+    list_filter = ("status", "artifact_verified", "source", "language")
     search_fields = ("title", "canonical_url")
     date_hierarchy = "published_at"
-    readonly_fields = ("canonical_url", "content_hash", "fetched_at", "extracted_text", "meta")
+    readonly_fields = (
+        "canonical_url",
+        "content_hash",
+        "fetched_at",
+        "extracted_text",
+        "meta",
+        "artifact_url",
+        "artifact_verified",
+    )
     inlines = [AnalysisInline]
 
 

@@ -119,6 +119,7 @@ with a path that exists in the container. Nothing in the scheduled pipeline read
 | Database growth | 14 MB at 506 articles; ~9.2 KB per article and its analyses; ~2 MB/day; ~800 MB/year |
 | Appendix delivery | The publisher reads the auto-forward ID from Redis, and only the `bot` service writes it. With `bot` down every appendix is missed — the posts still land, and the digest stays `published` with an admin alert |
 | Publish idempotency | `publish_digest` skips items that already carry a `channel_message_id`. Measured 2026-08-19 before the guard: 61 of 82 live channel messages had no database record |
+| Artifact verification | `repo_is_real` returns `None` when GitHub did not answer, and `None` is never stored. The unauthenticated API allows 60 requests/hour/IP, so a rate limit must not become a permanent "no artifact" |
 
 ---
 

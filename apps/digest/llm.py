@@ -19,7 +19,7 @@ from django.conf import settings
 from pydantic import BaseModel, Field, ValidationError, create_model
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from . import translation_gates
+from . import artifacts, translation_gates
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Maturity, Topic
 
 log = logging.getLogger(__name__)
@@ -822,10 +822,12 @@ def maturity_ceiling(article: Article) -> str | None:
     card that scored reproducible_open_source was correct to.
     """
     url = (article.canonical_url or "").lower()
-    if any(d in url for d in PAPER_DOMAINS):
-        return Maturity.PAPER_ONLY
-    if article.source and article.source.connector == "hf":
-        # The hf connector fetches the daily-papers feed and nothing else.
+    is_paper = any(d in url for d in PAPER_DOMAINS) or (
+        article.source and article.source.connector == "hf"
+    )
+    if article.artifact_verified and is_paper:
+        return Maturity.REPRODUCIBLE_OPEN_SOURCE
+    if is_paper:
         return Maturity.PAPER_ONLY
     return None
 
@@ -849,6 +851,32 @@ def apply_maturity_ceiling(article: Article, payload: dict) -> dict:
     payload["maturity"] = ceiling
     payload["maturity_capped_from"] = claimed
     return payload
+
+
+def _verify_artifact(article: Article) -> bool:
+    """Verify a paper repository once and carry the verdict to classification."""
+    if not getattr(settings, "ARTIFACT_VERIFICATION_ENABLED", True):
+        return False
+    if article.artifact_verified is not None:
+        return article.artifact_verified
+
+    url = artifacts.find_repo_url(article.extracted_text or "", article.title or "")
+    if not url:
+        return False
+
+    verified = artifacts.repo_is_real(url)
+    if verified is None:
+        log.warning(
+            "Artifact check for article %s was inconclusive; storing nothing so a later run "
+            "can ask again", article.id,
+        )
+        return False
+
+    article.artifact_url = url
+    article.artifact_verified = verified
+    article.save(update_fields=["artifact_url", "artifact_verified"])
+    log.info("Artifact for article %s: %s -> %s", article.id, url, verified)
+    return verified
 
 
 def check_rule_prefilter(article: Article) -> tuple[bool, str]:
@@ -877,6 +905,8 @@ def check_rule_prefilter(article: Article) -> tuple[bool, str]:
     # digest, as an item or as a secondary source.
     skip_papers = getattr(settings, "SKIP_PAPER_DOMAINS", True)
     if skip_papers and maturity_ceiling(article) == Maturity.PAPER_ONLY:
+        if _verify_artifact(article):
+            return True, ""
         return False, "Paper domain: excluded from ranking by maturity, so never triaged"
 
     return True, ""

@@ -79,6 +79,10 @@ class Article(models.Model):
     extracted_text = models.TextField()
     status = models.CharField(max_length=20, choices=Status, default=Status.FETCHED, db_index=True)
     meta = models.JSONField(default=dict, blank=True)
+    #: Repository promised by the article, if one was found by the prefilter.
+    artifact_url = models.URLField(max_length=1000, blank=True, default="")
+    #: True when checked and non-empty; False when checked and empty/unreachable; NULL when unseen.
+    artifact_verified = models.BooleanField(null=True, blank=True, default=None)
 
     class Meta:
         ordering = ["-published_at", "-fetched_at"]

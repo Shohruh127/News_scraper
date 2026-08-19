@@ -10,7 +10,9 @@ the model cannot open a link — it falls back to "we release our code", which a
 essentially every abstract. The source is ground truth and needs no inference.
 """
 
+import httpx
 import pytest
+import respx
 
 from apps.digest.llm import apply_maturity_ceiling, check_rule_prefilter, maturity_ceiling
 from apps.digest.models import Article, Maturity, Source
@@ -42,6 +44,170 @@ def hf(db):
 def gh(db):
     return Source.objects.create(name="gh", connector="github", url="https://github.com/o/r")
 
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "We release our code at https://github.com/facebookresearch/segment-anything .",
+            "https://github.com/facebookresearch/segment-anything",
+        ),
+        (
+            "Code: github.com/openai/whisper and weights on the hub.",
+            "https://github.com/openai/whisper",
+        ),
+        (
+            "See https://gitlab.com/team/project for the implementation.",
+            "https://gitlab.com/team/project",
+        ),
+        ("Hosted on https://github.com/features/actions today.", ""),
+        ("Read more at https://github.com/about .", ""),
+        ("We evaluate on three benchmarks and report gains.", ""),
+        (
+            "Available at https://github.com/psf/requests.git, released today.",
+            "https://github.com/psf/requests",
+        ),
+        (
+            "Implementation: https://github.com/psf/requests.",
+            "https://github.com/psf/requests",
+        ),
+        (
+            "Code at https://github.com/Tencent/AI-Infra-Guard/tree/main/ventor today.",
+            "https://github.com/Tencent/AI-Infra-Guard",
+        ),
+        (
+            "Built on https://github.com/vercel/next.js in production.",
+            "https://github.com/vercel/next.js",
+        ),
+        (
+            "See https://github.com/socketio/socket.io/blob/main/README.md for usage.",
+            "https://github.com/socketio/socket.io",
+        ),
+        ("Repo: github.com/foo/bar?tab=readme-ov-file", "https://github.com/foo/bar"),
+        ("Repo: <https://github.com/foo/bar>", "https://github.com/foo/bar"),
+        ("Repo: https://github.com/foo/bar/", "https://github.com/foo/bar"),
+        ("Repo: https://github.com/foo/bar).", "https://github.com/foo/bar"),
+        ("Only an owner: https://github.com/foo and nothing more.", ""),
+    ],
+)
+def test_find_repo_url(text, expected):
+    from apps.digest.artifacts import find_repo_url
+
+    assert find_repo_url(text) == expected
+
+
+def test_the_repository_named_by_the_title_beats_an_earlier_one():
+    """A paper cites baselines before it releases its own code, so first-wins picks wrong."""
+    from apps.digest.artifacts import find_repo_url
+
+    text = "Baselines at github.com/other/baseline; our code at github.com/thunlp/PACE-Bench."
+    title = "PACE-Bench: Benchmarking Physics Adaptation"
+
+    assert find_repo_url(text, title) == "https://github.com/thunlp/PACE-Bench"
+    assert find_repo_url(text) == "https://github.com/other/baseline"
+
+
+@pytest.mark.parametrize(
+    "title, expected",
+    [
+        ("Dion3: Full-Stack Orthogonal Updates", "https://github.com/microsoft/dion"),
+        ("ConceptFormer: Learning Adaptive Latents", "https://github.com/Neuir/ConceptFormer"),
+        ("A Method With No Named Artifact", "https://github.com/other/baseline"),
+    ],
+)
+def test_title_matching_is_substring_based_and_falls_back(title, expected):
+    """Real titles from the corpus. dion vs Dion3 must still match; no match falls back."""
+    from apps.digest.artifacts import find_repo_url
+
+    text = (
+        "Baselines at github.com/other/baseline. "
+        "Code at github.com/microsoft/dion and github.com/Neuir/ConceptFormer."
+    )
+    assert find_repo_url(text, title) == expected
+
+
+
+@respx.mock
+def test_repo_is_real_only_when_it_has_content():
+    from apps.digest.artifacts import repo_is_real
+
+    respx.get("https://api.github.com/repos/authors/full").mock(
+        return_value=httpx.Response(200, json={"size": 1240})
+    )
+    respx.get("https://api.github.com/repos/authors/empty").mock(
+        return_value=httpx.Response(200, json={"size": 0})
+    )
+    respx.get("https://api.github.com/repos/authors/missing").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+
+    assert repo_is_real("https://github.com/authors/full") is True
+    assert repo_is_real("https://github.com/authors/empty") is False
+    assert repo_is_real("https://github.com/authors/missing") is False
+
+
+@respx.mock
+def test_repo_is_inconclusive_when_github_does_not_answer():
+    """A rate limit is not evidence of absence. It must not become a stored verdict."""
+    from apps.digest.artifacts import repo_is_real
+
+    respx.get("https://api.github.com/repos/authors/timeout").mock(
+        side_effect=httpx.ConnectTimeout("boom")
+    )
+    respx.get("https://api.github.com/repos/authors/throttled").mock(
+        return_value=httpx.Response(403, json={"message": "API rate limit exceeded"})
+    )
+    respx.get("https://api.github.com/repos/authors/broken").mock(
+        return_value=httpx.Response(500, text="upstream error")
+    )
+
+    assert repo_is_real("https://github.com/authors/timeout") is None
+    assert repo_is_real("https://github.com/authors/throttled") is None
+    assert repo_is_real("https://github.com/authors/broken") is None
+
+
+@respx.mock
+def test_repo_is_definitely_false_when_github_says_it_is_not_there():
+    """404 is an answer. It is stored, and the article is not asked about again."""
+    from apps.digest.artifacts import repo_is_real
+
+    respx.get("https://api.github.com/repos/authors/missing").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+    assert repo_is_real("https://github.com/authors/missing") is False
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_an_inconclusive_check_stores_nothing_and_stays_retryable():
+    """The bug this closes: a 403 wrote artifact_verified=False, permanently."""
+    respx.get("https://api.github.com/repos/authors/code").mock(
+        return_value=httpx.Response(403, json={"message": "API rate limit exceeded"})
+    )
+    source = Source.objects.create(
+        name="hn_throttled", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.06666",
+        content_hash="g" * 64,
+        title="A Method With Code",
+        extracted_text="We release our implementation at github.com/authors/code . " * 20,
+    )
+
+    passed, _reason = check_rule_prefilter(paper)
+
+    assert passed is False, "an unverified paper is still skipped this round"
+    paper.refresh_from_db()
+    assert paper.artifact_verified is None, "an unanswered check must remain unanswered"
+    assert paper.artifact_url == "", "no URL is recorded against a verdict that was not reached"
+
+
+def test_repo_is_real_rejects_a_host_it_cannot_check():
+    from apps.digest.artifacts import repo_is_real
+
+    assert repo_is_real("https://gitlab.com/team/project") is False
 
 def test_arxiv_is_capped_at_paper_only_whatever_the_abstract_promises(hn):
     a = art(hn, "https://arxiv.org/abs/2608.12345")
@@ -86,6 +252,136 @@ def test_unknown_maturity_is_left_alone(hn):
 
 
 @pytest.mark.django_db
+
+@pytest.mark.django_db
+@respx.mock
+def test_a_paper_with_a_real_repo_survives_the_prefilter():
+    respx.get("https://api.github.com/repos/authors/code").mock(
+        return_value=httpx.Response(200, json={"size": 900})
+    )
+    source = Source.objects.create(
+        name="hn_artifact", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.01111",
+        content_hash="a" * 64,
+        title="A Method With Code",
+        extracted_text="We release our implementation at github.com/authors/code . " * 20,
+    )
+
+    passed, reason = check_rule_prefilter(paper)
+
+    assert passed is True, reason
+    paper.refresh_from_db()
+    assert paper.artifact_url == "https://github.com/authors/code"
+    assert paper.artifact_verified is True
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_a_paper_whose_repo_is_empty_is_still_skipped():
+    respx.get("https://api.github.com/repos/authors/empty").mock(
+        return_value=httpx.Response(200, json={"size": 0})
+    )
+    source = Source.objects.create(
+        name="hn_empty", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.02222",
+        content_hash="b" * 64,
+        title="A Method With A Promise",
+        extracted_text="Code will be available at github.com/authors/empty . " * 20,
+    )
+
+    passed, reason = check_rule_prefilter(paper)
+
+    assert passed is False
+    assert "Paper domain" in reason
+    paper.refresh_from_db()
+    assert paper.artifact_verified is False
+
+
+@pytest.mark.django_db
+def test_a_paper_with_no_link_is_skipped_without_a_request(monkeypatch):
+    from apps.digest import artifacts
+
+    monkeypatch.setattr(
+        artifacts,
+        "repo_is_real",
+        lambda url: pytest.fail(f"repo_is_real must not run without a link: {url}"),
+    )
+    source = Source.objects.create(
+        name="hn_nolink", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.03333",
+        content_hash="c" * 64,
+        title="A Method Without Code",
+        extracted_text="We evaluate on three benchmarks and report gains. " * 20,
+    )
+
+    passed, _ = check_rule_prefilter(paper)
+
+    assert passed is False
+    paper.refresh_from_db()
+    assert paper.artifact_url == ""
+    assert paper.artifact_verified is None
+
+
+@pytest.mark.django_db
+def test_a_verified_paper_may_claim_reproducible_open_source():
+    source = Source.objects.create(
+        name="hn_ceiling", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.04444",
+        content_hash="d" * 64,
+        title="A Verified Method",
+        extracted_text="x" * 2000,
+        artifact_url="https://github.com/authors/code",
+        artifact_verified=True,
+    )
+
+    assert maturity_ceiling(paper) == Maturity.REPRODUCIBLE_OPEN_SOURCE
+
+
+@pytest.mark.django_db
+def test_an_unverified_paper_keeps_its_paper_only_ceiling():
+    source = Source.objects.create(
+        name="hn_unverified", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    paper = Article.objects.create(
+        source=source,
+        canonical_url="https://arxiv.org/abs/2508.05555",
+        content_hash="e" * 64,
+        title="An Unverified Method",
+        extracted_text="x" * 2000,
+    )
+
+    assert maturity_ceiling(paper) == Maturity.PAPER_ONLY
+
+
+@pytest.mark.django_db
+def test_verified_nonpaper_keeps_no_ceiling():
+    source = Source.objects.create(
+        name="hn_verified_product", url="https://hn.algolia.com/", connector="hn", enabled=True
+    )
+    article = Article.objects.create(
+        source=source,
+        canonical_url="https://github.com/authors/code",
+        content_hash="f" * 64,
+        title="A Verified Product",
+        extracted_text="x" * 2000,
+        artifact_url="https://github.com/authors/code",
+        artifact_verified=True,
+    )
+
+    assert maturity_ceiling(article) is None
+
 def test_prefilter_skips_paper_domains_before_any_llm_call():
     """A paper is rejected before triage, because it can never reach a digest.
 
