@@ -145,12 +145,54 @@ def test_publish_kill_switch_suppresses_network(db, digest_1, settings):
 
     res = publish.publish_digest(digest_1)
     assert res.get("suppressed") is True
+    assert res["items_sent"] == 0
+    assert res["items_failed"] == 0
+    assert res["failed_items"] == []
 
     digest_1.refresh_from_db()
     assert digest_1.status == Digest.Status.COMPOSED
     assert digest_1.published_at is None
     assert not digest_1.items.filter(channel_message_id__isnull=False).exists()
 
+
+def test_a_publish_never_writes_the_bot_token_to_the_log(db, digest_1, settings, caplog):
+    """The token is in the URL of every Telegram call. httpx logs URLs at INFO.
+
+    It has leaked into terminal output twice. The logger config is the fix, not discipline.
+    """
+    import logging
+
+    settings.PUBLISHING_ENABLED = False
+    settings.TELEGRAM_BOT_TOKEN = "123456:SECRET-TOKEN-VALUE"
+
+    with caplog.at_level(logging.DEBUG):
+        publish.publish_digest(digest_1)
+
+    assert "SECRET-TOKEN-VALUE" not in caplog.text
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
+
+@respx.mock
+def test_feedback_keyboard_is_sent_only_with_channel_post(settings):
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+    route = respx.post(f"{base_tg}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+    )
+
+    publish.send_message(
+        chat_id="-100111111",
+        text="post",
+        reply_markup=publish.feedback_keyboard(123),
+    )
+
+    payload = route.calls[0].request.content.decode()
+    assert 'feedback:123:useful' in payload
+    assert 'feedback:123:not_useful' in payload
+    assert 'feedback:123:want_to_build' in payload
 
 @respx.mock
 def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, settings):
@@ -187,6 +229,128 @@ def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, setting
     assert len(msg_ids) == 15
     assert len(set(msg_ids)) == 15, f"Expected 15 distinct IDs, got {msg_ids}"
     assert set(msg_ids) == set(range(1001, 1016))
+
+
+@respx.mock
+def test_publishing_twice_posts_each_item_once(db, digest_15, settings, monkeypatch):
+    """The defect this guards: 61 of 82 live channel messages had no database record."""
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_GROUP_ID = ""
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+    counter = iter(range(600, 700))
+    route = respx.post(f"{base_tg}/sendMessage").mock(
+        side_effect=lambda request: httpx.Response(
+            200, json={"ok": True, "result": {"message_id": next(counter)}}
+        )
+    )
+    DigestItem.objects.filter(digest=digest_15, position__gt=3).delete()
+
+    first = publish.publish_digest(digest_15)
+    calls_after_first = route.call_count
+    second = publish.publish_digest(digest_15)
+
+    assert first["items_sent"] == 3
+    assert first["items_skipped"] == 0
+    assert second["items_sent"] == 0
+    assert second["items_skipped"] == 3
+    assert route.call_count == calls_after_first, "the second run must send nothing"
+
+    ids = list(
+        DigestItem.objects.filter(digest=digest_15)
+        .order_by("position")
+        .values_list("channel_message_id", flat=True)
+    )
+    assert ids == [600, 601, 602], "the first run's message IDs must survive the second run"
+
+
+@respx.mock
+def test_a_partly_published_digest_resumes_instead_of_restarting(db, digest_15, settings):
+    """An item whose send failed is the only one a second run may post."""
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_GROUP_ID = ""
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+    DigestItem.objects.filter(digest=digest_15, position__gt=3).delete()
+    done = DigestItem.objects.filter(digest=digest_15, position__lt=3)
+    for offset, item in enumerate(done):
+        item.channel_message_id = 900 + offset
+        item.save(update_fields=["channel_message_id"])
+
+    route = respx.post(f"{base_tg}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 950}})
+    )
+
+    res = publish.publish_digest(digest_15)
+
+    assert res["items_sent"] == 1
+    assert res["items_skipped"] == 2
+    assert route.call_count == 1
+    assert DigestItem.objects.get(digest=digest_15, position=3).channel_message_id == 950
+
+
+@respx.mock
+def test_republish_overrides_the_guard(db, digest_15, settings):
+    """The one escape hatch: a post deleted by hand can be sent again, on purpose."""
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_GROUP_ID = ""
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+    DigestItem.objects.filter(digest=digest_15, position__gt=1).delete()
+    item = DigestItem.objects.get(digest=digest_15, position=1)
+    item.channel_message_id = 700
+    item.save(update_fields=["channel_message_id"])
+
+    route = respx.post(f"{base_tg}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 800}})
+    )
+
+    res = publish.publish_digest(digest_15, republish=True)
+
+    assert res["items_sent"] == 1
+    assert res["items_skipped"] == 0
+    assert route.call_count == 1
+    item.refresh_from_db()
+    assert item.channel_message_id == 800
+
+
+@respx.mock
+def test_a_missing_appendix_alerts_but_leaves_the_digest_published(
+    db, digest_15, settings, monkeypatch
+):
+    """Every post landed. A missing auto-forward is a degraded post, not a failed digest.
+
+    Marking it FAILED is what invited the re-runs that put 61 untracked messages in the channel.
+    """
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_GROUP_ID = "-100222222"
+    settings.TELEGRAM_ADMIN_CHAT_ID = "999888777"
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+    counter = iter(range(500, 600))
+    respx.post(f"{base_tg}/sendMessage").mock(
+        side_effect=lambda request: httpx.Response(
+            200, json={"ok": True, "result": {"message_id": next(counter)}}
+        )
+    )
+    monkeypatch.setattr(publish, "find_group_forward_message_id", lambda _msg_id: None)
+    DigestItem.objects.filter(digest=digest_15, position__gt=2).delete()
+
+    res = publish.publish_digest(digest_15)
+
+    assert res["items_sent"] == 2
+    assert res["items_failed"] == 0
+    assert len(res["appendix_failures"]) == 2
+    assert res["status"] == Digest.Status.PUBLISHED
+
+    digest_15.refresh_from_db()
+    assert digest_15.status == Digest.Status.PUBLISHED
+    assert digest_15.published_at is not None
+
 
 
 @respx.mock
@@ -238,7 +402,7 @@ def test_failure_on_item_8_leaves_1_through_7_sent_digest_failed(db, digest_15, 
 
 
 @respx.mock
-def test_each_items_appendix_matches_its_own_post(db, digest_15, settings):
+def test_each_items_appendix_matches_its_own_post(db, digest_15, settings, monkeypatch):
     """T1.14 acceptance: each item's appendix replies to its own auto-forwarded post."""
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
@@ -263,42 +427,11 @@ def test_each_items_appendix_matches_its_own_post(db, digest_15, settings):
 
     respx.post(f"{base_tg}/sendMessage").mock(side_effect=send_handler)
 
-    # getUpdates: for each channel_message_id, return a matching auto-forward
-    update_counter = iter(range(1, 100))
-
-    def updates_handler(request):
-        n = next(update_counter)
-        # Find the latest channel post that was sent (no reply_to = channel post)
-        channel_posts = [
-            c for c in send_calls
-            if c.get("chat_id") == "-100111111" and "reply_to_message_id" not in c
-        ]
-        if channel_posts:
-            latest = channel_posts[-1]
-            ch_msg_id = latest["_msg_id"]
-            return httpx.Response(
-                200,
-                json={
-                    "ok": True,
-                    "result": [{
-                        "update_id": n,
-                        "message": {
-                            "message_id": 5000 + n,
-                            "chat": {"id": -100222222},
-                            "is_automatic_forward": True,
-                            "forward_origin": {
-                                "type": "channel",
-                                "chat": {"id": -100111111},
-                                "message_id": ch_msg_id,
-                            },
-                        },
-                    }],
-                },
-            )
-        return httpx.Response(200, json={"ok": True, "result": []})
-
-    respx.get(f"{base_tg}/getUpdates").mock(side_effect=updates_handler)
-
+    monkeypatch.setattr(
+        publish,
+        "find_group_forward_message_id",
+        lambda channel_message_id: channel_message_id + 3000,
+    )
     # Use only 3 items for this test to keep it manageable
     DigestItem.objects.filter(digest=digest_15, position__gt=3).delete()
 
@@ -316,7 +449,7 @@ def test_each_items_appendix_matches_its_own_post(db, digest_15, settings):
 
 
 @respx.mock
-def test_publish_digest_live_success_single_item(db, digest_1, settings):
+def test_publish_digest_live_success_single_item(db, digest_1, settings, monkeypatch):
     """Backwards compatibility: single-item digest publishes correctly."""
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
@@ -332,31 +465,11 @@ def test_publish_digest_live_success_single_item(db, digest_1, settings):
         ]
     )
 
-    respx.get(f"{base_tg}/getUpdates").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "ok": True,
-                "result": [{
-                    "update_id": 1,
-                    "message": {
-                        "message_id": 777,
-                        "chat": {"id": -100222222},
-                        "is_automatic_forward": True,
-                        "forward_origin": {
-                            "type": "channel",
-                            "chat": {"id": -100111111},
-                            "message_id": 501,
-                        },
-                    },
-                }],
-            },
-        )
-    )
-
+    monkeypatch.setattr(publish, "find_group_forward_message_id", lambda _channel_message_id: 777)
     res = publish.publish_digest(digest_1)
     assert res["items_sent"] == 1
     assert res["status"] == Digest.Status.PUBLISHED
+    assert res["suppressed"] is False
 
     item = DigestItem.objects.get(digest=digest_1)
     assert item.channel_message_id == 501
@@ -408,6 +521,37 @@ def test_send_admin_alert_and_source_failure_trigger(db, settings):
     assert src.is_degraded is True
     assert src.consecutive_failures == 3
     assert route.call_count == 1
+
+
+@respx.mock
+def test_a_failed_alert_is_not_recorded_as_sent(db, settings):
+    """A rejected alert leaves last_alerted_on unset so the next failure retries."""
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_ADMIN_CHAT_ID = "999888777"
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+    from apps.digest import tasks
+
+    route = respx.post(f"{base_tg}/sendMessage").mock(
+        return_value=httpx.Response(
+            403, json={"ok": False, "description": "Forbidden: bot can't initiate conversation"}
+        )
+    )
+
+    src = Source.objects.create(
+        name="rejected_alert_source",
+        connector=Source.Connector.RSS,
+        url="https://example.com/dead",
+    )
+
+    for _ in range(settings.SOURCE_DEGRADED_AFTER):
+        tasks._record_failure(src, Exception("Connection timeout"))
+
+    src.refresh_from_db()
+    assert route.call_count == 1
+    assert src.is_degraded is True
+    assert src.enabled is True
+    assert src.last_alerted_on is None
 
 
 @pytest.mark.django_db
@@ -550,3 +694,34 @@ def test_appendix_prefers_uzbek_and_falls_back_to_english(digest_item_factory):
 
 
 
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("evidence_level", "label"),
+    [
+        ("vendor_claim_only", "Asosiy manba da'vosi"),
+        ("multiple_evidence", "Bir nechta manbada mos benchmark raqami"),
+    ],
+)
+def test_appendix_renders_accurate_evidence_label(digest_item_factory, evidence_level, label):
+    item = digest_item_factory(archetype="release", detail={})
+    en = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
+    en.payload["evidence_level"] = evidence_level
+    en.save(update_fields=["payload"])
+
+    html = ranking.render_item_appendix(item)
+
+    assert label in unescape(html)
+
+
+@pytest.mark.django_db
+def test_appendix_unknown_evidence_level_falls_back_to_vendor_label(digest_item_factory):
+    item = digest_item_factory(archetype="release", detail={})
+    en = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
+    en.payload.pop("evidence_level")
+    en.save(update_fields=["payload"])
+
+    html = ranking.render_item_appendix(item)
+
+    assert "Asosiy manba da'vosi" in unescape(html)
+    assert "Bir nechta manbada mos benchmark raqami" not in unescape(html)

@@ -146,7 +146,13 @@ TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHANNEL_ID = env("TELEGRAM_CHANNEL_ID", default="")
 TELEGRAM_GROUP_ID = env("TELEGRAM_GROUP_ID", default="")
 TELEGRAM_ADMIN_CHAT_ID = env("TELEGRAM_ADMIN_CHAT_ID", default="")
+TELEGRAM_FORWARD_TTL = env.int("TELEGRAM_FORWARD_TTL", default=300)
 PUBLISHING_ENABLED = env("PUBLISHING_ENABLED")
+
+# --- Benchmark evidence verification ----------------------------------------
+# This deterministic post-cluster check only promotes evidence when an independent
+# outlet repeats a metric-bearing number. Keep it off until the real-corpus review passes.
+BENCHMARK_VERIFICATION_ENABLED = env.bool("BENCHMARK_VERIFICATION_ENABLED", default=False)
 #: On by default: link preview is the approved image delivery mechanism (Option A, 2026-08-18).
 #: Telegram unfurls the article URL and fetches og:image without our code downloading or storing
 #: images, preserving the 4096-char sendMessage limit and working gracefully when no image exists.
@@ -206,6 +212,10 @@ LOGGING = {
         # bot walls, pages with no article body. We count those ourselves as
         # "unusable" and do not want them in the log as errors.
         "trafilatura": {"level": "CRITICAL", "propagate": False},
+        # httpx logs every request URL at INFO, and every Telegram URL contains the bot token.
+        # It has been printed to a terminal twice. Raise the level rather than rely on care.
+        "httpx": {"level": "WARNING", "propagate": True},
+        "httpcore": {"level": "WARNING", "propagate": True},
     },
 }
 
@@ -238,3 +248,20 @@ DIGEST_MAX_PER_SUBJECT = env.int("DIGEST_MAX_PER_SUBJECT", default=1)
 #: Hosts that carry many unrelated projects, where the owner segment is part of the identity.
 #: Matched by exact equality, so raw.githubusercontent.com is an ordinary host.
 SUBJECT_CODE_HOSTS = ("github.com", "gitlab.com", "huggingface.co")
+
+# --- Embeddings, clustering Tier B -------------------------------------------
+# Tier A catches the same text twice; subject diversity catches one site repeating itself.
+# Neither sees one story written independently by two outlets, which is what arrived on
+# 2026-08-18 with the aggregator sources.
+#
+# CLUSTER_COSINE_THRESHOLD stays above cosine's maximum until a real-corpus measurement
+# records a justified value in docs/spike/EMBEDDING_MEASUREMENT.md.
+EMBEDDING_ENABLED = env.bool("EMBEDDING_ENABLED", default=False)
+EMBEDDING_MODEL = env("EMBEDDING_MODEL", default="qwen3-embedding:0.6b")
+EMBEDDING_TIMEOUT = env.int("EMBEDDING_TIMEOUT", default=120)
+CLUSTER_COSINE_THRESHOLD = env.float("CLUSTER_COSINE_THRESHOLD", default=1.01)
+# --- Artifact verification ---------------------------------------------------
+# Paper domains are skipped before triage unless their promised repository is verified.
+ARTIFACT_VERIFICATION_ENABLED = env.bool("ARTIFACT_VERIFICATION_ENABLED", default=True)
+ARTIFACT_TIMEOUT = env.int("ARTIFACT_TIMEOUT", default=15)
+

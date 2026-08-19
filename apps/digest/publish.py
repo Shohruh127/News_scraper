@@ -19,8 +19,26 @@ from django.utils import timezone
 
 from . import ranking
 from .models import Digest
+from .telegram_updates import wait_for_group_forward
 
 log = logging.getLogger(__name__)
+FEEDBACK_REACTIONS = (
+    ("👍", "useful"),
+    ("👎", "not_useful"),
+    ("🛠", "want_to_build"),
+)
+
+
+def feedback_keyboard(digest_item_id: int) -> dict:
+    """Return the stable callback keyboard shared by publisher and bot."""
+    return {
+        "inline_keyboard": [[
+            {
+                "text": label,
+                "callback_data": f"feedback:{digest_item_id}:{reaction}",
+            }
+            for label, reaction in FEEDBACK_REACTIONS
+        ]]}
 
 
 def _bot_url(method: str) -> str:
@@ -32,6 +50,7 @@ def send_message(
     chat_id: str | int,
     text: str,
     reply_to_message_id: int | None = None,
+    reply_markup: dict | None = None,
     client: httpx.Client | None = None,
 ) -> dict:
     """Send HTML message to Telegram. Respects PUBLISHING_ENABLED kill switch."""
@@ -60,6 +79,8 @@ def send_message(
     }
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
 
     close_client = False
     if client is None:
@@ -77,81 +98,20 @@ def send_message(
 
 def find_group_forward_message_id(
     channel_message_id: int,
-    client: httpx.Client | None = None,
+    client=None,
     max_retries: int = 4,
     retry_delay: float = 1.5,
 ) -> int | None:
-    """Find the auto-forwarded message in the linked discussion group via getUpdates.
-
-    Enforces:
-    - is_automatic_forward is True
-    - forward_origin is channel matching TELEGRAM_CHANNEL_ID and channel_message_id
-    - tracks and increments update_id offset.
-    """
+    """Find the bot's Redis handoff for one channel post."""
     if not getattr(settings, "PUBLISHING_ENABLED", False):
         return None
-
-    close_client = False
-    if client is None:
-        client = httpx.Client(timeout=30)
-        close_client = True
-
-    group_id_str = str(getattr(settings, "TELEGRAM_GROUP_ID", ""))
-    channel_id_str = str(getattr(settings, "TELEGRAM_CHANNEL_ID", ""))
-
-    last_offset = None
-    try:
-        for _ in range(max_retries):
-            params: dict = {"limit": 50, "timeout": 2}
-            if last_offset is not None:
-                params["offset"] = last_offset
-
-            r = client.get(_bot_url("getUpdates"), params=params)
-            if r.status_code == 200:
-                data = r.json()
-                updates = data.get("result", [])
-                for update in reversed(updates):
-                    up_id = update.get("update_id")
-                    if up_id is not None:
-                        last_offset = up_id + 1
-
-                    msg = update.get("message") or update.get("channel_post")
-                    if not msg:
-                        continue
-
-                    # Chat check
-                    msg_chat_id = str(msg.get("chat", {}).get("id", ""))
-                    if group_id_str and msg_chat_id != group_id_str:
-                        continue
-
-                    # Automatic forward check
-                    if msg.get("is_automatic_forward") is not True:
-                        continue
-
-                    # Check forward_origin (Bot API 7.0+)
-                    origin = msg.get("forward_origin", {})
-                    if origin:
-                        origin_type = origin.get("type")
-                        origin_chat_id = str(origin.get("chat", {}).get("id", ""))
-                        origin_msg_id = origin.get("message_id")
-
-                        if (
-                            origin_type == "channel"
-                            and (not channel_id_str or origin_chat_id == channel_id_str)
-                            and origin_msg_id == channel_message_id
-                        ):
-                            return msg.get("message_id")
-
-                    # Backwards compatibility check for older Bot API mocks
-                    if msg.get("forward_from_message_id") == channel_message_id:
-                        return msg.get("message_id")
-
-            time.sleep(retry_delay)
-        return None
-    finally:
-        if close_client:
-            client.close()
-
+    return wait_for_group_forward(
+        getattr(settings, "TELEGRAM_CHANNEL_ID", ""),
+        channel_message_id,
+        client=client,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
 
 def edit_message(
     chat_id: str | int,
@@ -212,17 +172,17 @@ def delete_message(
             client.close()
 
 
-def send_admin_alert(text: str, client: httpx.Client | None = None) -> None:
-    """Send administrative alert to TELEGRAM_ADMIN_CHAT_ID."""
+def send_admin_alert(text: str, client: httpx.Client | None = None) -> bool:
+    """Send an administrative alert. Returns True only if Telegram accepted it."""
     admin_chat_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", "")
     if not admin_chat_id:
         log.warning("TELEGRAM_ADMIN_CHAT_ID not configured; alert dropped: %s", text)
-        return
+        return False
 
     token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
     if not token:
         log.warning("TELEGRAM_BOT_TOKEN not configured; alert dropped: %s", text)
-        return
+        return False
 
     close_client = False
     if client is None:
@@ -240,8 +200,11 @@ def send_admin_alert(text: str, client: httpx.Client | None = None) -> None:
         )
         if r.status_code != 200:
             log.warning("Failed to send admin alert: %s %s", r.status_code, r.text)
+            return False
+        return True
     except Exception as exc:
         log.error("Exception sending admin alert: %s", exc)
+        return False
     finally:
         if close_client:
             client.close()
@@ -250,6 +213,8 @@ def send_admin_alert(text: str, client: httpx.Client | None = None) -> None:
 def publish_digest(
     digest: Digest,
     client: httpx.Client | None = None,
+    *,
+    republish: bool = False,
 ) -> dict:
     """Publish each digest item as its own channel post with its own group appendix.
 
@@ -260,6 +225,10 @@ def publish_digest(
     - Partial failure: if any item fails, the digest is marked FAILED and the admin alert
       names the failed items. Already-sent posts are NOT rolled back.
     - A small delay between sends respects Telegram's rate limit (~20 msg/min to a channel).
+    - Idempotent by default: an item that already carries a channel_message_id is skipped, so a
+      second call resumes a partial run instead of posting the digest again. Measured 2026-08-19,
+      before this guard existed: 61 of the 82 live channel messages had no database record.
+      Pass republish=True only to deliberately re-send posts that were deleted by hand.
     """
     # Kill switch: when PUBLISHING_ENABLED is False, compose and store but send nothing.
     # Leave digest status as COMPOSED, do not set published_at, write no message IDs.
@@ -269,13 +238,15 @@ def publish_digest(
             digest.digest_date,
         )
         return {
-            "suppressed": True,
             "digest_id": digest.id,
             "digest_date": str(digest.digest_date),
             "status": digest.status,
-            "channel_message_id": None,
-            "group_message_id": None,
-            "items_count": digest.items.count(),
+            "items_sent": 0,
+            "items_skipped": 0,
+            "items_failed": 0,
+            "failed_items": [],
+            "appendix_failures": [],
+            "suppressed": True,
         }
 
     channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
@@ -299,11 +270,22 @@ def publish_digest(
         close_client = True
 
     sent_count = 0
+    skipped_count = 0
     failed_items: list[str] = []
+    appendix_failures: list[str] = []
 
     send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
     try:
         for idx, item in enumerate(items):
+            if item.channel_message_id and not republish:
+                skipped_count += 1
+                log.info(
+                    "Item #%s already posted as message %s; skipping",
+                    item.position,
+                    item.channel_message_id,
+                )
+                continue
+
             # Rate-limit: configurable delay between sends (20 msg/min budget shared with appendix)
             if idx > 0 and send_delay > 0:
                 time.sleep(send_delay)
@@ -316,7 +298,12 @@ def publish_digest(
                 failed_items.append(f"#{item.position} (render: {exc})")
                 continue
 
-            res_post = send_message(chat_id=channel_id, text=post_html, client=client)
+            res_post = send_message(
+                chat_id=channel_id,
+                text=post_html,
+                reply_markup=feedback_keyboard(item.id),
+                client=client,
+            )
             ch_msg_id = res_post.get("result", {}).get("message_id")
 
             if not ch_msg_id:
@@ -332,13 +319,13 @@ def publish_digest(
             if group_id:
                 if send_delay > 0:
                     time.sleep(min(send_delay / 2, 1.5))
-                fwd_id = find_group_forward_message_id(ch_msg_id, client=client)
+                fwd_id = find_group_forward_message_id(ch_msg_id)
                 if fwd_id:
                     try:
                         appendix_html = ranking.render_item_appendix(item)
                     except ValueError as exc:
                         log.error("Appendix render failed for item #%s: %s", item.position, exc)
-                        failed_items.append(f"#{item.position} (appendix render: {exc})")
+                        appendix_failures.append(f"#{item.position} (appendix render: {exc})")
                         continue
 
                     res_comment = send_message(
@@ -357,7 +344,7 @@ def publish_digest(
                         item.position,
                         ch_msg_id,
                     )
-                    failed_items.append(
+                    appendix_failures.append(
                         f"#{item.position} (forward not found for msg {ch_msg_id})"
                     )
 
@@ -366,6 +353,9 @@ def publish_digest(
             client.close()
 
     # --- Status decision ---
+    # Only a channel post that did not go out fails a digest. An appendix that did not land
+    # leaves a degraded post, and marking the digest FAILED for it invites a re-run that
+    # posts everything a second time.
     if failed_items:
         digest.status = Digest.Status.FAILED
         digest.save(update_fields=["status"])
@@ -379,18 +369,27 @@ def publish_digest(
         digest.status = Digest.Status.PUBLISHED
         digest.published_at = timezone.now()
         digest.save(update_fields=["status", "published_at"])
-        log.info(
-            "Digest %s published: %s items posted",
-            digest.digest_date,
-            sent_count,
+        log.info("Digest %s published: %s items posted", digest.digest_date, sent_count)
+
+    if appendix_failures:
+        appendix_msg = (
+            f"Digest {digest.digest_date}: every post was delivered, but "
+            f"{len(appendix_failures)} appendix message(s) were not: "
+            f"{', '.join(appendix_failures)}. Check that the bot service is running."
         )
+        send_admin_alert(appendix_msg)
+        log.warning(appendix_msg)
 
     return {
         "digest_id": digest.id,
         "digest_date": str(digest.digest_date),
         "items_sent": sent_count,
+        "items_skipped": skipped_count,
         "items_failed": len(failed_items),
         "failed_items": failed_items,
+        "appendix_failures": appendix_failures,
         "status": digest.status,
+        "suppressed": False,
     }
+
 

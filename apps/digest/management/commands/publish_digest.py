@@ -25,6 +25,12 @@ class Command(BaseCommand):
             default=None,
             help="Specific Digest ID to publish",
         )
+        parser.add_argument(
+            "--republish",
+            action="store_true",
+            help="Re-send items that already have a channel_message_id. Use only after deleting "
+                 "those posts by hand; without it, published items are skipped.",
+        )
 
     def handle(self, *args, **options):
         digest_id = options.get("digest_id")
@@ -55,10 +61,21 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Publishing digest for {digest.digest_date} ({digest.items.count()} items)..."
         )
-        res = publish.publish_digest(digest)
+        res = publish.publish_digest(digest, republish=options["republish"])
+        if res.get("suppressed"):
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Publishing suppressed for {res['digest_date']} "
+                    f"({res['items_sent']} items not sent)."
+                )
+            )
+            return
+
+        style = self.style.SUCCESS if res["status"] == Digest.Status.PUBLISHED else self.style.ERROR
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Successfully published digest {res['digest_date']}: "
-                f"channel_msg={res['channel_message_id']}, group_msg={res['group_message_id']}"
+            style(
+                f"Digest {res['digest_date']}: status={res['status']}, "
+                f"items_sent={res['items_sent']}, items_skipped={res['items_skipped']}, "
+                f"items_failed={res['items_failed']}"
             )
         )
