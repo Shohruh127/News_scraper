@@ -352,6 +352,70 @@ def test_a_missing_appendix_alerts_but_leaves_the_digest_published(
     assert digest_15.published_at is not None
 
 
+@respx.mock
+def test_publish_digest_acquires_lock_and_rejects_concurrent_run(
+    db, digest_15, settings, monkeypatch
+):
+    """When a publish lock is held for the digest, concurrent publish_digest skips immediately."""
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_CHANNEL_ID = "-100111111"
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+    route = respx.post(f"{base_tg}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 999}})
+    )
+
+    class FakeRedisLock:
+        def set(self, key, val, nx=False, ex=None):
+            return False  # lock acquisition fails (already held)
+        def get(self, key):
+            return b"other-worker:1234"
+        def delete(self, key):
+            pass
+        def close(self):
+            pass
+
+    import redis
+    monkeypatch.setattr(redis.Redis, "from_url", lambda url: FakeRedisLock())
+
+    res = publish.publish_digest(digest_15)
+    assert res.get("locked") is True
+    assert res["items_sent"] == 0
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_publish_digest_refreshes_item_from_db_before_send(db, digest_15, settings):
+    """If another process sets channel_message_id mid-run, refresh_from_db skips it."""
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_CHANNEL_ID = "-100111111"
+    settings.TELEGRAM_GROUP_ID = ""
+    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+
+    DigestItem.objects.filter(digest=digest_15, position__gt=2).delete()
+    item1 = DigestItem.objects.get(digest=digest_15, position=1)
+    item2 = DigestItem.objects.get(digest=digest_15, position=2)
+
+    def send_handler(request):
+        # Simulate concurrent worker publishing item 2 while item 1 is being sent
+        item2.channel_message_id = 8888
+        item2.save(update_fields=["channel_message_id"])
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 7777}})
+
+    respx.post(f"{base_tg}/sendMessage").mock(side_effect=send_handler)
+
+    res = publish.publish_digest(digest_15)
+
+    assert res["items_sent"] == 1
+    assert res["items_skipped"] == 1
+    item1.refresh_from_db()
+    item2.refresh_from_db()
+    assert item1.channel_message_id == 7777
+    assert item2.channel_message_id == 8888
+
+
+
 
 @respx.mock
 def test_failure_on_item_8_leaves_1_through_7_sent_digest_failed(db, digest_15, settings):

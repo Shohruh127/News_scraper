@@ -11,9 +11,12 @@ Rules (T1.7, T1.9):
 """
 
 import logging
+import os
+import platform
 import time
 
 import httpx
+import redis
 from django.conf import settings
 from django.utils import timezone
 
@@ -249,6 +252,47 @@ def publish_digest(
             "suppressed": True,
         }
 
+    # Distributed lock to prevent concurrent publishes of the same digest
+    lock_client = None
+    lock_acquired = True
+    try:
+        lock_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
+        holder = f"{platform.node()}:{os.getpid()}"
+        lock_acquired = bool(
+            lock_client.set(
+                f"news_radar:publish_lock:{digest.id}",
+                holder,
+                nx=True,
+                ex=300,
+            )
+        )
+    except Exception as exc:
+        log.warning("Could not check Redis publish lock: %s", exc)
+
+    if not lock_acquired:
+        try:
+            current_holder = lock_client.get(f"news_radar:publish_lock:{digest.id}")
+            holder_str = current_holder.decode() if current_holder else "unknown"
+        except Exception:
+            holder_str = "unknown"
+        log.warning(
+            "Publish for digest %s is already running (lock held by %s). Skipping duplicate run.",
+            digest.id,
+            holder_str,
+        )
+        return {
+            "digest_id": digest.id,
+            "digest_date": str(digest.digest_date),
+            "status": digest.status,
+            "items_sent": 0,
+            "items_skipped": 0,
+            "items_failed": 0,
+            "failed_items": [],
+            "appendix_failures": [],
+            "suppressed": False,
+            "locked": True,
+        }
+
     channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
     if not channel_id:
         raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
@@ -277,6 +321,11 @@ def publish_digest(
     send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
     try:
         for idx, item in enumerate(items):
+            try:
+                item.refresh_from_db(fields=["channel_message_id", "group_message_id"])
+            except Exception:
+                pass
+
             if item.channel_message_id and not republish:
                 skipped_count += 1
                 log.info(
@@ -351,6 +400,11 @@ def publish_digest(
     finally:
         if close_client:
             client.close()
+        if lock_client and lock_acquired:
+            try:
+                lock_client.delete(f"news_radar:publish_lock:{digest.id}")
+            except Exception as exc:
+                log.debug("Error releasing publish lock: %s", exc)
 
     # --- Status decision ---
     # Only a channel post that did not go out fails a digest. An appendix that did not land

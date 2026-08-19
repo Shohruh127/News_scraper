@@ -121,7 +121,7 @@ def check_headline_case(en_headline: str, uz_headline: str) -> list[str]:
     if not uz_headline or not en_headline:
         return []
 
-    # Extract all capitalized words and components (e.g., Copilot from Copilot-Approved, Delta from Delta:)
+    # Extract all capitalized words and components (e.g. Copilot from Copilot-Approved)
     en_raw_tokens = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", en_headline)
     en_caps = set()
     for w in en_raw_tokens:
@@ -144,13 +144,17 @@ def check_headline_case(en_headline: str, uz_headline: str) -> list[str]:
                 continue
             if _is_suffixed_acronym(word, en_caps):
                 continue
-            # Allow suffixed borrowed nouns: Delta'ni -> Delta, Repo'dagi -> Repo, Solverning -> Solver
+            # Allow suffixed borrowed nouns: Delta'ni -> Delta, Repo'dagi -> Repo, etc.
             stem = _acronym_stem(word)
             apostrophe_stem = re.split(r"['’`]", word)[0]
             if stem in en_caps or apostrophe_stem in en_caps:
                 continue
             # Check singular/plural stem match against English capitalized words
-            if any(stem.startswith(cap) or apostrophe_stem.startswith(cap) for cap in en_caps if len(cap) >= 3):
+            if any(
+                stem.startswith(cap) or apostrophe_stem.startswith(cap)
+                for cap in en_caps
+                if len(cap) >= 3
+            ):
                 continue
             violations.append(
                 f"Headline case violation: '{word}' is capitalized in Uzbek headline (Title Case)"
