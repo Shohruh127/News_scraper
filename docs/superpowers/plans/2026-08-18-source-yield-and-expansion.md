@@ -14,7 +14,7 @@
 
 - Ruff `line-length = 100`, `target-version = "py313"`. `uv run ruff check .` must pass
 - The suite must stay green: `uv run pytest -q` → **170 passed** before this plan
-- **Task 3 is gated.** Do not run it until the yield of the eleven sources added on 2026-08-18 has been measured — that is the whole point of Task 1. Stop after Task 2 and report
+- **Task 3 was gated and is now open**, 2026-08-19. The measurement it waited for arrived: the eleven sources added on 2026-08-18 produced 99 articles and 7 classified, against `hn` at 164 and 40. The owner's call is to add all twelve rather than pre-select, and to remove what does not earn its place after a week of `source_yield`
 - Adding a source is a data change. It must go through `seed_sources.py`, never an ad-hoc script
 - `seed_sources.py` is idempotent and must stay so
 - One Django app, functions over classes, no abstraction before the second case
@@ -476,17 +476,21 @@ git add apps/digest/management/commands/seed_sources.py tests/test_connectors.py
 git commit -m "Return the eleven sources added by hand to the seed file"
 ```
 
-- [ ] **Step 8: STOP and report**
+- [ ] **Step 8: Report and continue**
 
-Do not start Task 3. Report the output of `uv run python manage.py source_yield` from Task 1
-Step 5 and wait. Task 3 is gated on the yield of the eleven sources above, which the 18:00
-triage produces.
+Report the output of `uv run python manage.py source_yield` from Task 1 Step 5, then go straight
+on to Task 3. The gate that used to sit here was lifted on 2026-08-19.
 
 ---
 
-## Task 3: Add the twelve new sources — GATED
+## Task 3: Add the twelve new sources — OPEN
 
-**Do not begin this task until the architect has reviewed the yield report and said to proceed.**
+**Opened 2026-08-19 by the project owner.** Add all twelve. The split measured on 2026-08-18 —
+GitHub release feeds converting at 100% and RSS news feeds at 5% — argued for adding only the
+eight release feeds, and the owner chose the wider set deliberately: a week of `source_yield`
+answers the question better than a pre-selection does, and removing a source is one line.
+
+Run the whole task. Do not stop after step 4 this time.
 
 **Files:**
 - Modify: `apps/digest/management/commands/seed_sources.py`
