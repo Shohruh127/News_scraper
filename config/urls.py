@@ -18,6 +18,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from apps.digest import views
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("healthz/", views.healthz, name="healthz"),
+    path("readyz/", views.readyz, name="readyz"),
+    path("runtime-health/", views.runtime_health_view, name="runtime_health"),
 ]

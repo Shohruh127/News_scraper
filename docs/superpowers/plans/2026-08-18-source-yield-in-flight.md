@@ -112,9 +112,9 @@ Add a fourth, in the state the report cannot currently see:
 Then replace the assertions at the end of that test. They currently read:
 
 ```python
-    assert "3" in line       # articles
-    assert "2" in line       # classified
-    assert "1" in line       # published, the one with a channel_message_id
+assert "3" in line  # articles
+assert "2" in line  # classified
+assert "1" in line  # published, the one with a channel_message_id
 ```
 
 Those pass on any line containing the digits, which is why they never noticed a missing column.

@@ -222,9 +222,8 @@ Uchta soddalashtirish v1 ga nisbatan:
 **Maqsad:** chuqurlik, ishonchlilik va ommaviy ishlash.
 
 **M2.1 — Story clustering**
-Bitta yangilik bir necha manbadan kelsa → bitta post, ko'p dalil.
-Boshida: canonical URL + fuzzy title + entity matching. Embedding faqat isbotlangan ehtiyoj bo'lsa.
-
+M1 da yakunlangan: canonical URL uniqueness va maqola matni bo'yicha exact character
+5-gram Jaccard (`0.80`). Shu loyiha hajmi uchun boshqa clustering mexanizmi rejalashtirilmagan.
 **M2.2 — 31B deep analysis**
 Faqat top 3–5 material. Technical appendix: architecture, repo, license, VRAM, install, benchmark, cheklovlar, integration points.
 

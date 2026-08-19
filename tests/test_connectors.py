@@ -316,5 +316,3 @@ def test_seed_covers_every_source_added_since_the_file_was_written():
     }
 
     assert added_2026_08_18 <= names, f"missing from the seed: {added_2026_08_18 - names}"
-
-

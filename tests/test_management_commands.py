@@ -113,7 +113,10 @@ def test_recheck_returns_verified_and_unanswered_papers(paper_source, capsys):
 def test_recheck_leaves_settled_and_unrelated_articles_alone(paper_source):
     rejected = _paper(paper_source, "3333", status=Article.Status.SKIPPED, verified=False)
     no_link = _paper(
-        paper_source, "4444", status=Article.Status.SKIPPED, verified=None,
+        paper_source,
+        "4444",
+        status=Article.Status.SKIPPED,
+        verified=None,
         text="We evaluate on three benchmarks and report gains.",
     )
     already_moving = _paper(paper_source, "5555", status=Article.Status.CLASSIFIED, verified=True)
@@ -142,3 +145,78 @@ def test_recheck_dry_run_changes_nothing(paper_source, capsys):
     verified.refresh_from_db()
     assert verified.status == Article.Status.SKIPPED
     assert "would return" in capsys.readouterr().out.lower()
+
+
+def test_edit_digest_command_passes_sent_as_photo(monkeypatch, digest_with_item, capsys):
+    """edit_digest command retrieves sent_as_photo from DigestItem and passes it to edit_message."""
+    item = digest_with_item.items.first()
+    item.channel_message_id = 12345
+    item.sent_as_photo = True
+    item.save()
+
+    calls = []
+
+    def mock_edit_message(chat_id, message_id, new_text, sent_as_photo=False, client=None):
+        calls.append(
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": new_text,
+                "photo": sent_as_photo,
+            }
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(publish, "edit_message", mock_edit_message)
+
+    call_command("edit_digest", "--item-id", str(item.id), "--text", "Updated caption")
+
+    assert len(calls) == 1
+    assert calls[0]["photo"] is True
+    assert calls[0]["message_id"] == 12345
+    assert calls[0]["text"] == "Updated caption"
+
+
+def test_reconcile_delivery_command_sets_message_id_and_photo(digest_with_item):
+    """reconcile_delivery updates message id and sets delivery state to SENT."""
+    from apps.digest.models import DeliveryState
+
+    item = digest_with_item.items.first()
+    item.channel_delivery_state = DeliveryState.UNKNOWN
+    item.save()
+
+    call_command(
+        "reconcile_delivery",
+        str(item.id),
+        "--message-id",
+        "9999",
+        "--sent-as-photo",
+        "yes",
+    )
+
+    item.refresh_from_db()
+    assert item.channel_message_id == 9999
+    assert item.sent_as_photo is True
+    assert item.channel_delivery_state == DeliveryState.SENT
+
+
+def test_reconcile_delivery_command_reset_pending(digest_with_item):
+    """reconcile_delivery with --reset-pending resets state to PENDING if ack given."""
+    from django.core.management.base import CommandError
+
+    from apps.digest.models import DeliveryState
+
+    item = digest_with_item.items.first()
+    item.channel_delivery_state = DeliveryState.UNKNOWN
+    item.channel_message_id = 8888
+    item.save()
+
+    # Fails without confirmation
+    with pytest.raises(CommandError, match="--i-checked-telegram"):
+        call_command("reconcile_delivery", str(item.id), "--reset-pending")
+
+    # Succeeds with confirmation
+    call_command("reconcile_delivery", str(item.id), "--reset-pending", "--i-checked-telegram")
+    item.refresh_from_db()
+    assert item.channel_delivery_state == DeliveryState.PENDING
+    assert item.channel_message_id is None

@@ -165,9 +165,8 @@ Real measured data is used as fixtures, following the project's existing practic
 ## 7. Out of scope
 
 **The same story published on two different sites** — a launch covered by both TechCrunch and
-VentureBeat — has two different subject keys and is not caught here. That is Tier B embedding
-similarity, listed for M2 in `docs/REMAINING_WORK.md` §3, and it becomes real now that
-aggregator-style sources have been added.
+VentureBeat — may have different subject keys. It is merged only when article text reaches the
+measured exact-Jaccard threshold. No second clustering mechanism is planned.
 
 **Merging the dropped items into the surviving post.** Considered and rejected: the project owner
 chose to drop the extras rather than merge them. Turning `v0.32.8` and `v0.32.9` into secondary

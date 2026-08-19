@@ -126,3 +126,11 @@ def test_source_defaults_are_healthy(source):
     assert source.enabled is True
     assert source.is_degraded is False
     assert source.consecutive_failures == 0
+
+
+def test_digest_item_sent_as_photo_default(source):
+    """DigestItem.sent_as_photo defaults to False until confirmed by Telegram."""
+    d = Digest.objects.create(digest_date=dt.date(2026, 8, 20))
+    a = make_article(source, 100)
+    item = DigestItem.objects.create(digest=d, article=a, position=1, score=0.9)
+    assert item.sent_as_photo is False

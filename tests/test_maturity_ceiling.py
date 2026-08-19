@@ -45,7 +45,6 @@ def gh(db):
     return Source.objects.create(name="gh", connector="github", url="https://github.com/o/r")
 
 
-
 @pytest.mark.parametrize(
     "text, expected",
     [
@@ -125,7 +124,6 @@ def test_title_matching_is_substring_based_and_falls_back(title, expected):
         "Code at github.com/microsoft/dion and github.com/Neuir/ConceptFormer."
     )
     assert find_repo_url(text, title) == expected
-
 
 
 @respx.mock
@@ -209,6 +207,7 @@ def test_repo_is_real_rejects_a_host_it_cannot_check():
 
     assert repo_is_real("https://gitlab.com/team/project") is False
 
+
 def test_arxiv_is_capped_at_paper_only_whatever_the_abstract_promises(hn):
     a = art(hn, "https://arxiv.org/abs/2608.12345")
     payload = apply_maturity_ceiling(a, {"maturity": Maturity.REPRODUCIBLE_OPEN_SOURCE})
@@ -252,7 +251,6 @@ def test_unknown_maturity_is_left_alone(hn):
 
 
 @pytest.mark.django_db
-
 @pytest.mark.django_db
 @respx.mock
 def test_a_paper_with_a_real_repo_survives_the_prefilter():
@@ -381,6 +379,7 @@ def test_verified_nonpaper_keeps_no_ceiling():
     )
 
     assert maturity_ceiling(article) is None
+
 
 def test_prefilter_skips_paper_domains_before_any_llm_call():
     """A paper is rejected before triage, because it can never reach a digest.

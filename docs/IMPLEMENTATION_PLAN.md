@@ -461,8 +461,7 @@ proving an item lacking `editorial` raises rather than falling back to English.
 - One `DigestItem` per cluster, carrying every source link as evidence.
 - Fuzzy title matching (`rapidfuzz`) was evaluated on 185 live articles and removed:
   produced 0 valid cross-source merges but 12 false-positive same-source merges.
-  Fuzzy matching, embeddings, entity resolution and cross-day clustering remain M2.2.
-
+  Exact character 5-gram Jaccard at 0.80 supersedes the failed title experiment and is final.
 **Acceptance:** canonical URL dedup merges cross-source duplicates; same-source articles
 (e.g. consecutive Ollama releases) remain separate items.
 
@@ -541,8 +540,7 @@ Execute in this order. Each is independently shippable.
 | # | Task | Substance |
 |---|---|---|
 | T2.1 | Feedback bot | `aiogram 3` long polling as a separate process. Inline buttons 👍 👎 🛠 on channel posts, callback writes to `Feedback`. One reaction per user per item is already enforced by a constraint |
-| T2.2 | Story clustering | One news item arriving from four sources becomes one post with four pieces of evidence. Start with canonical URL, fuzzy title (`rapidfuzz`, threshold ~92) and entity matching. Embeddings only if this measurably fails |
-| T2.3 | 31B deep analysis | Top 3-5 items only. Fills the deep-analysis schema in `CONTENT_SCHEMA.md` §5. Empty string means "not in the source" — the model must never invent a URL, licence or benchmark |
+| T2.2 | Story clustering | Implemented with canonical URL uniqueness and exact character 5-gram Jaccard over article text at the measured 0.80 threshold || T2.3 | 31B deep analysis | Top 3-5 items only. Fills the deep-analysis schema in `CONTENT_SCHEMA.md` §5. Empty string means "not in the source" — the model must never invent a URL, licence or benchmark |
 | T2.4 | Verification layer | Vendor benchmark claims checked against Arena, Artificial Analysis, SWE-bench, Terminal-Bench. Sets `evidence_level` to `multiple_evidence` or leaves `vendor_claim_only` |
 | T2.5 | Feedback learning | 👍 raises topic and source weight, 👎 lowers it, 🛠 raises applicability. Exponential moving average. **No fine-tuning** |
 | T2.6 | Source expansion | 25-40 sources through the existing five connectors. Should require no new code — if it does, the connector config is too narrow |

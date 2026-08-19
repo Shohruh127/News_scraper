@@ -32,4 +32,8 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=19, minute=0),
         "options": {"expires": 3600},
     },
+    "dispatch-worker-heartbeats": {
+        "task": "digest.dispatch_worker_heartbeats",
+        "schedule": 30.0,
+    },
 }

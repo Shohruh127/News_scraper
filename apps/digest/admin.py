@@ -63,9 +63,7 @@ class AnalysisInline(admin.TabularInline):
 
 @admin.register(Article)
 class ArticleAdmin(admin.ModelAdmin):
-    list_display = (
-        "title", "source", "status", "artifact_verified", "published_at", "fetched_at"
-    )
+    list_display = ("title", "source", "status", "artifact_verified", "published_at", "fetched_at")
     list_filter = ("status", "artifact_verified", "source", "language")
     search_fields = ("title", "canonical_url")
     date_hierarchy = "published_at"
@@ -86,8 +84,15 @@ class AnalysisAdmin(admin.ModelAdmin):
     #: `stage` is the column that makes this table readable as a pipeline: one article
     #: carries a triage row, a classification row and two editorial rows, and without it
     #: they are four near-identical lines.
-    list_display = ("article", "stage", "model_tag", "topic", "maturity", "latency_ms",
-                    "created_at")
+    list_display = (
+        "article",
+        "stage",
+        "model_tag",
+        "topic",
+        "maturity",
+        "latency_ms",
+        "created_at",
+    )
     list_filter = ("stage", "model_tag")
     search_fields = ("article__title",)
     readonly_fields = (
@@ -103,7 +108,43 @@ class AnalysisAdmin(admin.ModelAdmin):
 class DigestItemInline(admin.TabularInline):
     model = DigestItem
     extra = 0
-    readonly_fields = ("article", "position", "score", "channel_message_id", "group_message_id")
+    readonly_fields = (
+        "article",
+        "position",
+        "score",
+        "channel_delivery_state",
+        "channel_message_id",
+        "group_message_id",
+        "sent_as_photo",
+        "channel_delivery_error",
+        "channel_delivery_attempted_at",
+    )
+
+
+@admin.register(DigestItem)
+class DigestItemAdmin(admin.ModelAdmin):
+    list_display = (
+        "digest",
+        "position",
+        "article",
+        "channel_delivery_state",
+        "channel_message_id",
+        "sent_as_photo",
+        "channel_delivery_attempted_at",
+    )
+    list_filter = ("channel_delivery_state", "sent_as_photo")
+    readonly_fields = (
+        "digest",
+        "article",
+        "position",
+        "score",
+        "channel_message_id",
+        "group_message_id",
+        "sent_as_photo",
+        "channel_delivery_state",
+        "channel_delivery_error",
+        "channel_delivery_attempted_at",
+    )
 
 
 @admin.register(Digest)

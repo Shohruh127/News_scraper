@@ -13,7 +13,6 @@ from collections import Counter
 from datetime import date as dt_date
 from datetime import datetime, timedelta
 from datetime import time as dt_time
-from urllib.parse import urlparse
 
 from django.conf import settings
 from django.db import transaction
@@ -22,6 +21,7 @@ from django.utils import timezone
 
 from . import clustering
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Digest, DigestItem, Maturity, Topic
+from .story_identity import subject_key
 
 log = logging.getLogger(__name__)
 
@@ -80,22 +80,6 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
         score -= 0.15
 
     return round(max(0.0, score), 4)
-
-
-def subject_key(url: str) -> str:
-    """Return the subject identity derived from an article URL.
-
-    The network location without a leading www. is used for ordinary hosts. For code
-    hosts that carry many unrelated projects, the first path segment (the owner or
-    namespace) is included so separate projects remain distinct subjects.
-    """
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().split(":")[0].removeprefix("www.")
-    if host in getattr(settings, "SUBJECT_CODE_HOSTS", ()):
-        segments = [segment for segment in parsed.path.split("/") if segment]
-        if segments:
-            return f"{host}/{segments[0]}"
-    return host
 
 
 def select_digest_candidates(
@@ -179,7 +163,10 @@ def select_digest_candidates(
     return selected
 
 
-def compose_digest(digest_date: dt_date | None = None) -> Digest:
+def compose_digest(
+    digest_date: dt_date | None = None,
+    candidates: list[tuple[Article, Analysis, float, list[Article]]] | None = None,
+) -> Digest:
     """Compose digest and digest items for a specific date.
 
     A second call for the same date will fail on the unique constraint of Digest.digest_date.
@@ -193,8 +180,8 @@ def compose_digest(digest_date: dt_date | None = None) -> Digest:
             status=Digest.Status.COMPOSED,
         )
 
-        candidates = select_digest_candidates(digest_date)
-        for pos, (article, _analysis, score, secondary_arts) in enumerate(candidates, start=1):
+        selected = candidates if candidates is not None else select_digest_candidates(digest_date)
+        for pos, (article, _analysis, score, secondary_arts) in enumerate(selected, start=1):
             item = DigestItem.objects.create(
                 digest=digest,
                 article=article,
@@ -358,10 +345,20 @@ def render_group_comment(digest: Digest) -> str:
 
 
 #: Translated fields every post has. Anything else ending in `_uz` came from an archetype block.
-_COMMON_UZ_KEYS = frozenset({
-    "headline_uz", "summary_uz", "why_it_matters_uz",
-    "leadership_uz", "uzbekistan_application_uz",
-})
+_COMMON_UZ_KEYS = frozenset(
+    {
+        "headline_uz",
+        "summary_uz",
+        "why_it_matters_uz",
+        "leadership_uz",
+        "uzbekistan_application_uz",
+        "lead_uz",
+        "body_1_uz",
+        "body_2_uz",
+        "kicker_uz",
+        "link_anchor_uz",
+    }
+)
 
 
 def _item_data(item: DigestItem) -> dict:
@@ -377,11 +374,11 @@ def _item_data(item: DigestItem) -> dict:
         .first()
     )
     uz_payload = uz.payload if uz else {}
-    summary_uz = uz_payload.get("summary_uz", "").strip()
-    if not summary_uz:
+    lead_uz = uz_payload.get("lead_uz", "").strip() or uz_payload.get("summary_uz", "").strip()
+    if not lead_uz:
         raise ValueError(
             f"DigestItem #{item.position} (article {item.article_id}: "
-            f"'{item.article.title}') lacks editorial_uz with non-empty 'summary_uz'."
+            f"'{item.article.title}') lacks editorial_uz with non-empty 'lead_uz' or 'summary_uz'."
         )
 
     # English analysis for the technical appendix.
@@ -414,23 +411,37 @@ def _item_data(item: DigestItem) -> dict:
         for sec in item.secondary_articles.all()
     ]
 
+    evidence_level = en_payload.get("evidence_level", "vendor_claim_only")
+    maturity = str(cls.maturity if cls else "")
+    kicker_uz = uz_payload.get("kicker_uz", "")
+    # Suppress kicker only when vendor_claim_only AND announcement_only
+    if evidence_level == "vendor_claim_only" and maturity == "announcement_only":
+        kicker_uz = ""
+
+    topic_str = str(cls.topic) if (cls and cls.topic) else "frontier_models"
+    maturity_str = str(cls.maturity) if (cls and cls.maturity) else "live_product"
+
     return {
         "position": item.position,
         "title": item.article.title,
         "url": item.article.canonical_url,
         "source_name": item.article.source.name if item.article.source else "",
-        "topic": str(cls.topic if cls else "ai"),
-        "maturity": str(cls.maturity if cls else "product"),
+        "topic": topic_str,
+        "maturity": maturity_str,
         # The archetype lives in the English payload; its translated detail lines live in the
         # Uzbek one, flattened there by the translation stage.
         "archetype": en_payload.get("archetype", ""),
         "detail": {
-            k: v for k, v in uz_payload.items()
-            if k.endswith("_uz") and k not in _COMMON_UZ_KEYS
+            k: v for k, v in uz_payload.items() if k.endswith("_uz") and k not in _COMMON_UZ_KEYS
         },
         # Uzbek fields
         "headline_uz": uz_payload.get("headline_uz", item.article.title),
-        "summary_uz": summary_uz,
+        "summary_uz": lead_uz,
+        "lead_uz": lead_uz,
+        "body_1_uz": uz_payload.get("body_1_uz", ""),
+        "body_2_uz": uz_payload.get("body_2_uz", ""),
+        "kicker_uz": kicker_uz,
+        "link_anchor_uz": uz_payload.get("link_anchor_uz", ""),
         "why_it_matters_uz": uz_payload.get("why_it_matters_uz", ""),
         "leadership_uz": uz_payload.get("leadership_uz", ""),
         "uzbekistan_application_uz": (
@@ -451,6 +462,7 @@ def _item_data(item: DigestItem) -> dict:
         "api_url": technical.get("api_url", ""),
         "install": technical.get("install", ""),
         "local_deployable": technical.get("local_deployable", False),
+        "evidence_level": evidence_level,
         # Clustering
         "secondary_sources": secondary_sources,
         "score": item.score,
@@ -481,21 +493,32 @@ ARCHETYPE_REQUIRED = {
 
 
 def render_item_post(item: DigestItem) -> str:
-    """Render one channel post, choosing a template from the article's archetype."""
+    """Render one channel post, choosing v2 post_format or legacy archetype template."""
     data = _item_data(item)
+    if getattr(settings, "POST_FORMAT_V2_ENABLED", False):
+        from . import post_format
+
+        max_chars = getattr(settings, "POST_MAX_CHARS", 900)
+        return post_format.render_item_post_v2(data, max_chars=max_chars)
+
     archetype = data.get("archetype", "")
     template = ARCHETYPE_TEMPLATES.get(archetype)
 
     if template is None:
         if archetype:
-            log.info("Unknown archetype %r on item #%s; using the plain post",
-                     archetype, item.position)
+            log.info(
+                "Unknown archetype %r on item #%s; using the plain post", archetype, item.position
+            )
         return render_to_string("digest/item_post.html", data).strip()
 
     missing = [f for f in ARCHETYPE_REQUIRED[archetype] if not data["detail"].get(f)]
     if missing:
-        log.warning("Archetype %s on item #%s lacks %s; using the plain post",
-                    archetype, item.position, ", ".join(missing))
+        log.warning(
+            "Archetype %s on item #%s lacks %s; using the plain post",
+            archetype,
+            item.position,
+            ", ".join(missing),
+        )
         return render_to_string("digest/item_post.html", data).strip()
 
     return render_to_string(template, data).strip()
@@ -504,4 +527,3 @@ def render_item_post(item: DigestItem) -> str:
 def render_item_appendix(item: DigestItem) -> str:
     """Render a single technical appendix for one news item."""
     return render_to_string("digest/item_appendix.html", _item_data(item)).strip()
-

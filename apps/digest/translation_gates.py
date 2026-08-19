@@ -5,6 +5,8 @@ Three mechanical checks that catch the highest-severity translation defects:
 2. Calques: a term must not be rendered as a known-wrong Uzbek form. Terms are no longer
    required to appear verbatim -- see the note above CALQUES.
 3. Headline case: Uzbek does not use English Title Case.
+4. Kicker: maximum 8 words, no clichés, no ungrounded numbers.
+5. Link anchor: exactly one word token, no URLs or domain names.
 """
 
 import logging
@@ -163,16 +165,98 @@ def check_headline_case(en_headline: str, uz_headline: str) -> list[str]:
     return violations
 
 
+BANNED_KICKER_CLICHES = (
+    "yangi davr boshlanmoqda",
+    "kelajak keldi",
+    "hammasi o'zgardi",
+    "o'yin qoidalari o'zgardi",
+    "bu faqat boshlanishi",
+    "vaqt ko'rsatadi",
+    "bir narsa aniq",
+    "dunyo o'zgarmoqda",
+)
+
+
+def check_kicker(kicker_uz: str, body_text: str = "") -> list[str]:
+    """Kicker validation gate:
+
+    1. Maximum 8 words.
+    2. Must not contain banned clichés.
+    3. Must not introduce a new number not already present in the body text.
+    """
+    if not kicker_uz or not kicker_uz.strip():
+        return []
+
+    words = kicker_uz.strip().split()
+    violations = []
+
+    # Length check: <= 8 words
+    if len(words) > 8:
+        violations.append(f"Kicker exceeds 8 words ({len(words)} words): '{kicker_uz}'")
+
+    # Cliché check
+    k_lower = kicker_uz.lower()
+    for cliche in BANNED_KICKER_CLICHES:
+        if cliche in k_lower:
+            violations.append(f"Kicker contains banned cliché '{cliche}': '{kicker_uz}'")
+
+    # Number check: kicker must not introduce a new number not present in body_text
+    if body_text:
+        body_numbers = extract_numbers(body_text)
+        kicker_numbers = extract_numbers(kicker_uz)
+        new_numbers = kicker_numbers - body_numbers
+        if new_numbers:
+            violations.append(
+                f"Kicker repeats or introduces number not in body: {', '.join(sorted(new_numbers))}"
+            )
+
+    return violations
+
+
+def check_link_anchor(link_anchor_uz: str, lead_uz: str = "") -> list[str]:
+    """Link anchor validation gate:
+
+    1. Must be a single word token (no whitespace).
+    2. Must not be a URL, domain, or multiword phrase.
+    """
+    if not link_anchor_uz or not link_anchor_uz.strip():
+        return []
+
+    clean = link_anchor_uz.strip()
+    violations = []
+    if " " in clean:
+        violations.append(
+            f"Link anchor must be a single word token, got multiword: '{link_anchor_uz}'"
+        )
+    if "/" in clean or "http" in clean or ".com" in clean or ".org" in clean:
+        violations.append(f"Link anchor must not contain URLs or domains: '{link_anchor_uz}'")
+
+    return violations
+
 
 def validate_translation(en_fields: dict, uz_fields: dict) -> list[str]:
-    """Run all three deterministic translation gates. Returns list of violation messages."""
+    """Run deterministic translation gates. Returns list of violation messages."""
     violations = []
     violations.extend(check_numbers(en_fields, uz_fields))
     violations.extend(check_glossary(en_fields, uz_fields))
 
     en_hl = en_fields.get("headline_en", "")
     uz_hl = uz_fields.get("headline_uz", "")
-    violations.extend(check_headline_case(en_hl, uz_hl))
+    if en_hl and uz_hl:
+        violations.extend(check_headline_case(en_hl, uz_hl))
+
+    kicker_uz = uz_fields.get("kicker_uz", "")
+    if kicker_uz:
+        body_parts = [
+            str(uz_fields.get(k, ""))
+            for k in ("lead_uz", "body_1_uz", "body_2_uz", "summary_uz")
+            if uz_fields.get(k)
+        ]
+        violations.extend(check_kicker(kicker_uz, " ".join(body_parts)))
+
+    anchor_uz = uz_fields.get("link_anchor_uz", "")
+    if anchor_uz:
+        violations.extend(check_link_anchor(anchor_uz, uz_fields.get("lead_uz", "")))
 
     if violations:
         log.warning("Translation gate violation: %s", "; ".join(violations))

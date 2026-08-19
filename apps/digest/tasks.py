@@ -1,6 +1,8 @@
 """Celery tasks. Failure policy is ADR-002: alert, never auto-disable."""
 
+import json
 import logging
+from datetime import date as dt_date
 from datetime import timedelta
 
 from celery import shared_task
@@ -156,7 +158,7 @@ def _alert_once_per_day(source) -> None:
     today = timezone.localdate()
     if source.last_alerted_on == today:
         return
-    source.last_alerted_on = today
+
     msg = (
         f"Source <b>{source.name}</b> is degraded ({source.consecutive_failures} "
         f"consecutive failures).\nLast error: <code>{source.last_error}</code>"
@@ -170,12 +172,13 @@ def _alert_once_per_day(source) -> None:
     try:
         from . import publish
 
-        publish.send_admin_alert(msg)
+        if publish.send_admin_alert(msg):
+            source.last_alerted_on = today
+        else:
+            log.warning("Admin alert for %s was not delivered; will retry", source.name)
     except Exception as exc:
         log.warning("Could not dispatch admin alert for %s: %s", source.name, exc)
 
-
-# --- LLM Tasks (on 'llm' queue) ---------------------------------------------
 
 # --- LLM Tasks (on 'llm' queue) ---------------------------------------------
 
@@ -230,7 +233,9 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
         holder = f"{platform.node()}:{os.getpid()}"
         lock_acquired = bool(
             lock_client.set(
-                "news_radar:evening_pipeline", holder, nx=True,
+                "news_radar:evening_pipeline",
+                holder,
+                nx=True,
                 ex=settings.EVENING_LOCK_TTL,
             )
         )
@@ -243,9 +248,7 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
             holder_str = current_holder.decode() if current_holder else "unknown"
         except Exception:
             holder_str = "unknown"
-        log.warning(
-            "Evening pipeline already running (lock held by %s). Skipping.", holder_str
-        )
+        log.warning("Evening pipeline already running (lock held by %s). Skipping.", holder_str)
         return {"status": "skipped", "reason": "lock_held"}
 
     def _refresh_lock():
@@ -316,9 +319,7 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
 @shared_task(name="digest.compose_and_publish")
 def compose_and_publish(digest_date_str: str | None = None) -> dict:
     """Causal pipeline: select candidates -> editorial deep analysis -> compose -> publish."""
-    from datetime import date as dt_date
-
-    from . import llm, publish, ranking
+    from . import llm, publish, ranking, verification
     from .models import Digest
 
     if digest_date_str:
@@ -348,18 +349,74 @@ def compose_and_publish(digest_date_str: str | None = None) -> dict:
 
         # Step 4: Compose Digest
         try:
-            digest = ranking.compose_digest(target_date)
+            digest = ranking.compose_digest(target_date, candidates=candidates)
         except IntegrityError:
             log.warning(
                 "Digest for %s already exists. Using existing composed digest.", target_date
             )
             digest = Digest.objects.get(digest_date=target_date)
 
-        # Step 5: Publish Digest
+        # Step 5: Promote corroborated benchmark evidence when explicitly enabled.
+        if settings.BENCHMARK_VERIFICATION_ENABLED:
+            verification.apply_cluster_evidence(digest)
+
+        # Step 6: Publish Digest
         res = publish.publish_digest(digest)
+
+        # Step 7: Record pipeline freshness in Redis
+        try:
+            broker_url = getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+            import redis
+
+            r = redis.from_url(broker_url, socket_timeout=3.0)
+            r.set(
+                "news_radar:last_pipeline_run",
+                json.dumps(
+                    {
+                        "completed_at": timezone.now().isoformat(),
+                        "digest_date": str(target_date),
+                        "status": res.get("status", "unknown"),
+                        "items_sent": res.get("items_sent", 0),
+                    }
+                ),
+            )
+        except Exception as exc:
+            log.warning("Failed to record pipeline freshness: %s", exc)
+
         return res
 
     except Exception as exc:
         log.error("Failed in compose_and_publish for %s: %s", target_date, exc)
         publish.send_admin_alert(f"Failed compose_and_publish for {target_date}: {exc}")
         return {"error": str(exc), "digest_date": str(target_date)}
+
+
+@shared_task(name="digest.heartbeat")
+def record_heartbeat(service_name: str) -> dict:
+    """Record worker heartbeat in Redis with 120s TTL."""
+    import redis
+
+    broker_url = getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+    try:
+        r = redis.from_url(broker_url, socket_timeout=3.0)
+        key = f"news_radar:heartbeat:{service_name}"
+        now_iso = timezone.now().isoformat()
+        r.set(key, now_iso, ex=120)
+        return {"service": service_name, "heartbeat_at": now_iso}
+    except Exception as exc:
+        log.warning("Failed to record heartbeat for %s: %s", service_name, exc)
+        return {"service": service_name, "error": str(exc)}
+
+
+@shared_task(name="digest.dispatch_worker_heartbeats")
+def dispatch_worker_heartbeats() -> dict:
+    """Dispatch heartbeats to all worker queues and record beat heartbeat directly."""
+    # Beat heartbeat
+    record_heartbeat("beat")
+
+    # Worker queue heartbeats
+    record_heartbeat.apply_async(args=["worker-fetch"], queue="fetch")
+    record_heartbeat.apply_async(args=["worker-llm"], queue="llm")
+    record_heartbeat.apply_async(args=["worker-publish"], queue="publish")
+
+    return {"dispatched": ["beat", "worker-fetch", "worker-llm", "worker-publish"]}

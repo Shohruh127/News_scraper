@@ -7,6 +7,7 @@ Acceptance criteria from REMAINING_WORK.md:
 4. Kill switch leaves digest COMPOSED with no message IDs.
 """
 
+import json
 from html import unescape
 
 import httpx
@@ -50,9 +51,7 @@ def digest_item_factory(db):
         uz.save(update_fields=["payload"])
 
         digest = Digest.objects.create(digest_date=timezone.localdate())
-        return DigestItem.objects.create(
-            digest=digest, article=article, position=1, score=0.9
-        )
+        return DigestItem.objects.create(digest=digest, article=article, position=1, score=0.9)
 
     return _make
 
@@ -173,7 +172,6 @@ def test_a_publish_never_writes_the_bot_token_to_the_log(db, digest_1, settings,
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
 
 
-
 @respx.mock
 def test_feedback_keyboard_is_sent_only_with_channel_post(settings):
     settings.PUBLISHING_ENABLED = True
@@ -190,9 +188,10 @@ def test_feedback_keyboard_is_sent_only_with_channel_post(settings):
     )
 
     payload = route.calls[0].request.content.decode()
-    assert 'feedback:123:useful' in payload
-    assert 'feedback:123:not_useful' in payload
-    assert 'feedback:123:want_to_build' in payload
+    assert "feedback:123:useful" in payload
+    assert "feedback:123:not_useful" in payload
+    assert "feedback:123:want_to_build" in payload
+
 
 @respx.mock
 def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, settings):
@@ -223,8 +222,7 @@ def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, setting
 
     # Verify 15 distinct channel_message_id values
     msg_ids = list(
-        DigestItem.objects.filter(digest=digest_15)
-        .values_list("channel_message_id", flat=True)
+        DigestItem.objects.filter(digest=digest_15).values_list("channel_message_id", flat=True)
     )
     assert len(msg_ids) == 15
     assert len(set(msg_ids)) == 15, f"Expected 15 distinct IDs, got {msg_ids}"
@@ -368,14 +366,18 @@ def test_publish_digest_acquires_lock_and_rejects_concurrent_run(
     class FakeRedisLock:
         def set(self, key, val, nx=False, ex=None):
             return False  # lock acquisition fails (already held)
+
         def get(self, key):
             return b"other-worker:1234"
+
         def delete(self, key):
             pass
+
         def close(self):
             pass
 
     import redis
+
     monkeypatch.setattr(redis.Redis, "from_url", lambda url: FakeRedisLock())
 
     res = publish.publish_digest(digest_15)
@@ -413,8 +415,6 @@ def test_publish_digest_refreshes_item_from_db_before_send(db, digest_15, settin
     item2.refresh_from_db()
     assert item1.channel_message_id == 7777
     assert item2.channel_message_id == 8888
-
-
 
 
 @respx.mock
@@ -481,6 +481,7 @@ def test_each_items_appendix_matches_its_own_post(db, digest_15, settings, monke
 
     def send_handler(request):
         import json
+
         data = json.loads(request.content.decode())
         mid = next(msg_counter)
         send_calls.append({**data, "_msg_id": mid})
@@ -619,8 +620,9 @@ def test_a_failed_alert_is_not_recorded_as_sent(db, settings):
 
 
 @pytest.mark.django_db
-def test_unknown_archetype_falls_back_without_raising(digest_item_factory):
+def test_unknown_archetype_falls_back_without_raising(digest_item_factory, settings):
     """An archetype we do not recognise must simplify the layout, never lose the post."""
+    settings.POST_FORMAT_V2_ENABLED = False
     item = digest_item_factory(archetype="teleportation", detail={})
 
     html = ranking.render_item_post(item)
@@ -629,8 +631,9 @@ def test_unknown_archetype_falls_back_without_raising(digest_item_factory):
 
 
 @pytest.mark.django_db
-def test_missing_required_detail_falls_back(digest_item_factory):
+def test_missing_required_detail_falls_back(digest_item_factory, settings):
     """A release with no `what_changed_uz` renders as a plain post rather than an empty one."""
+    settings.POST_FORMAT_V2_ENABLED = False
     item = digest_item_factory(archetype="release", detail={})
 
     html = ranking.render_item_post(item)
@@ -640,8 +643,9 @@ def test_missing_required_detail_falls_back(digest_item_factory):
 
 
 @pytest.mark.django_db
-def test_archetype_selects_its_template(digest_item_factory):
+def test_archetype_selects_its_template(digest_item_factory, settings):
     """A release with its required field renders the release template."""
+    settings.POST_FORMAT_V2_ENABLED = False
     item = digest_item_factory(
         archetype="release",
         detail={"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
@@ -654,36 +658,60 @@ def test_archetype_selects_its_template(digest_item_factory):
 
 
 ARCHETYPE_CASES = [
-    ("release", "🚀",
-     {"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
-     {"benchmarks_uz": "Prefill 7–8% tezroq",
-      "availability_uz": "GitHub relizlaridan yuklab olinadi"}),
-    ("agent_protocol", "🔌",
-     {"connects_uz": "IDE ni ma'lumotlar bazasiga ulaydi"},
-     {"deployment_uz": "Self-hosted va Ollama bilan ishlaydi"}),
-    ("risk_hardening", "🛡",
-     {"risk_uz": "Suv belgisini o'chirish oson",
-      "mitigation_uz": "Kriptografik imzo qo'shildi"},
-     {"residual_uz": "Qisqa matnlarda hamon ishonchsiz"}),
-    ("policy", "⚖️",
-     {"who_issued_uz": "Yevropa Ittifoqi",
-      "who_must_comply_uz": "Generativ model provayderlari"},
-     {"deadline_uz": "2027-yil 1-avgust"}),
-    ("research", "🔬",
-     {"claim_uz": "Ixchamlash uzun sessiyalarni saqlaydi"},
-     {"evidence_strength_uz": "Bitta laboratoriya, mustaqil takror yo'q",
-      "reproducible_uz": "Kod ochiq emas"}),
-    ("company_product", "🏢",
-     {"what_they_do_uz": "Konteyner obrazlarini avtomatik tozalaydi"},
-     {"availability_uz": "Enterprise mijozlar uchun ochiq"}),
+    (
+        "release",
+        "🚀",
+        {"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
+        {
+            "benchmarks_uz": "Prefill 7–8% tezroq",
+            "availability_uz": "GitHub relizlaridan yuklab olinadi",
+        },
+    ),
+    (
+        "agent_protocol",
+        "🔌",
+        {"connects_uz": "IDE ni ma'lumotlar bazasiga ulaydi"},
+        {"deployment_uz": "Self-hosted va Ollama bilan ishlaydi"},
+    ),
+    (
+        "risk_hardening",
+        "🛡",
+        {"risk_uz": "Suv belgisini o'chirish oson", "mitigation_uz": "Kriptografik imzo qo'shildi"},
+        {"residual_uz": "Qisqa matnlarda hamon ishonchsiz"},
+    ),
+    (
+        "policy",
+        "⚖️",
+        {
+            "who_issued_uz": "Yevropa Ittifoqi",
+            "who_must_comply_uz": "Generativ model provayderlari",
+        },
+        {"deadline_uz": "2027-yil 1-avgust"},
+    ),
+    (
+        "research",
+        "🔬",
+        {"claim_uz": "Ixchamlash uzun sessiyalarni saqlaydi"},
+        {
+            "evidence_strength_uz": "Bitta laboratoriya, mustaqil takror yo'q",
+            "reproducible_uz": "Kod ochiq emas",
+        },
+    ),
+    (
+        "company_product",
+        "🏢",
+        {"what_they_do_uz": "Konteyner obrazlarini avtomatik tozalaydi"},
+        {"availability_uz": "Enterprise mijozlar uchun ochiq"},
+    ),
 ]
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
 def test_archetype_renders_with_every_field(
-    digest_item_factory, archetype, emoji, required, optional
+    digest_item_factory, archetype, emoji, required, optional, settings
 ):
+    settings.POST_FORMAT_V2_ENABLED = False
     item = digest_item_factory(archetype=archetype, detail={**required, **optional})
 
     html = ranking.render_item_post(item)
@@ -697,13 +725,14 @@ def test_archetype_renders_with_every_field(
 @pytest.mark.django_db
 @pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
 def test_archetype_renders_with_no_optional_fields(
-    digest_item_factory, archetype, emoji, required, optional
+    digest_item_factory, archetype, emoji, required, optional, settings
 ):
     """The path most posts actually take.
 
     `benchmarks` is populated 40% of the time, so two release posts in three walk this branch.
     The full case is the one easy to imagine and the rarer one in production.
     """
+    settings.POST_FORMAT_V2_ENABLED = False
     item = digest_item_factory(archetype=archetype, detail=required)
 
     html = ranking.render_item_post(item)
@@ -718,8 +747,11 @@ def test_archetype_renders_with_no_optional_fields(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
-def test_visible_part_stays_short(digest_item_factory, archetype, emoji, required, optional):
+def test_visible_part_stays_short(
+    digest_item_factory, archetype, emoji, required, optional, settings
+):
     """Everything new lives inside the collapsed block, so the visible length must not grow."""
+    settings.POST_FORMAT_V2_ENABLED = False
     item = digest_item_factory(archetype=archetype, detail={**required, **optional})
 
     visible = ranking.render_item_post(item).split("<blockquote expandable>")[0]
@@ -757,8 +789,6 @@ def test_appendix_prefers_uzbek_and_falls_back_to_english(digest_item_factory):
     assert "An English limitation" in html
 
 
-
-
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("evidence_level", "label"),
@@ -789,3 +819,293 @@ def test_appendix_unknown_evidence_level_falls_back_to_vendor_label(digest_item_
 
     assert "Asosiy manba da'vosi" in unescape(html)
     assert "Bir nechta manbada mos benchmark raqami" not in unescape(html)
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_send_photo_payload_structure(settings):
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+
+    route = respx.post("https://api.telegram.org/bottest_token/sendPhoto").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 999}})
+    )
+
+    photo_url = "https://cdn.example.com/image.jpg"
+    keyboard = publish.feedback_keyboard(42)
+
+    res = publish.send_photo(
+        chat_id="-100123",
+        photo_url=photo_url,
+        caption="Caption text",
+        reply_markup=keyboard,
+    )
+
+    assert res["result"]["message_id"] == 999
+    assert route.called
+    req_payload = json.loads(route.calls[0].request.content)
+    assert req_payload["photo"] == "https://cdn.example.com/image.jpg"
+    assert req_payload["caption"] == "Caption text"
+    assert req_payload["parse_mode"] == "HTML"
+    assert req_payload["reply_markup"] == keyboard
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_edit_message_routes_to_caption_or_text(settings):
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+
+    caption_route = respx.post("https://api.telegram.org/bottest_token/editMessageCaption").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 111}})
+    )
+    text_route = respx.post("https://api.telegram.org/bottest_token/editMessageText").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 222}})
+    )
+
+    # Edit photo message
+    res1 = publish.edit_message("-100123", 111, "New caption", sent_as_photo=True)
+    assert res1["result"]["message_id"] == 111
+    assert caption_route.called
+
+    # Edit text message
+    res2 = publish.edit_message("-100123", 222, "New text", sent_as_photo=False)
+    assert res2["result"]["message_id"] == 222
+    assert text_route.called
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_v2_with_valid_image_sends_photo(digest_item_factory, settings):
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+    settings.POST_FORMAT_V2_ENABLED = True
+
+    item = digest_item_factory(archetype="release", detail={})
+    item.article.meta["image_url"] = "https://example.com/img.jpg"
+    item.article.save()
+
+    photo_route = respx.post("https://api.telegram.org/bottest_token/sendPhoto").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 777}})
+    )
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 1
+    assert photo_route.called
+
+    req_payload = json.loads(photo_route.calls[0].request.content)
+    assert req_payload["photo"] == "https://example.com/img.jpg"
+    assert "caption" in req_payload
+    assert req_payload["parse_mode"] == "HTML"
+    assert "reply_markup" in req_payload
+
+    item.refresh_from_db()
+    assert item.channel_message_id == 777
+    assert item.sent_as_photo is True
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_v2_photo_400_falls_back_to_text(digest_item_factory, settings):
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+    settings.POST_FORMAT_V2_ENABLED = True
+
+    item = digest_item_factory(archetype="release", detail={})
+    item.article.meta["image_url"] = "https://example.com/unreachable.jpg"
+    item.article.save()
+
+    # Telegram rejects photo URL with 400 Bad Request
+    respx.post("https://api.telegram.org/bottest_token/sendPhoto").mock(
+        return_value=httpx.Response(
+            400,
+            json={"ok": False, "description": "Bad Request: wrong file identifier/HTTP URL"},
+        )
+    )
+    msg_route = respx.post("https://api.telegram.org/bottest_token/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 888}})
+    )
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 1
+    assert msg_route.called
+
+    item.refresh_from_db()
+    assert item.channel_message_id == 888
+    assert item.sent_as_photo is False
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_v2_without_image_sends_text_with_disabled_preview(
+    digest_item_factory, settings
+):
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+    settings.POST_FORMAT_V2_ENABLED = True
+
+    item = digest_item_factory(archetype="release", detail={})
+    item.article.meta.pop("image_url", None)
+    item.article.save()
+
+    msg_route = respx.post("https://api.telegram.org/bottest_token/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 888}})
+    )
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 1
+    assert msg_route.called
+
+    req_payload = json.loads(msg_route.calls[0].request.content)
+    assert req_payload["link_preview_options"]["is_disabled"] is True
+
+    item.refresh_from_db()
+    assert item.channel_message_id == 888
+    assert item.sent_as_photo is False
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_500_sets_unknown_and_alerts_admin(digest_item_factory, settings):
+    from apps.digest.models import DeliveryState
+
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+
+    item = digest_item_factory(archetype="release", detail={})
+
+    # Channel send returns 500 Internal Server Error
+    channel_route = respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="-100channel",
+    ).mock(
+        return_value=httpx.Response(500, json={"ok": False, "description": "Internal Server Error"})
+    )
+    # Admin alert succeeds
+    admin_alert_route = respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="12345",
+    ).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 111}}))
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 0
+    assert len(res["failed_items"]) == 1
+    assert channel_route.called
+    assert admin_alert_route.called
+
+    item.refresh_from_db()
+    assert item.channel_delivery_state == DeliveryState.UNKNOWN
+    assert "500" in item.channel_delivery_error
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_timeout_sets_unknown_and_alerts_admin(digest_item_factory, settings):
+    from apps.digest.models import DeliveryState
+
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+
+    item = digest_item_factory(archetype="release", detail={})
+
+    channel_route = respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="-100channel",
+    ).mock(side_effect=httpx.ConnectTimeout("Connection timed out"))
+    admin_alert_route = respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="12345",
+    ).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 112}}))
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 0
+    assert len(res["failed_items"]) == 1
+    assert channel_route.called
+    assert admin_alert_route.called
+
+    item.refresh_from_db()
+    assert item.channel_delivery_state == DeliveryState.UNKNOWN
+    assert "Timeout" in item.channel_delivery_error
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_unknown_state_skipped_on_rerun(digest_item_factory, settings):
+    from apps.digest.models import DeliveryState
+
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+
+    item = digest_item_factory(archetype="release", detail={})
+    item.channel_delivery_state = DeliveryState.UNKNOWN
+    item.save()
+
+    channel_send_route = respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="-100channel",
+    ).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 999}}))
+    respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="12345",
+    ).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 113}}))
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 0
+    assert res["items_skipped"] == 1
+    # Channel post must NOT be called for unknown item
+    assert not channel_send_route.called
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_digest_stale_sending_promoted_to_unknown(digest_item_factory, settings):
+    from apps.digest.models import DeliveryState
+
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "test_token"
+    settings.TELEGRAM_CHANNEL_ID = "-100channel"
+    settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
+    settings.TELEGRAM_GROUP_ID = ""
+    settings.TELEGRAM_SEND_DELAY = 0
+
+    item = digest_item_factory(archetype="release", detail={})
+    item.channel_delivery_state = DeliveryState.SENDING
+    item.save()
+
+    channel_send_route = respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="-100channel",
+    ).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 999}}))
+    respx.post(
+        "https://api.telegram.org/bottest_token/sendMessage",
+        json__chat_id="12345",
+    ).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 114}}))
+
+    res = publish.publish_digest(item.digest)
+    assert res["items_sent"] == 0
+    assert res["items_skipped"] == 1
+    assert not channel_send_route.called
+
+    item.refresh_from_db()
+    assert item.channel_delivery_state == DeliveryState.UNKNOWN

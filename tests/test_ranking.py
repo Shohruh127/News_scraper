@@ -7,7 +7,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from apps.digest import ranking
-from apps.digest.models import Analysis, Article, Digest, Source
+from apps.digest.models import Analysis, Article, Digest, DigestItem, Source
 from tests.helpers import make_editorial
 
 
@@ -222,6 +222,25 @@ def test_no_padding_rule(db, classified_articles):
     assert digest.status == Digest.Status.COMPOSED
 
 
+def test_compose_digest_uses_supplied_candidates(db, classified_articles, monkeypatch):
+    primary = classified_articles[0]
+    secondary = classified_articles[1]
+    analysis = primary.analyses.first()
+    candidates = [(primary, analysis, 0.99, [secondary])]
+
+    monkeypatch.setattr(
+        ranking,
+        "select_digest_candidates",
+        lambda *_args, **_kwargs: pytest.fail("candidate selection must not run twice"),
+    )
+
+    digest = ranking.compose_digest(timezone.localdate(), candidates=candidates)
+    item = digest.items.get()
+
+    assert item.article_id == primary.id
+    assert list(item.secondary_articles.values_list("id", flat=True)) == [secondary.id]
+
+
 def test_cross_digest_exclusion(db, classified_articles):
     """Articles already published in a digest must never appear in subsequent digests."""
     today = timezone.localdate()
@@ -294,6 +313,7 @@ def test_render_templates_snapshot(db, classified_articles):
     assert str(today) in comment_html
     assert "Open Model 30B Released" in comment_html
 
+
 @pytest.mark.parametrize(
     "url, expected",
     [
@@ -322,6 +342,7 @@ def test_render_templates_snapshot(db, classified_articles):
 )
 def test_subject_key(url, expected):
     assert ranking.subject_key(url) == expected
+
 
 @pytest.fixture
 def repetition_articles(db, source):
@@ -458,3 +479,99 @@ def test_rule_is_silent_when_every_subject_is_distinct(db, source):
         make_editorial(article)
 
     assert len(ranking.select_digest_candidates()) == 3
+
+
+def test_kicker_suppression_rule_only_on_vendor_claim_and_announcement(db, source):
+    """Kicker suppressed only when vendor_claim_only AND announcement_only."""
+    article = Article.objects.create(
+        source=source,
+        canonical_url="https://site.example/announcement",
+        content_hash="hash-ann",
+        title="Announcement item",
+        extracted_text="Text " * 40,
+        status=Article.Status.CLASSIFIED,
+    )
+    Analysis.objects.create(
+        article=article,
+        stage=Analysis.Stage.CLASSIFICATION,
+        model_tag="gemma4:31b",
+        payload={
+            "primary_topic": "ai_agents",
+            "maturity": "announcement_only",
+            "novelty": 8,
+            "evidence": 8,
+            "production_readiness": 8,
+            "reason": "fixture",
+        },
+        latency_ms=1000,
+    )
+    make_editorial(article, kicker_uz="Muhim zarba.")
+
+    digest = Digest.objects.create(digest_date=date(2026, 8, 22))
+    item = DigestItem.objects.create(digest=digest, article=article, position=1, score=0.9)
+
+    # 1. vendor_claim_only + announcement_only -> kicker suppressed
+    data = ranking._item_data(item)
+    assert data["kicker_uz"] == ""
+
+    # 2. multiple_evidence + announcement_only -> kicker preserved
+    en = article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
+    en.payload["evidence_level"] = "multiple_evidence"
+    en.save()
+    data2 = ranking._item_data(item)
+    assert data2["kicker_uz"] == "Muhim zarba."
+
+    # 3. vendor_claim_only + live_product -> kicker preserved
+    en.payload["evidence_level"] = "vendor_claim_only"
+    en.save()
+    cls = article.analyses.get(stage=Analysis.Stage.CLASSIFICATION)
+    cls.payload["maturity"] = "live_product"
+    cls.save()
+    data3 = ranking._item_data(item)
+    assert data3["kicker_uz"] == "Muhim zarba."
+
+
+def test_render_item_post_respects_v2_flag(db, source, settings):
+    """render_item_post switches between v1 HTML template and v2 post_format."""
+    article = Article.objects.create(
+        source=source,
+        canonical_url="https://site.example/v2-flag-test",
+        content_hash="hash-v2",
+        title="V2 Flag item",
+        extracted_text="Text " * 40,
+        status=Article.Status.CLASSIFIED,
+    )
+    Analysis.objects.create(
+        article=article,
+        stage=Analysis.Stage.CLASSIFICATION,
+        model_tag="gemma4:31b",
+        payload={
+            "primary_topic": "robotics",
+            "maturity": "live_product",
+            "novelty": 8,
+            "evidence": 8,
+            "production_readiness": 8,
+            "reason": "fixture",
+        },
+        latency_ms=1000,
+    )
+    make_editorial(
+        article,
+        lead_uz="EHang uchar taksi xizmatini yo'lga qo'ydi.",
+        link_anchor_uz="qo'ydi",
+        body_1_uz="Parvoz 20 daqiqa davom etadi.",
+    )
+
+    digest = Digest.objects.create(digest_date=date(2026, 8, 23))
+    item = DigestItem.objects.create(digest=digest, article=article, position=1, score=0.9)
+
+    # Flag off: renders v1 template (contains emoji header)
+    settings.POST_FORMAT_V2_ENABLED = False
+    v1_html = ranking.render_item_post(item)
+    assert "<b>" in v1_html
+
+    # Flag on: renders v2 prose (contains single inline link and final hashtag)
+    settings.POST_FORMAT_V2_ENABLED = True
+    v2_html = ranking.render_item_post(item)
+    assert "#robototexnika" in v2_html
+    assert "<b>" not in v2_html

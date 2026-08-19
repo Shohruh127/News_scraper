@@ -24,9 +24,23 @@ _REPO = re.compile(
 
 #: First path segments that are site navigation, not an account.
 _NOT_OWNERS = {
-    "about", "apps", "collections", "enterprise", "explore", "features", "login",
-    "marketplace", "notifications", "orgs", "pricing", "search", "settings", "signup",
-    "sponsors", "topics", "trending",
+    "about",
+    "apps",
+    "collections",
+    "enterprise",
+    "explore",
+    "features",
+    "login",
+    "marketplace",
+    "notifications",
+    "orgs",
+    "pricing",
+    "search",
+    "settings",
+    "signup",
+    "sponsors",
+    "topics",
+    "trending",
 }
 
 
@@ -73,8 +87,6 @@ def find_repo_url(text: str, title: str = "") -> str:
     return candidates[0]
 
 
-
-
 def repo_is_real(url: str, client: httpx.Client | None = None) -> bool | None:
     """Whether a GitHub repository exists and has content.
 
@@ -118,4 +130,3 @@ def repo_is_real(url: str, client: httpx.Client | None = None) -> bool | None:
         log.info("Artifact %s not verified: repository is empty", url)
         return False
     return True
-

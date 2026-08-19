@@ -1,23 +1,58 @@
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-service: &app-service
+  build:
+    context: .
+    target: runtime
+  image: news-radar:${NEWS_RADAR_IMAGE_TAG:-local}
+  init: true
+  env_file:
+    - .env
+  environment:
+    DATABASE_URL: ${DATABASE_URL:-postgresql://news_radar:news_radar@postgres:5432/news_radar}
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *default-logging
+  restart: unless-stopped
+
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
     environment:
-      POSTGRES_DB: news_radar
-      POSTGRES_USER: news_radar
-      POSTGRES_PASSWORD: news_radar
+      POSTGRES_DB: ${POSTGRES_DB:-news_radar}
+      POSTGRES_USER: ${POSTGRES_USER:-news_radar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-news_radar}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U news_radar -d news_radar"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging: *default-logging
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     command: redis-server --save 60 1 --loglevel warning
     ports:
       - "127.0.0.1:6380:6379"
@@ -28,93 +63,76 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging: *default-logging
     restart: unless-stopped
 
-  # Config reaches every service below through `env_file`, never through the image --
-  # `.dockerignore` keeps `.env` out of the build so it cannot go stale there again.
-  #
-  # After editing `.env`, apply it with `docker compose up -d <service>`.
-  # After editing Python or a template, run `docker compose build` FIRST -- the source is
-  # baked in by `COPY . .`, so `up -d` alone recreates the container from the old image.
-  # `docker compose restart` does NOT work: it restarts the existing container with the
-  # environment it was created with, so the file is re-read only when the container is
-  # recreated. Measured 2026-08-18 -- restart reported the old value, up -d the new one.
   worker-fetch:
-    build: .
-    command: uv run celery -A config worker -Q fetch -c 10 --loglevel=info
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://news_radar:news_radar@postgres:5432/news_radar
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+    <<: *app-service
+    command: celery -A config worker -Q fetch -c 10 --loglevel=info
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   worker-llm:
-    build: .
-    command: uv run celery -A config worker -Q llm -c 2 --loglevel=info
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://news_radar:news_radar@postgres:5432/news_radar
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+    <<: *app-service
+    command: celery -A config worker -Q llm -c 2 --loglevel=info
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
 
   worker-publish:
-    build: .
-    command: uv run celery -A config worker -Q publish -c 1 --loglevel=info
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://news_radar:news_radar@postgres:5432/news_radar
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+    <<: *app-service
+    command: celery -A config worker -Q publish -c 1 --loglevel=info
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  bot:
+    <<: *app-service
+    command: python -m apps.digest.bot
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   beat:
-    build: .
-    command: uv run celery -A config beat --loglevel=info
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://news_radar:news_radar@postgres:5432/news_radar
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+    <<: *app-service
+    command: celery -A config beat --loglevel=info
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   web:
-    build: .
+    <<: *app-service
     command: >
-      uv run sh -c "python manage.py collectstatic --noinput &&
+      sh -c "python manage.py collectstatic --noinput &&
       gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile -"
     ports:
       - "127.0.0.1:8000:8000"
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://news_radar:news_radar@postgres:5432/news_radar
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/healthz/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
 volumes:
   pgdata:

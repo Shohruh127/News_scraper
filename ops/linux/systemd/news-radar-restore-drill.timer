@@ -1,0 +1,11 @@
+[Unit]
+Description=Run News Radar PostgreSQL restore drill monthly
+
+[Timer]
+OnCalendar=*-*-01 04:30:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=news-radar-restore-drill.service
+
+[Install]
+WantedBy=timers.target

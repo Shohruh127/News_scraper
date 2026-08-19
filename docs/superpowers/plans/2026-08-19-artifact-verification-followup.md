@@ -28,7 +28,7 @@ Plan B shipped and works going forward. Four things it got wrong, each measured 
 
 ```python
 verified = artifacts.repo_is_real(url)
-article.artifact_verified = verified          # apps/digest/llm.py
+article.artifact_verified = verified  # apps/digest/llm.py
 article.save(update_fields=["artifact_url", "artifact_verified"])
 ```
 
@@ -238,19 +238,20 @@ def repo_is_real(url: str, client: httpx.Client | None = None) -> bool | None:
 In `apps/digest/llm.py`, replace the tail of `_verify_artifact`:
 
 ```python
-    verified = artifacts.repo_is_real(url)
-    if verified is None:
-        log.warning(
-            "Artifact check for article %s was inconclusive; storing nothing so a later run "
-            "can ask again", article.id,
-        )
-        return False
+verified = artifacts.repo_is_real(url)
+if verified is None:
+    log.warning(
+        "Artifact check for article %s was inconclusive; storing nothing so a later run "
+        "can ask again",
+        article.id,
+    )
+    return False
 
-    article.artifact_url = url
-    article.artifact_verified = verified
-    article.save(update_fields=["artifact_url", "artifact_verified"])
-    log.info("Artifact for article %s: %s -> %s", article.id, url, verified)
-    return verified
+article.artifact_url = url
+article.artifact_verified = verified
+article.save(update_fields=["artifact_url", "artifact_verified"])
+log.info("Artifact for article %s: %s -> %s", article.id, url, verified)
+return verified
 ```
 
 - [ ] **Step 5: Run the tests, then prove the guard has teeth**
@@ -286,23 +287,29 @@ In `tests/test_maturity_ceiling.py`, add these cases to the existing
 `@pytest.mark.parametrize` list on `test_find_repo_url`, keeping every existing case unchanged:
 
 ```python
-        (
-            "Code at https://github.com/Tencent/AI-Infra-Guard/tree/main/ventor today.",
-            "https://github.com/Tencent/AI-Infra-Guard",
-        ),
-        (
-            "Built on https://github.com/vercel/next.js in production.",
-            "https://github.com/vercel/next.js",
-        ),
-        (
-            "See https://github.com/socketio/socket.io/blob/main/README.md for usage.",
-            "https://github.com/socketio/socket.io",
-        ),
-        ("Repo: github.com/foo/bar?tab=readme-ov-file", "https://github.com/foo/bar"),
-        ("Repo: <https://github.com/foo/bar>", "https://github.com/foo/bar"),
-        ("Repo: https://github.com/foo/bar/", "https://github.com/foo/bar"),
-        ("Repo: https://github.com/foo/bar).", "https://github.com/foo/bar"),
-        ("Only an owner: https://github.com/foo and nothing more.", ""),
+(
+    (
+        "Code at https://github.com/Tencent/AI-Infra-Guard/tree/main/ventor today.",
+        "https://github.com/Tencent/AI-Infra-Guard",
+    ),
+)
+(
+    (
+        "Built on https://github.com/vercel/next.js in production.",
+        "https://github.com/vercel/next.js",
+    ),
+)
+(
+    (
+        "See https://github.com/socketio/socket.io/blob/main/README.md for usage.",
+        "https://github.com/socketio/socket.io",
+    ),
+)
+(("Repo: github.com/foo/bar?tab=readme-ov-file", "https://github.com/foo/bar"),)
+(("Repo: <https://github.com/foo/bar>", "https://github.com/foo/bar"),)
+(("Repo: https://github.com/foo/bar/", "https://github.com/foo/bar"),)
+(("Repo: https://github.com/foo/bar).", "https://github.com/foo/bar"),)
+(("Only an owner: https://github.com/foo and nothing more.", ""),)
 ```
 
 The dotted names are the point of the pair: `next.js` must survive, and `requests.` at the end of
@@ -332,9 +339,23 @@ _REPO = re.compile(
 
 #: First path segments that are site navigation, not an account.
 _NOT_OWNERS = {
-    "about", "apps", "collections", "enterprise", "explore", "features", "login",
-    "marketplace", "notifications", "orgs", "pricing", "search", "settings", "signup",
-    "sponsors", "topics", "trending",
+    "about",
+    "apps",
+    "collections",
+    "enterprise",
+    "explore",
+    "features",
+    "login",
+    "marketplace",
+    "notifications",
+    "orgs",
+    "pricing",
+    "search",
+    "settings",
+    "signup",
+    "sponsors",
+    "topics",
+    "trending",
 }
 
 
@@ -584,7 +605,10 @@ def test_recheck_returns_verified_and_unanswered_papers(paper_source, capsys):
 def test_recheck_leaves_settled_and_unrelated_articles_alone(paper_source):
     rejected = _paper(paper_source, "3333", status=Article.Status.SKIPPED, verified=False)
     no_link = _paper(
-        paper_source, "4444", status=Article.Status.SKIPPED, verified=None,
+        paper_source,
+        "4444",
+        status=Article.Status.SKIPPED,
+        verified=None,
         text="We evaluate on three benchmarks and report gains.",
     )
     already_moving = _paper(paper_source, "5555", status=Article.Status.CLASSIFIED, verified=True)

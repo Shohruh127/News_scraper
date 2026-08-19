@@ -99,6 +99,7 @@ CELERY_TASK_ROUTES = {
     "digest.triage_and_classify": {"queue": "llm"},
     "digest.analyse_for_digest": {"queue": "llm"},
     "digest.compose_and_publish": {"queue": "publish"},
+    "digest.dispatch_worker_heartbeats": {"queue": "fetch"},
 }
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
@@ -157,6 +158,10 @@ BENCHMARK_VERIFICATION_ENABLED = env.bool("BENCHMARK_VERIFICATION_ENABLED", defa
 #: Telegram unfurls the article URL and fetches og:image without our code downloading or storing
 #: images, preserving the 4096-char sendMessage limit and working gracefully when no image exists.
 TELEGRAM_LINK_PREVIEW = env.bool("TELEGRAM_LINK_PREVIEW", default=True)
+
+# --- Post format v2 redesign ------------------------------------------------
+POST_FORMAT_V2_ENABLED = env.bool("POST_FORMAT_V2_ENABLED", default=False)
+POST_MAX_CHARS = env.int("POST_MAX_CHARS", default=900)
 
 # --- Ingestion --------------------------------------------------------------
 USER_AGENT = "news-radar/0.1 (+daily AI digest)"
@@ -249,19 +254,7 @@ DIGEST_MAX_PER_SUBJECT = env.int("DIGEST_MAX_PER_SUBJECT", default=1)
 #: Matched by exact equality, so raw.githubusercontent.com is an ordinary host.
 SUBJECT_CODE_HOSTS = ("github.com", "gitlab.com", "huggingface.co")
 
-# --- Embeddings, clustering Tier B -------------------------------------------
-# Tier A catches the same text twice; subject diversity catches one site repeating itself.
-# Neither sees one story written independently by two outlets, which is what arrived on
-# 2026-08-18 with the aggregator sources.
-#
-# CLUSTER_COSINE_THRESHOLD stays above cosine's maximum until a real-corpus measurement
-# records a justified value in docs/spike/EMBEDDING_MEASUREMENT.md.
-EMBEDDING_ENABLED = env.bool("EMBEDDING_ENABLED", default=False)
-EMBEDDING_MODEL = env("EMBEDDING_MODEL", default="qwen3-embedding:0.6b")
-EMBEDDING_TIMEOUT = env.int("EMBEDDING_TIMEOUT", default=120)
-CLUSTER_COSINE_THRESHOLD = env.float("CLUSTER_COSINE_THRESHOLD", default=1.01)
 # --- Artifact verification ---------------------------------------------------
 # Paper domains are skipped before triage unless their promised repository is verified.
 ARTIFACT_VERIFICATION_ENABLED = env.bool("ARTIFACT_VERIFICATION_ENABLED", default=True)
 ARTIFACT_TIMEOUT = env.int("ARTIFACT_TIMEOUT", default=15)
-

@@ -3,8 +3,20 @@
 from apps.digest.models import Analysis
 
 
-def make_editorial(article, *, summary_uz="Yangi model nashr qilindi.", built="Model",
-                   limitations="GPU required", local_deployable=True, model_tag="mimo-v2.5"):
+def make_editorial(
+    article,
+    *,
+    summary_uz="Yangi model nashr qilindi.",
+    lead_uz="Yangi ochiq vaznli model taqdim etildi.",
+    body_1_uz="Model 24 milliard parametrga ega va ochiq litsenziyada tarqatilmoqda.",
+    body_2_uz="",
+    kicker_uz="Lokal infratuzilmada qulay ishlaydi.",
+    link_anchor_uz="etildi",
+    built="Model",
+    limitations="GPU required",
+    local_deployable=True,
+    model_tag="mimo-v2.5",
+):
     """Create the two editorial analyses a renderable DigestItem needs (ADR-005).
 
     Rendering reads `editorial_uz` for reader-facing Uzbek and `editorial_en` for the
@@ -17,6 +29,11 @@ def make_editorial(article, *, summary_uz="Yangi model nashr qilindi.", built="M
         payload={
             "headline_en": "A new model was released",
             "summary_en": "A new model was released with open weights.",
+            "lead_en": "A new open-weight model was released.",
+            "body_1_en": ("The model has 24B parameters and is distributed under an open license."),
+            "body_2_en": "",
+            "kicker_en": "Runs efficiently on local infrastructure.",
+            "link_anchor_en": "released",
             "why_it_matters_en": "It can be self-hosted.",
             "leadership_en": "Reduces API dependency.",
             "uzbekistan_application_en": "Local teams can self-host it.",
@@ -26,6 +43,7 @@ def make_editorial(article, *, summary_uz="Yangi model nashr qilindi.", built="M
                 "local_deployable": local_deployable,
             },
             "evidence_level": "vendor_claim_only",
+            "archetype": "release",
         },
         latency_ms=8000,
     )
@@ -36,6 +54,11 @@ def make_editorial(article, *, summary_uz="Yangi model nashr qilindi.", built="M
         payload={
             "headline_uz": "Yangi model chiqdi",
             "summary_uz": summary_uz,
+            "lead_uz": lead_uz,
+            "body_1_uz": body_1_uz,
+            "body_2_uz": body_2_uz,
+            "kicker_uz": kicker_uz,
+            "link_anchor_uz": link_anchor_uz,
             "why_it_matters_uz": "Muhim yangilik.",
             "leadership_uz": "Boshqaruv uchun tavsiya.",
             "uzbekistan_application_uz": "O'zbekistonda qo'llash mumkin.",

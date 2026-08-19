@@ -1,0 +1,9 @@
+[Unit]
+Description=News Radar strict runtime health check
+Requires=docker.service
+After=docker.service news-radar.service
+
+[Service]
+Type=oneshot
+Environment=NEWS_RADAR_PROJECT_DIR=/opt/news-radar
+ExecStart=/opt/news-radar/ops/linux/health-check.sh

@@ -67,7 +67,6 @@ topic is `irrelevant` are dropped **before** the diversification loop and never 
 Append to the end of `config/settings.py`:
 
 ```python
-
 # --- Subject diversity -------------------------------------------------------
 # Digest #11 opened with three consecutive Ollama releases and two DeepSeek posts: five of
 # twelve items covering two stories, with every component behaving correctly. Clustering

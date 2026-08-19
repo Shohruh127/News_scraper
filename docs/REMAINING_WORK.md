@@ -238,7 +238,6 @@ Then iterate on what the week reveals.
 
 | Task | Why it waits |
 |---|---|
-| Embeddings Tier B (cosine ~0.85, cross-source) | Tier A handles verbatim duplicates and subject diversity handles repetition from one site. Tier B catches one story written independently on two sites, which matters more now that aggregator sources exist |
 | Artifact verification | Would let genuine open-source papers back in by checking whether a promised repo resolves. Until then `SKIP_PAPER_DOMAINS=True` keeps them out of triage entirely |
 | Feedback bot (aiogram) + buttons + learning | Each post now has its own thread, so this is unblocked but not scheduled |
 | Independent benchmark verification | `evidence_level` is always `vendor_claim_only` today |

@@ -222,8 +222,12 @@ def test_rendering_succeeds_with_both_stages(article):
         },
         latency_ms=1000,
     )
-    make_editorial(article, summary_uz="Yangi arxitektura sinovdan o'tdi.",
-                   built="Fast transformer layer", limitations="Memory bounds")
+    make_editorial(
+        article,
+        summary_uz="Yangi arxitektura sinovdan o'tdi.",
+        built="Fast transformer layer",
+        limitations="Memory bounds",
+    )
 
     digest = Digest.objects.create(digest_date=date(2026, 8, 14))
     DigestItem.objects.create(digest=digest, article=article, position=1, score=0.85)
@@ -314,9 +318,7 @@ def test_archetype_fields_flattens_only_the_chosen_block():
         },
         "policy_details": {"who_issued_en": "should be ignored"},
     }
-    assert archetype_fields(payload) == {
-        "what_changed_en": "repeat_penalty defaults to 1.0"
-    }
+    assert archetype_fields(payload) == {"what_changed_en": "repeat_penalty defaults to 1.0"}
 
 
 def test_archetype_fields_is_empty_when_there_is_no_block():
@@ -335,9 +337,7 @@ def test_translation_schema_follows_the_fields_it_is_given():
     """
     from apps.digest.llm import translation_schema_for
 
-    schema = translation_schema_for(
-        {"headline_en": "x", "summary_en": "y", "what_changed_en": "z"}
-    )
+    schema = translation_schema_for({"headline_en": "x", "summary_en": "y", "what_changed_en": "z"})
     assert set(schema["properties"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
     assert set(schema["required"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
     assert "policy_details" not in schema["properties"]
@@ -413,4 +413,50 @@ def test_technical_prose_reaches_the_translation_schema():
     assert set(translation_schema_for(fields)["properties"]) == {"benchmarks_uz"}
 
 
+def test_editorial_en_v2_schema_validation():
+    """EditorialEn validates clean v2 prose fields while remaining backward-compatible."""
+    v2_data = {
+        "lead_en": "EHang launched a fully autonomous passenger eVTOL route.",
+        "body_1_en": "Flights take 20 minutes and cost 800 yuan per seat.",
+        "body_2_en": "Civil aviation regulators issued complete type certificates.",
+        "kicker_en": "Only place in the world to buy pilotless tickets.",
+        "link_anchor_en": "launched",
+        "why_it_matters_en": "Commercialises urban air mobility.",
+        "uzbekistan_application_en": "Could inform regional drone delivery regulations.",
+        "technical": {
+            "what_was_built": "EH216-S aircraft",
+            "limitations": "30km range",
+            "local_deployable": False,
+        },
+        "evidence_level": "vendor_claim_only",
+        "archetype": "company_product",
+    }
+    model = llm.EditorialEn.model_validate(v2_data)
+    assert model.lead_en.startswith("EHang")
+    assert model.link_anchor_en == "launched"
+    assert model.kicker_en.startswith("Only place")
 
+
+def test_translation_schema_for_v2_fields():
+    """Dynamic translation schema derives matching _uz properties for all v2 fields."""
+    v2_en_fields = {
+        "lead_en": "Lead text",
+        "body_1_en": "Body 1 text",
+        "body_2_en": "Body 2 text",
+        "kicker_en": "Kicker text",
+        "link_anchor_en": "launched",
+        "why_it_matters_en": "Why text",
+        "uzbekistan_application_en": "UZ text",
+    }
+    schema = llm.translation_schema_for(v2_en_fields)
+    expected = {
+        "lead_uz",
+        "body_1_uz",
+        "body_2_uz",
+        "kicker_uz",
+        "link_anchor_uz",
+        "why_it_matters_uz",
+        "uzbekistan_application_uz",
+    }
+    assert set(schema["properties"]) == expected
+    assert set(schema["required"]) == expected

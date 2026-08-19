@@ -157,6 +157,14 @@ class Digest(models.Model):
         return f"{self.digest_date} ({self.status})"
 
 
+class DeliveryState(models.TextChoices):
+    PENDING = "pending", "Pending"
+    SENDING = "sending", "Sending"
+    SENT = "sent", "Sent"
+    UNKNOWN = "unknown", "Unknown"
+    FAILED = "failed", "Failed"
+
+
 class DigestItem(models.Model):
     digest = models.ForeignKey(Digest, on_delete=models.CASCADE, related_name="items")
     article = models.ForeignKey(Article, on_delete=models.PROTECT)
@@ -167,6 +175,18 @@ class DigestItem(models.Model):
     score = models.FloatField()
     channel_message_id = models.BigIntegerField(null=True, blank=True)
     group_message_id = models.BigIntegerField(null=True, blank=True)
+    sent_as_photo = models.BooleanField(
+        default=False,
+        help_text="Whether this item was published to the channel as a photo with caption",
+    )
+    channel_delivery_state = models.CharField(
+        max_length=16,
+        choices=DeliveryState.choices,
+        default=DeliveryState.PENDING,
+        db_index=True,
+    )
+    channel_delivery_error = models.CharField(max_length=512, blank=True, default="")
+    channel_delivery_attempted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["digest", "position"]

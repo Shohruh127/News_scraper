@@ -29,7 +29,7 @@ class Command(BaseCommand):
             "--republish",
             action="store_true",
             help="Re-send items that already have a channel_message_id. Use only after deleting "
-                 "those posts by hand; without it, published items are skipped.",
+            "those posts by hand; without it, published items are skipped.",
         )
 
     def handle(self, *args, **options):

@@ -6,6 +6,7 @@
 {% if api_url %}<b>API:</b> <a href="{{ api_url }}">{{ api_url }}</a>{% endif %}
 {% if install %}<b>O'rnatish:</b> <code>{{ install }}</code>{% endif %}
 <b>Mahalliy deploy:</b> {% if local_deployable %}Mavjud ✅{% else %}Mavjud emas ❌{% endif %}
+<b>Dalil darajasi:</b> {% if evidence_level == "multiple_evidence" %}Bir nechta manbada mos benchmark raqami{% else %}Asosiy manba da'vosi{% endif %}
 {% if benchmarks %}<b>Benchmarklar:</b> {{ benchmarks }}{% endif %}
 {% if limitations %}<b>Cheklovlar:</b> {{ limitations }}{% endif %}
 {% if uzbekistan_application_uz %}<b>O'zbekistonda qo'llanishi:</b> {{ uzbekistan_application_uz }}{% endif %}

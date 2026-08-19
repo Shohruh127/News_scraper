@@ -1,0 +1,11 @@
+[Unit]
+Description=Check News Radar runtime health every five minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=news-radar-health.service
+
+[Install]
+WantedBy=timers.target

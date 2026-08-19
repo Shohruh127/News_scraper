@@ -1,6 +1,13 @@
 # Alert Delivery Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Work task-by-task and use the checkboxes as durable state. The recipe below
+> describes an implementation already present in the worktree; do not replay expected-failure
+> steps against that code.
+
+**Current status (2026-08-19):** `send_admin_alert()` returns delivery success,
+`_alert_once_per_day()` records only accepted alerts, and the rejected-delivery path is covered.
+The full worktree now passes 238 tests, ruff, Django checks, and migration drift checks. These
+changes are not committed or deployed.
 
 **Goal:** Stop a source-failure alert being recorded as sent when it was not, so a degraded source is reported rather than silently marked as already reported.
 
@@ -13,7 +20,8 @@
 ## Global Constraints
 
 - Ruff `line-length = 100`, `target-version = "py313"`. `uv run ruff check .` must pass
-- The suite must stay green: `uv run pytest -q` → **174 passed** before this plan
+- The suite must stay green. The old **174 passed** figure is a historical pre-plan baseline,
+  not a current absolute acceptance count
 - ADR-002 is unchanged: `enabled` is never touched by failure handling. Only a human disables a source
 - The once-per-day rate limit stays. A permanently broken source must not flood the admin chat
 - One Django app, functions over classes, no abstraction before the second case
@@ -322,7 +330,8 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-Expected: `175 passed` and `All checks passed!`
+Expected: the full suite and ruff are green. Do not assert a global absolute test count because
+the other 2026-08-19 plans add tests in the same worktree.
 
 - [ ] **Step 9: Commit**
 

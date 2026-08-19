@@ -316,8 +316,15 @@ class AnalysisAdmin(admin.ModelAdmin):
     #: `stage` is the column that makes this table readable as a pipeline: one article
     #: carries a triage row, a classification row and two editorial rows, and without it
     #: they are four near-identical lines.
-    list_display = ("article", "stage", "model_tag", "topic", "maturity", "latency_ms",
-                    "created_at")
+    list_display = (
+        "article",
+        "stage",
+        "model_tag",
+        "topic",
+        "maturity",
+        "latency_ms",
+        "created_at",
+    )
     list_filter = ("stage", "model_tag")
 ```
 

@@ -76,7 +76,12 @@ def test_link_preview_defaults_to_on_when_unset(monkeypatch):
     import environ
 
     monkeypatch.delenv("TELEGRAM_LINK_PREVIEW", raising=False)
-    assert (
-        environ.Env(TELEGRAM_LINK_PREVIEW=(bool, True))("TELEGRAM_LINK_PREVIEW") is True
-    )
+    assert environ.Env(TELEGRAM_LINK_PREVIEW=(bool, True))("TELEGRAM_LINK_PREVIEW") is True
 
+
+def test_post_format_v2_defaults_to_off_when_unset(monkeypatch):
+    """v2 post format redesign is built behind a default-off feature flag."""
+    import environ
+
+    monkeypatch.delenv("POST_FORMAT_V2_ENABLED", raising=False)
+    assert environ.Env(POST_FORMAT_V2_ENABLED=(bool, False))("POST_FORMAT_V2_ENABLED") is False

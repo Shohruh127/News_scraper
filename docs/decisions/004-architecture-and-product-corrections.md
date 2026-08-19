@@ -13,67 +13,30 @@ industry practice, and the first end-to-end run exposed real defects
 ## 1. The cascade is inverted
 
 **Finding.** The standard pattern reserves the expensive model for a small fraction of
-traffic. In the first real run, 78% of articles reached `gemma4:31b`.
+traffic. In the first real run, 78% of articles reached the deep model.
 
-The governing rule, from the sources below: **LLM call count must scale with the number of
-items published, not with the number of articles collected.** A correct pipeline makes
-roughly the same number of LLM calls whether it watches 12 sources or 100.
+**Decision.** Apply deterministic filtering, canonical URL uniqueness, and measured text
+deduplication before any LLM call. LLM work must scale with the small set of publishable
+candidates rather than the full source intake.
 
-| | Current, 12 sources | Correct, 12 sources | Correct, 100 sources |
-|---|---|---|---|
-| Raw items/day | ~300 | ~300 | ~1500 |
-| After Tier 0 | 185 | ~50 | ~250 |
-| **LLM calls** | **~270** | **~10** | **~15** |
-| LLM wall time | ~65 min | ~15 min | ~25 min |
+## 2. Clustering uses one measured deterministic signal
 
-**Decision.** Restructure into tiers where the cheap tier contains **no LLM**:
+The live-corpus experiment compared 17,020 article pairs. Exact character 5-gram Jaccard over
+the first 6,000 characters of article text separated the decisive duplicate at `0.900` from
+two consecutive releases at `0.110`. Title similarity scored `0.000` on both cases.
 
-```
-Tier 0  deterministic, milliseconds, no LLM
-          canonical URL + content hash            [built]
-          char 5-gram Jaccard >= 0.80             [measured, not built]
-          embedding cosine ~0.85                  [not built]
-          7-day window, length, blocklist         [built]
-          scoring: base + priority + recency      [partly built]
-Tier 1  8B triage, batched
-Tier 2  31B classification, batched
-Editorial  deep model, 2–7 items, not batched
-```
+**Decision.** Exact text Jaccard is the complete clustering architecture for this project.
+It has no model, external service, additional dependency, secondary tier, or planned fallback.
 
-The current "cheap" tier is itself an LLM at ~6 s per article. A cheap tier must be rules
-and vector arithmetic.
+## 3. Deduplication contract
 
-## 2. Embeddings are the foundation, not an optimisation
+| Signal | Threshold | Source rule | Status |
+|---|---:|---|---|
+| exact character 5-gram Jaccard on article text | 0.80 | ignore source | measured and implemented |
 
-**This was the most expensive mistake in the plan.** ADR-003 deferred embeddings to M2.2 as
-a "proven need" item. They are not an optimisation — one local embedding model, running in
-milliseconds on CPU, does three jobs at once:
-
-1. duplicate detection where verbatim overlap is low
-2. cross-source story clustering — the unmet `PROJECT_PLAN.md` §2 criterion
-3. cheap relevance pre-filtering by proximity to labelled gold-set examples, with no LLM
-
-Deferring them forced fuzzy title matching, which failed on measurement, which led to
-dropping clustering from M1 entirely, which left the MVP criterion unmet and deduplication
-at exact-match recall. One wrong call produced a chain of four.
-
-**Decision.** Embeddings move into M1.
-
-## 3. Deduplication has two tiers
-
-Measured in `spike/DEDUP_MEASUREMENT.md` on 185 live articles and 17,020 pairs.
-
-| Tier | Signal | Threshold | Source rule | Status |
-|---|---|---|---|---|
-| A | char 5-gram Jaccard on text | 0.80 | **ignore source** | measured |
-| B | embedding cosine | ~0.85 | cross-source only | to build |
-
-Tier A separates the two decisive live cases by a margin of 0.79 and produced zero false
-positives. It supersedes ADR-003's "never cluster two articles from the same source" **at
-this tier**: the duplicate that reached the first digest arrived twice through `hn`.
-
-MinHash/LSH estimates the same Jaccard quantity. It is an indexing optimisation for volume
-past roughly 10k articles, not a different signal, and is not needed now.
+The source rule is deliberate: the duplicate that reached the first digest arrived twice
+through the same HN connector. The comparison runs only across the small candidate set, so the
+straightforward exact implementation is operationally sufficient.
 
 ## 4. Batch classification, with a constraint the literature omits
 

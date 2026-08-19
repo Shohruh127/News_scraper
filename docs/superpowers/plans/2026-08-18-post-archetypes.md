@@ -391,9 +391,7 @@ def test_archetype_fields_flattens_only_the_chosen_block():
         },
         "policy_details": {"who_issued_en": "should be ignored"},
     }
-    assert archetype_fields(payload) == {
-        "what_changed_en": "repeat_penalty defaults to 1.0"
-    }
+    assert archetype_fields(payload) == {"what_changed_en": "repeat_penalty defaults to 1.0"}
 
 
 def test_archetype_fields_is_empty_when_there_is_no_block():
@@ -412,9 +410,7 @@ def test_translation_schema_follows_the_fields_it_is_given():
     """
     from apps.digest.llm import translation_schema_for
 
-    schema = translation_schema_for(
-        {"headline_en": "x", "summary_en": "y", "what_changed_en": "z"}
-    )
+    schema = translation_schema_for({"headline_en": "x", "summary_en": "y", "what_changed_en": "z"})
     assert set(schema["properties"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
     assert set(schema["required"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
     assert "policy_details" not in schema["properties"]
@@ -468,9 +464,7 @@ def translation_schema_for(fields: dict) -> dict:
     Deriving it rather than fixing it removes the opportunity to fill an irrelevant block
     instead of instructing against it.
     """
-    props = {
-        (k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields
-    }
+    props = {(k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields}
     return {"type": "object", "properties": props, "required": list(props)}
 ```
 
@@ -637,9 +631,7 @@ def digest_item_factory(db):
         uz.save(update_fields=["payload"])
 
         digest = Digest.objects.create(digest_date=timezone.localdate())
-        return DigestItem.objects.create(
-            digest=digest, article=article, position=1, score=0.9
-        )
+        return DigestItem.objects.create(digest=digest, article=article, position=1, score=0.9)
 
     return _make
 ```
@@ -724,14 +716,19 @@ def render_item_post(item: DigestItem) -> str:
 
     if template is None:
         if archetype:
-            log.info("Unknown archetype %r on item #%s; using the plain post",
-                     archetype, item.position)
+            log.info(
+                "Unknown archetype %r on item #%s; using the plain post", archetype, item.position
+            )
         return render_to_string("digest/item_post.html", data).strip()
 
     missing = [f for f in ARCHETYPE_REQUIRED[archetype] if not data["detail"].get(f)]
     if missing:
-        log.warning("Archetype %s on item #%s lacks %s; using the plain post",
-                    archetype, item.position, ", ".join(missing))
+        log.warning(
+            "Archetype %s on item #%s lacks %s; using the plain post",
+            archetype,
+            item.position,
+            ", ".join(missing),
+        )
         return render_to_string("digest/item_post.html", data).strip()
 
     return render_to_string(template, data).strip()
@@ -758,10 +755,15 @@ And define this constant above `_item_data`:
 
 ```python
 #: Translated fields every post has. Anything else ending in `_uz` came from an archetype block.
-_COMMON_UZ_KEYS = frozenset({
-    "headline_uz", "summary_uz", "why_it_matters_uz",
-    "leadership_uz", "uzbekistan_application_uz",
-})
+_COMMON_UZ_KEYS = frozenset(
+    {
+        "headline_uz",
+        "summary_uz",
+        "why_it_matters_uz",
+        "leadership_uz",
+        "uzbekistan_application_uz",
+    }
+)
 ```
 
 - [ ] **Step 6: Create a minimal release template so the third test can pass**
@@ -823,24 +825,42 @@ Append to `tests/test_publish.py`:
 
 ```python
 ARCHETYPE_CASES = [
-    ("agent_protocol", "🔌",
-     {"connects_uz": "IDE ni ma'lumotlar bazasiga ulaydi"},
-     {"deployment_uz": "Self-hosted va Ollama bilan ishlaydi"}),
-    ("risk_hardening", "🛡",
-     {"risk_uz": "Suv belgisini o'chirish oson",
-      "mitigation_uz": "Kriptografik imzo qo'shildi"},
-     {"residual_uz": "Qisqa matnlarda hamon ishonchsiz"}),
-    ("policy", "⚖️",
-     {"who_issued_uz": "Yevropa Ittifoqi",
-      "who_must_comply_uz": "Generativ model provayderlari"},
-     {"deadline_uz": "2027-yil 1-avgust"}),
-    ("research", "🔬",
-     {"claim_uz": "Ixchamlash uzun sessiyalarni saqlaydi"},
-     {"evidence_strength_uz": "Bitta laboratoriya, mustaqil takror yo'q",
-      "reproducible_uz": "Kod ochiq emas"}),
-    ("company_product", "🏢",
-     {"what_they_do_uz": "Konteyner obrazlarini avtomatik tozalaydi"},
-     {"availability_uz": "Enterprise mijozlar uchun ochiq"}),
+    (
+        "agent_protocol",
+        "🔌",
+        {"connects_uz": "IDE ni ma'lumotlar bazasiga ulaydi"},
+        {"deployment_uz": "Self-hosted va Ollama bilan ishlaydi"},
+    ),
+    (
+        "risk_hardening",
+        "🛡",
+        {"risk_uz": "Suv belgisini o'chirish oson", "mitigation_uz": "Kriptografik imzo qo'shildi"},
+        {"residual_uz": "Qisqa matnlarda hamon ishonchsiz"},
+    ),
+    (
+        "policy",
+        "⚖️",
+        {
+            "who_issued_uz": "Yevropa Ittifoqi",
+            "who_must_comply_uz": "Generativ model provayderlari",
+        },
+        {"deadline_uz": "2027-yil 1-avgust"},
+    ),
+    (
+        "research",
+        "🔬",
+        {"claim_uz": "Ixchamlash uzun sessiyalarni saqlaydi"},
+        {
+            "evidence_strength_uz": "Bitta laboratoriya, mustaqil takror yo'q",
+            "reproducible_uz": "Kod ochiq emas",
+        },
+    ),
+    (
+        "company_product",
+        "🏢",
+        {"what_they_do_uz": "Konteyner obrazlarini avtomatik tozalaydi"},
+        {"availability_uz": "Enterprise mijozlar uchun ochiq"},
+    ),
 ]
 
 
@@ -1008,10 +1028,17 @@ Replace the body of `apps/digest/templates/digest/item_release.html` created in 
 Then add the release case to `ARCHETYPE_CASES` in the test file, as the first entry:
 
 ```python
-    ("release", "🚀",
-     {"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
-     {"benchmarks_uz": "Prefill 7–8% tezroq",
-      "availability_uz": "GitHub relizlaridan yuklab olinadi"}),
+(
+    (
+        "release",
+        "🚀",
+        {"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
+        {
+            "benchmarks_uz": "Prefill 7–8% tezroq",
+            "availability_uz": "GitHub relizlaridan yuklab olinadi",
+        },
+    ),
+)
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**

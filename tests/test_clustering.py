@@ -82,10 +82,16 @@ def test_near_identical_text_merges_even_within_one_source(src_a):
     ADR-003's same-source exclusion would have blocked it, which is why Tier A ignores
     the source entirely.
     """
-    a1, an1 = make(src_a, "https://hf.co/Qwen/A95B-FP8", "Qwen3.8-2.4T",
-                   CARD.format(name="Qwen3.8-2.4T-A95B-FP8"), 1)
-    a2, an2 = make(src_a, "https://hf.co/Qwen/A95B", "Qwen3.8-2.4T",
-                   CARD.format(name="Qwen3.8-2.4T-A95B"), 2)
+    a1, an1 = make(
+        src_a,
+        "https://hf.co/Qwen/A95B-FP8",
+        "Qwen3.8-2.4T",
+        CARD.format(name="Qwen3.8-2.4T-A95B-FP8"),
+        1,
+    )
+    a2, an2 = make(
+        src_a, "https://hf.co/Qwen/A95B", "Qwen3.8-2.4T", CARD.format(name="Qwen3.8-2.4T-A95B"), 2
+    )
 
     assert clustering.text_similarity(a1, a2) >= 0.80
 

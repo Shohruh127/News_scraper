@@ -2,11 +2,10 @@
 
 Compares three signals on the 185 live articles:
   - title Jaccard on word shingles      (what we tried and removed)
-  - TEXT Jaccard on char 5-gram shingles (MinHash/LSH measures this, exactly)
+  - TEXT Jaccard on char 5-gram shingles
   - TEXT Jaccard on word 3-gram shingles
 
-MinHash is an *approximation* of Jaccard for scale. At 185 articles exact Jaccard is
-cheap (17k pairs), so measure the signal quality first and worry about indexing later.
+At 185 articles the exact comparison is cheap (17k pairs), dependency-free, and final.
 
 Two cases decide it:
   MUST merge:  Qwen3.8-2.4T-A95B-FP8  vs  Qwen3.8-2.4T-A95B   (same model card boilerplate)

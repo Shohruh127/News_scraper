@@ -105,7 +105,6 @@ ranking changes.
 Append to `config/settings.py`:
 
 ```python
-
 # --- Artifact verification ---------------------------------------------------
 # SKIP_PAPER_DOMAINS drops every paper before triage, which is right on average and wrong for
 # the papers that ship working code. This checks the exception.
@@ -616,18 +615,17 @@ In `apps/digest/llm.py`, `maturity_ceiling` currently begins its checks with:
 Insert the exception above them, right after the docstring:
 
 ```python
-    # A paper whose promised repository exists and holds code is no longer just a paper.
-    # This is the exception the docstring above anticipates: the cap applies "without checking
-    # an artifact", and here one has been checked.
-    url = (article.canonical_url or "").lower()
-    is_paper = any(d in url for d in PAPER_DOMAINS) or (
-        article.source and article.source.connector == "hf"
-    )
-    if article.artifact_verified and is_paper:
-        return Maturity.REPRODUCIBLE_OPEN_SOURCE
-    if is_paper:
-        return Maturity.PAPER_ONLY
-
+# A paper whose promised repository exists and holds code is no longer just a paper.
+# This is the exception the docstring above anticipates: the cap applies "without checking
+# an artifact", and here one has been checked.
+url = (article.canonical_url or "").lower()
+is_paper = any(d in url for d in PAPER_DOMAINS) or (
+    article.source and article.source.connector == "hf"
+)
+if article.artifact_verified and is_paper:
+    return Maturity.REPRODUCIBLE_OPEN_SOURCE
+if is_paper:
+    return Maturity.PAPER_ONLY
 ```
 
 Note this returns a ceiling rather than `None`: a verified paper may claim

@@ -173,12 +173,21 @@ class CompanyProductDetails(BaseModel):
 class EditorialEn(BaseModel):
     """English analysis. Verified independently of translation (ADR-005)."""
 
-    headline_en: str
-    summary_en: str
-    why_it_matters_en: str
-    leadership_en: str
-    uzbekistan_application_en: str
-    technical: TechnicalDetails
+    # v2 fields
+    lead_en: str = ""
+    body_1_en: str = ""
+    body_2_en: str = ""
+    kicker_en: str = ""
+    link_anchor_en: str = ""
+
+    # v1 fields (kept for backward compatibility & historical records)
+    headline_en: str = ""
+    summary_en: str = ""
+    leadership_en: str = ""
+
+    why_it_matters_en: str = ""
+    uzbekistan_application_en: str = ""
+    technical: TechnicalDetails = Field(default_factory=TechnicalDetails)
     evidence_level: str = Field(default="vendor_claim_only")
     archetype: str = "release"
     release_details: ReleaseDetails | None = None
@@ -192,11 +201,20 @@ class EditorialEn(BaseModel):
 class Translation(BaseModel):
     """Uzbek rendering of the *_en fields. `technical` is not translated."""
 
-    headline_uz: str
-    summary_uz: str
-    why_it_matters_uz: str
-    leadership_uz: str
-    uzbekistan_application_uz: str
+    # v2 fields
+    lead_uz: str = ""
+    body_1_uz: str = ""
+    body_2_uz: str = ""
+    kicker_uz: str = ""
+    link_anchor_uz: str = ""
+
+    # v1 fields
+    headline_uz: str = ""
+    summary_uz: str = ""
+    leadership_uz: str = ""
+
+    why_it_matters_uz: str = ""
+    uzbekistan_application_uz: str = ""
 
 
 DEEP_ANALYSIS_SCHEMA: dict[str, Any] = {
@@ -244,10 +262,12 @@ DEEP_ANALYSIS_SCHEMA: dict[str, Any] = {
 EDITORIAL_EN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "headline_en": {"type": "string"},
-        "summary_en": {"type": "string"},
+        "lead_en": {"type": "string"},
+        "body_1_en": {"type": "string"},
+        "body_2_en": {"type": "string"},
+        "kicker_en": {"type": "string"},
+        "link_anchor_en": {"type": "string"},
         "why_it_matters_en": {"type": "string"},
-        "leadership_en": {"type": "string"},
         "uzbekistan_application_en": {"type": "string"},
         "technical": {
             "type": "object",
@@ -318,10 +338,10 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
         },
     },
     "required": [
-        "headline_en",
-        "summary_en",
+        "lead_en",
+        "body_1_en",
+        "link_anchor_en",
         "why_it_matters_en",
-        "leadership_en",
         "uzbekistan_application_en",
         "technical",
         "evidence_level",
@@ -352,26 +372,30 @@ EDITORIAL_EN_PROMPT = (
     "leaders and AI engineers in Uzbekistan.\n\n"
     "Write the English analysis of the article below. Return JSON only.\n\n"
     + ARCHETYPE_DEFINITIONS
-    + "## Voice — this is a news post, not a book report\n"
-    'Never refer to "the article", "this paper", "the post", or "the author". Write about '
-    "the news itself. Wrong: \"The article describes a new model.\" Right: \"Qwen released "
-    'a 2.4T open-weight model."\n'
-    "Lead with what happened. No preamble, no scene-setting.\n\n"
-    "## Length — enforced, not advisory\n"
-    "- headline_en: under 80 characters, states the news, no clickbait\n"
-    "- summary_en: exactly 1-2 sentences. This is the only body text a reader sees before "
-    "tapping to expand, so it must carry the news on its own. Lead with the concrete fact "
-    "— what shipped, from whom, with which number that matters.\n"
+    + "## Post Structure & Fields\n"
+    "- headline_en: exactly 1 punchy title line\n"
+    "- summary_en: exactly 2-3 sentences\n"
+    "- lead_en: exactly 1-2 sentences. The first sentence must state the core news clearly and "
+    "end with a natural single-word or compound action verb that serves as the link anchor "
+    "(e.g. 'released', 'launched', 'open-sourced'). Do NOT include markdown, bolding, "
+    "bullet points, headlines, or URLs in the text.\n"
+    "- link_anchor_en: the exact word or compound verb from the first sentence of lead_en "
+    "to attach the source link to (e.g. 'launched', 'open-sourced'). "
+    "Must appear verbatim in lead_en.\n"
+    "- body_1_en: 1-3 concise prose sentences carrying the concrete required facts for the chosen "
+    "archetype (version, numbers, measurements, architecture, pricing). No bullet points.\n"
+    "- body_2_en: optional 1-2 sentences with additional technical detail or context, or "
+    "empty string.\n"
+    "- kicker_en: optional punchy closing line (8 words or fewer) stating a memorable fact or "
+    "witty takeaway. Must NOT repeat numbers already in the body. If no strong kicker exists, "
+    "return empty string.\n"
     "- why_it_matters_en: exactly 1-2 sentences\n"
-    "- leadership_en: exactly 1-2 sentences, for a non-engineer decision maker\n"
     "- uzbekistan_application_en: exactly 1 sentence, or empty if there is no honest one\n\n"
     "## Grounding\n"
     "Every claim must come from the article text. If a detail is absent — license, "
     'benchmark number, repo URL, hardware requirement — leave that field as "". Never '
     "infer, never fill from background knowledge. An empty field is correct; an invented "
     "one is a defect.\n"
-    "- Headline rule: every proper noun in headline_en must appear verbatim in the article text. "
-    "Never invent or hallucinate names.\n"
     "- local_deployable: true only if weights or code can actually be self-hosted\n"
     '- evidence_level: "vendor_claim_only" unless the article cites independent validation\n\n'
     "## Language\n"
@@ -389,17 +413,19 @@ EDITORIAL_EN_PROMPT = (
 TRANSLATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "headline_uz": {"type": "string"},
-        "summary_uz": {"type": "string"},
+        "lead_uz": {"type": "string"},
+        "body_1_uz": {"type": "string"},
+        "body_2_uz": {"type": "string"},
+        "kicker_uz": {"type": "string"},
+        "link_anchor_uz": {"type": "string"},
         "why_it_matters_uz": {"type": "string"},
-        "leadership_uz": {"type": "string"},
         "uzbekistan_application_uz": {"type": "string"},
     },
     "required": [
-        "headline_uz",
-        "summary_uz",
+        "lead_uz",
+        "body_1_uz",
+        "link_anchor_uz",
         "why_it_matters_uz",
-        "leadership_uz",
         "uzbekistan_application_uz",
     ],
 }
@@ -408,6 +434,11 @@ TRANSLATION_SCHEMA: dict[str, Any] = {
 COMMON_TRANSLATED_FIELDS = (
     "headline_en",
     "summary_en",
+    "lead_en",
+    "body_1_en",
+    "body_2_en",
+    "kicker_en",
+    "link_anchor_en",
     "why_it_matters_en",
     "leadership_en",
     "uzbekistan_application_en",
@@ -444,7 +475,6 @@ def technical_fields(payload: dict) -> dict[str, str]:
     }
 
 
-
 def archetype_fields(payload: dict) -> dict[str, str]:
     """The chosen archetype's detail block, flattened to top-level keys.
 
@@ -462,9 +492,7 @@ def translation_schema_for(fields: dict) -> dict:
     Deriving it rather than fixing it removes the opportunity to fill an irrelevant block
     instead of instructing against it.
     """
-    props = {
-        (k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields
-    }
+    props = {(k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields}
     return {"type": "object", "properties": props, "required": list(props)}
 
 
@@ -473,6 +501,9 @@ TRANSLATION_PROMPT = (
     "## You are translating, not writing\n"
     "Do not add information, opinions, or sentences that are not in the source. Do not "
     "remove any. Keep the same number of sentences per field.\n\n"
+    "## Link Anchor Translation\n"
+    "For link_anchor_en, translate it to link_anchor_uz. The translated link_anchor_uz must "
+    "appear verbatim in lead_uz, ideally as the concluding verb of the first sentence.\n\n"
     "## Keep in English\n"
     "Model names, product names, company names, metric names, file formats, and "
     "established technical terms: model, API, agent, framework, open-weight, weights, "
@@ -714,10 +745,15 @@ def mimo_chat(
 
     t0 = time.perf_counter()
     try:
-        r = _chat_post(client, url, payload, headers={
-            "Authorization": f"Bearer {settings.MIMO_API_KEY}",
-            "Content-Type": "application/json",
-        })
+        r = _chat_post(
+            client,
+            url,
+            payload,
+            headers={
+                "Authorization": f"Bearer {settings.MIMO_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
         latency_ms = int((time.perf_counter() - t0) * 1000)
         content = r.json()["choices"][0]["message"]["content"]
         parsed = json.loads(content) if schema else {"raw": content}
@@ -846,7 +882,10 @@ def apply_maturity_ceiling(article: Article, payload: dict) -> dict:
         return payload
     log.info(
         "Maturity ceiling: article %s claimed %s, capped to %s (%s)",
-        article.id, claimed, ceiling, article.canonical_url[:80],
+        article.id,
+        claimed,
+        ceiling,
+        article.canonical_url[:80],
     )
     payload["maturity"] = ceiling
     payload["maturity_capped_from"] = claimed
@@ -868,7 +907,8 @@ def _verify_artifact(article: Article) -> bool:
     if verified is None:
         log.warning(
             "Artifact check for article %s was inconclusive; storing nothing so a later run "
-            "can ask again", article.id,
+            "can ask again",
+            article.id,
         )
         return False
 
@@ -1127,7 +1167,6 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
     return article.status == Article.Status.CLASSIFIED
 
 
-
 def analyse_for_digest_logic(
     article_ids: list[int],
     client: httpx.Client | None = None,
@@ -1145,7 +1184,7 @@ def analyse_for_digest_logic(
         existing = (
             art.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN).order_by("-created_at").first()
         )
-        if existing and existing.payload.get("summary_en"):
+        if existing and (existing.payload.get("lead_en") or existing.payload.get("summary_en")):
             en_by_article[art.id] = existing
             continue
         try:
@@ -1161,9 +1200,14 @@ def analyse_for_digest_logic(
                 client=client,
                 provider=settings.EDITORIAL_EN_PROVIDER,
             )
-            en_by_article[art.id] = _record(art, Analysis.Stage.EDITORIAL_EN, model_tag,
-                                            payload, latency_ms,
-                                            settings.EDITORIAL_EN_PROVIDER)
+            en_by_article[art.id] = _record(
+                art,
+                Analysis.Stage.EDITORIAL_EN,
+                model_tag,
+                payload,
+                latency_ms,
+                settings.EDITORIAL_EN_PROVIDER,
+            )
             log.info("English editorial done for article %s", art.id)
         except Exception as exc:
             log.error("English editorial failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1177,11 +1221,15 @@ def analyse_for_digest_logic(
         existing = (
             art.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).order_by("-created_at").first()
         )
-        if existing and existing.payload.get("summary_uz"):
+        if existing and (existing.payload.get("lead_uz") or existing.payload.get("summary_uz")):
             created.append(existing)
             continue
         try:
-            fields = {k: en.payload.get(k, "") for k in COMMON_TRANSLATED_FIELDS}
+            fields = {
+                k: en.payload.get(k, "")
+                for k in COMMON_TRANSLATED_FIELDS
+                if isinstance(en.payload.get(k), str) and en.payload[k].strip()
+            }
             fields.update(archetype_fields(en.payload))
             fields.update(technical_fields(en.payload))
             uz_schema = translation_schema_for(fields)
@@ -1245,8 +1293,16 @@ def analyse_for_digest_logic(
                     )
                     continue
 
-            created.append(_record(art, Analysis.Stage.EDITORIAL_UZ, model_tag,
-                                   payload, latency_ms, settings.TRANSLATION_PROVIDER))
+            created.append(
+                _record(
+                    art,
+                    Analysis.Stage.EDITORIAL_UZ,
+                    model_tag,
+                    payload,
+                    latency_ms,
+                    settings.TRANSLATION_PROVIDER,
+                )
+            )
             log.info("Uzbek translation done for article %s", art.id)
         except Exception as exc:
             log.error("Translation failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1254,8 +1310,9 @@ def analyse_for_digest_logic(
     return created
 
 
-def _record(article, stage, model_tag: str, payload: dict, latency_ms: int,
-            provider: str) -> Analysis:
+def _record(
+    article, stage, model_tag: str, payload: dict, latency_ms: int, provider: str
+) -> Analysis:
     return Analysis.objects.create(
         article=article,
         stage=stage,
@@ -1270,8 +1327,15 @@ def _record(article, stage, model_tag: str, payload: dict, latency_ms: int,
     )
 
 
-def _editorial_call(prompt: str, schema: dict, model_cls, num_predict: int, client=None,
-                    provider: str | None = None, ollama_model: str | None = None):
+def _editorial_call(
+    prompt: str,
+    schema: dict,
+    model_cls,
+    num_predict: int,
+    client=None,
+    provider: str | None = None,
+    ollama_model: str | None = None,
+):
     """One editorial call with validation retry and empty technical block check (T1.17)."""
     try:
         payload, ms, model_tag = editorial_chat(

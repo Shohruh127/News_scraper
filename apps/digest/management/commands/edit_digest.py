@@ -33,5 +33,6 @@ class Command(BaseCommand):
             chat_id=channel_id,
             message_id=item.channel_message_id,
             new_text=new_text,
+            sent_as_photo=item.sent_as_photo,
         )
         self.stdout.write(self.style.SUCCESS(f"Edited message for item {item_id}: {res}"))

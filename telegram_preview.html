@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telegram Post Uslublari Preview</title>
+  <style>
+    :root {
+      --tg-bg: #0e1621;
+      --tg-chat-bg: #0e1621;
+      --tg-bubble-bg: #182533;
+      --tg-text: #f5f5f5;
+      --tg-subtext: #708499;
+      --tg-link: #6ab2f2;
+      --tg-accent: #2b5278;
+      --tg-quote-border: #64b5f6;
+      --tg-quote-bg: rgba(100, 181, 246, 0.08);
+      --tg-code-bg: rgba(0, 0, 0, 0.3);
+      --tg-border: #242f3d;
+      --tg-header-bg: #17212b;
+      --tg-btn-active: #2481cc;
+    }
+
+    [data-theme="light"] {
+      --tg-bg: #8ec5fc;
+      --tg-chat-bg: #e4eaf0;
+      --tg-bubble-bg: #ffffff;
+      --tg-text: #000000;
+      --tg-subtext: #707579;
+      --tg-link: #2481cc;
+      --tg-accent: #eef2f5;
+      --tg-quote-border: #2481cc;
+      --tg-quote-bg: rgba(36, 129, 204, 0.08);
+      --tg-code-bg: rgba(0, 0, 0, 0.05);
+      --tg-border: #e0e0e0;
+      --tg-header-bg: #ffffff;
+      --tg-btn-active: #2481cc;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--tg-chat-bg);
+      color: var(--tg-text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding-bottom: 50px;
+      transition: background-color 0.2s;
+    }
+
+    /* Top Control Bar */
+    .controls {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      width: 100%;
+      background: var(--tg-header-bg);
+      border-bottom: 1px solid var(--tg-border);
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+    }
+
+    .controls h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      background: var(--tg-bubble-bg);
+      color: var(--tg-text);
+      border: 1px solid var(--tg-border);
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .btn:hover, .btn.active {
+      background: var(--tg-btn-active);
+      color: #fff;
+      border-color: var(--tg-btn-active);
+    }
+
+    /* Layout Container */
+    .feed-container {
+      width: 100%;
+      max-width: 540px;
+      margin: 20px auto;
+      padding: 0 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .variant-card {
+      background: var(--tg-header-bg);
+      border: 1px solid var(--tg-border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    }
+
+    .variant-header {
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.1);
+      border-bottom: 1px solid var(--tg-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .variant-title {
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--tg-link);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .variant-badge {
+      background: var(--tg-btn-active);
+      color: white;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+
+    .variant-desc {
+      font-size: 12px;
+      color: var(--tg-subtext);
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--tg-border);
+      background: rgba(255,255,255,0.02);
+    }
+
+    /* Channel Header */
+    .channel-header {
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--tg-header-bg);
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ff5e62, #ff9966);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    .channel-info h3 {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .verified {
+      color: #2481cc;
+      font-size: 13px;
+    }
+
+    .channel-info p {
+      font-size: 12px;
+      color: var(--tg-subtext);
+    }
+
+    /* Telegram Message Bubble */
+    .tg-message {
+      padding: 12px 14px;
+      background: var(--tg-bubble-bg);
+      border-radius: 12px;
+      margin: 12px;
+      font-size: 14px;
+      line-height: 1.48;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+      position: relative;
+    }
+
+    .tg-media {
+      width: 100%;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      background: #000;
+      max-height: 260px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .tg-media img {
+      width: 100%;
+      height: auto;
+      object-fit: cover;
+      display: block;
+    }
+
+    .tg-message b, .tg-message strong {
+      font-weight: 600;
+    }
+
+    .tg-message i, .tg-message em {
+      font-style: italic;
+      color: var(--tg-subtext);
+    }
+
+    .tg-message a {
+      color: var(--tg-link);
+      text-decoration: none;
+    }
+
+    .tg-message a:hover {
+      text-decoration: underline;
+    }
+
+    .tg-message code {
+      font-family: Consolas, Monaco, "Courier New", Courier, monospace;
+      background: var(--tg-code-bg);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 12.5px;
+    }
+
+    .tg-message blockquote {
+      border-left: 3px solid var(--tg-quote-border);
+      background: var(--tg-quote-bg);
+      padding: 8px 12px;
+      margin: 10px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 13.5px;
+    }
+
+    /* Expandable blockquote simulator */
+    .tg-message blockquote.expandable {
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+      transition: background-color 0.2s;
+    }
+
+    .tg-message blockquote.expandable .quote-content {
+      max-height: 48px;
+      overflow: hidden;
+      position: relative;
+      transition: max-height 0.3s ease;
+    }
+
+    .tg-message blockquote.expandable.open .quote-content {
+      max-height: 500px;
+    }
+
+    .quote-toggle-hint {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--tg-link);
+      font-weight: 600;
+    }
+
+    .bullet-list {
+      margin: 8px 0;
+      padding-left: 4px;
+      list-style: none;
+    }
+
+    .bullet-list li {
+      margin-bottom: 4px;
+    }
+
+    .tg-meta {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--tg-subtext);
+      margin-top: 8px;
+    }
+
+    .tg-views {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    /* Post Actions */
+    .post-reactions {
+      display: flex;
+      gap: 6px;
+      padding: 0 14px 12px 14px;
+    }
+
+    .reaction {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--tg-border);
+      padding: 4px 10px;
+      border-radius: 14px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+
+    .reaction:hover {
+      background: rgba(255,255,255,0.12);
+    }
+  </style>
+</head>
+<body data-theme="dark">
+
+  <!-- Top Controls -->
+  <div class="controls">
+    <h2>📱 Telegram Post Formatlari Ko'rigi</h2>
+    <div class="btn-group">
+      <button class="btn active" onclick="setTheme('dark')">🌙 Qorong'u (Dark)</button>
+      <button class="btn" onclick="setTheme('light')">☀️ Yorug' (Light)</button>
+    </div>
+  </div>
+
+  <div class="feed-container">
+
+    <!-- VARIANT 1 -->
+    <div class="variant-card">
+      <div class="variant-header">
+        <div class="variant-title">1. Exploit / Media-Punch uslubi</div>
+        <span class="variant-badge">O'qishga eng yengil</span>
+      </div>
+      <div class="variant-desc">
+        <b>Falsafasi:</b> Qisqa lead, matn ichida inline link, punktlar va oxirida o'tkir punchline. (Haqiqiy ID: 1144 maqolasi asosida).
+      </div>
+
+      <div class="channel-header">
+        <div class="avatar">⚡️</div>
+        <div class="channel-info">
+          <h3>AI Frontier News <span class="verified">✔</span></h3>
+          <p>24 890 obunachi</p>
+        </div>
+      </div>
+
+      <div class="tg-message">
+        <div class="tg-media">
+          <img src="https://images.unsplash.com/photo-1508614589041-895b88991e3e?auto=format&fit=crop&w=800&q=80" alt="EHang Air Taxi">
+        </div>
+        <b>Uchar taksilar yetib keldi: Shenchjendan Gonkongga 20 daqiqada yetib olish mumkin</b><br><br>
+        Xitoyning EHang kompaniyasi dunyoda ilk bor to'liq avtonom yo'lovchi uchar taksi (eVTOL) xizmatini <a href="https://www.nextgov.com/emerging-tech/2026/08/pilotless-air-taxis-are-here-your-daily-commute-still-stuck-ground/415383" target="_blank">ishga tushirdi</a>.<br><br>
+        Asosiy faktlar:
+        <ul class="bullet-list">
+          <li>• <b>Parvoz vaqti:</b> 20 daqiqa (avtomobilda 2 soatlik yo'l);</li>
+          <li>• <b>Chipta narxi:</b> 800 yuan (~$110);</li>
+          <li>• <b>EH216-S droni</b> bortida uchuvchi yo'q, barchasi to'liq avtopilot orqali boshqariladi.</li>
+        </ul>
+        Tirbandlikda asabiylashadiganlar uchun yangi davr boshlanmoqda.<br><br>
+        <i>#Robotics #eVTOL #Transport</i>
+
+        <div class="tg-meta">
+          <span class="tg-views">👁 3.4K</span>
+          <span>12:45</span>
+        </div>
+      </div>
+
+      <div class="post-reactions">
+        <div class="reaction">🔥 142</div>
+        <div class="reaction">😱 68</div>
+        <div class="reaction">👏 34</div>
+      </div>
+    </div>
+
+
+    <!-- VARIANT 2 -->
+    <div class="variant-card">
+      <div class="variant-header">
+        <div class="variant-title">2. TLDR / Atomik uslubi</div>
+        <span class="variant-badge">Dasturchilar & TechLead</span>
+      </div>
+      <div class="variant-desc">
+        <b>Falsafasi:</b> 3 ta nuqta: Mohiyat → Texnik jihat → Nima o'zgaradi. Zero fluff. (Haqiqiy ID: 1066 maqolasi asosida).
+      </div>
+
+      <div class="channel-header">
+        <div class="avatar">🧠</div>
+        <div class="channel-info">
+          <h3>AI Frontier News <span class="verified">✔</span></h3>
+          <p>24 890 obunachi</p>
+        </div>
+      </div>
+
+      <div class="tg-message">
+        ⚡️ <b>Qwen 3.8 27B ochiq modeli sun'iy tahlil testlarida rekord o'rnatdi</b><br><br>
+        📌 <b>Mohiyat:</b> Alibaba o'zining yangi ochiq kodli Qwen 3.8 27B modelini <a href="https://artificialanalysis.ai/models/qwen3-8-27b" target="_blank">e'lon qildi</a>. U Artificial Analysis intellekt indeksida 52 ball to'plab, o'z toifasidagi barcha raqobatchilaridan ancha o'zib ketdi.<br><br>
+        ⚙️ <b>Texnik tomoni:</b>
+        <ul class="bullet-list">
+          <li>• 27 milliard parametr va 256k token ulkan kontekst oynasi;</li>
+          <li>• Litsenziya: Apache 2.0 (tijoriy loyihalarda ham mutlaqo bepul);</li>
+          <li>• Murakkab mantiqiy fikrlash (reasoning) va multimodal imkoniyatlar.</li>
+        </ul>
+        💡 <b>Nima o'zgaradi:</b> Dasturchilar va korxonalar qimmat yopiq API'larga (OpenAI/Anthropic) bog'lanib qolmasdan, o'z serverlarida kuchli AIni bepul ko'tarishlari mumkin.<br><br>
+        🔗 <a href="https://artificialanalysis.ai/models/qwen3-8-27b" target="_blank">Tahlil hisoboti</a> · <a href="https://huggingface.co/Qwen" target="_blank">HuggingFace</a>
+
+        <div class="tg-meta">
+          <span class="tg-views">👁 5.1K</span>
+          <span>12:48</span>
+        </div>
+      </div>
+
+      <div class="post-reactions">
+        <div class="reaction">🔥 210</div>
+        <div class="reaction">💡 95</div>
+        <div class="reaction">🚀 74</div>
+      </div>
+    </div>
+
+
+    <!-- VARIANT 3 -->
+    <div class="variant-card">
+      <div class="variant-header">
+        <div class="variant-title">3. Addmeto / Ekspert tahlili</div>
+        <span class="variant-badge">Fikr & Insayt</span>
+      </div>
+      <div class="variant-desc">
+        <b>Falsafasi:</b> Voqeaning orqasidagi haqiqat, chuqur tahlil va sohadagi tendensiyani ochib berish. (Haqiqiy ID: 956 maqolasi asosida).
+      </div>
+
+      <div class="channel-header">
+        <div class="avatar">🎯</div>
+        <div class="channel-info">
+          <h3>AI Frontier News <span class="verified">✔</span></h3>
+          <p>24 890 obunachi</p>
+        </div>
+      </div>
+
+      <div class="tg-message">
+        OpenAI o'zining yangi kiberxavfsizlik doktrinasini <a href="https://openai.com/index/the-defenders-window" target="_blank">e'lon qildi</a>. Gap sun'iy intellekt endi kiberhujumlarni avtomatlashtirishda haddan tashqari xavfli darajaga chiqqani haqida bormoqda.<br><br>
+        Ularning ta'kidlashicha, xakerlar yashirin kod xatolari va unutilgan ruxsatnomalarni topishda AIdan keng foydalana boshlagan. Bunga javoban OpenAI o'z infratuzilmasini to'liq AI agentlar (Codex) himoyasiga topshirmoqda.<br><br>
+        Ko'pchilik buni oddiy PR deb o'ylashi mumkin, ammo reallik boshqacha: kiberxavfsizlik nazariyadan to'liq operatsion AI agentlar poygasiga aylandi.<br>
+        <blockquote>"Xavfsizlik jamoasiga ega bo'lmagan kichik kompaniyalar uchun AI agentlari orqali uzluksiz monitoring qilish — kelajakdagi yagona omon qolish yo'li."</blockquote>
+        <i>#CyberSecurity #OpenAI #AI</i>
+
+        <div class="tg-meta">
+          <span class="tg-views">👁 4.2K</span>
+          <span>12:51</span>
+        </div>
+      </div>
+
+      <div class="post-reactions">
+        <div class="reaction">🤯 88</div>
+        <div class="reaction">👍 115</div>
+        <div class="reaction">🤔 49</div>
+      </div>
+    </div>
+
+
+    <!-- VARIANT 4 -->
+    <div class="variant-card">
+      <div class="variant-header">
+        <div class="variant-title">4. Research & Open-Source Release</div>
+        <span class="variant-badge">Ochiluvchi Blockquote</span>
+      </div>
+      <div class="variant-desc">
+        <b>Falsafasi:</b> Aniq modellar, GitHub va Telegramning pastga ochiluvchi kodi. (Haqiqiy ID: 1172 maqolasi asosida).
+      </div>
+
+      <div class="channel-header">
+        <div class="avatar">⚙️</div>
+        <div class="channel-info">
+          <h3>AI Frontier News <span class="verified">✔</span></h3>
+          <p>24 890 obunachi</p>
+        </div>
+      </div>
+
+      <div class="tg-message">
+        🚀 <b>k2-fsa/sherpa-onnx v1.13.5 chiqarildi: Qualcomm QNN va Swift integratsiyasi</b><br><br>
+        Mobil va edge qurilmalarda oflayn nutqni aniqlash (ASR) va ovozga aylantirish (TTS) uchun eng ommabop dvigatel yangi <a href="https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.5" target="_blank">versiyaga yangilandi</a>.<br><br>
+        📊 <b>Asosiy yangiliklar:</b>
+        <ul class="bullet-list">
+          <li>• <b>NPU tezlatgichi:</b> Nemotron va Moonshine modellari uchun Qualcomm QNN backend qo'llab-quvvatlanadi;</li>
+          <li>• <b>Apple ekotizimi:</b> iOS, macOS va Flutter uchun Swift Package Manager (SPM) integratsiyasi qo'shildi;</li>
+          <li>• <b>Ko'p tillilik:</b> Java (Maven/Gradle), Rust API misollari va WebAssembly (WASM) yangilandi.</li>
+        </ul>
+
+        <blockquote class="expandable" onclick="toggleQuote(this)">
+          <div class="quote-content">
+            ⚙️ <b>Lokal ishga tushirish (CLI):</b><br>
+            <code>sherpa-onnx-offline --model=moonshine.onnx input.wav</code><br><br>
+            📂 <b>GitHub:</b> <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank">github.com/k2-fsa/sherpa-onnx</a><br>
+            📄 <b>Litsenziya:</b> Apache-2.0
+          </div>
+          <span class="quote-toggle-hint">▼ Texnik qismni ochish / yopish</span>
+        </blockquote>
+
+        <div class="tg-meta">
+          <span class="tg-views">👁 2.8K</span>
+          <span>12:53</span>
+        </div>
+      </div>
+
+      <div class="post-reactions">
+        <div class="reaction">⚡️ 130</div>
+        <div class="reaction">🔥 75</div>
+      </div>
+    </div>
+
+
+    <!-- VARIANT 5 -->
+    <div class="variant-card">
+      <div class="variant-header">
+        <div class="variant-title">5. Product Radar / AI Tools</div>
+        <span class="variant-badge">Startaplar & Utility</span>
+      </div>
+      <div class="variant-desc">
+        <b>Falsafasi:</b> Yangi servis yoki vosita, nimaga kerak, qanday ulanadi va narxi. (Haqiqiy ID: 1073 maqolasi asosida).
+      </div>
+
+      <div class="channel-header">
+        <div class="avatar">🛠</div>
+        <div class="channel-info">
+          <h3>AI Frontier News <span class="verified">✔</span></h3>
+          <p>24 890 obunachi</p>
+        </div>
+      </div>
+
+      <div class="tg-message">
+        🛠 <b>Speko (YC S26) — Nutq AI modellari uchun "OpenRouter" paydo bo'ldi</b><br><br>
+        Y Combinator startapi barcha STT, LLM va TTS modellarini bitta API orqali eng past kechikish (latency) va minimal narx bilan ulab beruvchi <a href="https://speko.ai/" target="_blank">platformani ishga tushirdi</a>.<br><br>
+        ✨ <b>Nimalar qila oladi:</b>
+        <ul class="bullet-list">
+          <li>• <b>Avtomatik marshrutlash:</b> So'rov tili va aniqligiga (WER) qarab eng optimal modelni o'zi tanlaydi;</li>
+          <li>• <b>Bitta API:</b> Deepgram, ElevenLabs, OpenAI va boshqa provayderlar bitta OpenAI-formatidagi endpointda;</li>
+          <li>• <b>Xarajat nazorati:</b> Model tanlashda narx va tezlik balansini avtomatik ushlaydi.</li>
+        </ul>
+        🌐 <b>Platforma:</b> <a href="https://speko.ai" target="_blank">speko.ai</a><br>
+        🔌 <b>API Endpoint:</b> <code>https://api.speko.ai/v1</code><br><br>
+        <i>#VoiceAI #Startups #API</i>
+
+        <div class="tg-meta">
+          <span class="tg-views">👁 1.9K</span>
+          <span>12:55</span>
+        </div>
+      </div>
+
+      <div class="post-reactions">
+        <div class="reaction">🔥 92</div>
+        <div class="reaction">❤️ 41</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function setTheme(theme) {
+      document.body.setAttribute('data-theme', theme);
+      document.querySelectorAll('.controls .btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+    }
+
+    function toggleQuote(el) {
+      el.classList.toggle('open');
+      const hint = el.querySelector('.quote-toggle-hint');
+      if (el.classList.contains('open')) {
+        hint.textContent = '▲ Qisqartirish';
+      } else {
+        hint.textContent = '▼ Texnik qismni ochish / yopish';
+      }
+    }
+  </script>
+</body>
+</html>

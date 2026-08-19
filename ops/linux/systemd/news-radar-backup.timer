@@ -1,0 +1,11 @@
+[Unit]
+Description=Run News Radar PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=news-radar-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -61,9 +61,7 @@ and removed from M1:
 - Aggregators (HN) link to the original article, so canonical URL dedup already handles them.
 - Title fuzzy matching produced 0 valid cross-source merges, but caused 12 false-positive merges
   within single sources (e.g. merging consecutive release tags like `ollama v0.32.11` ~ `v0.32.10`).
-- Fuzzy matching, embeddings, and entity resolution are deferred to M2.2 when secondary/newsletter
-  sources are introduced.
-
+- This title-based decision was later superseded by ADR-004's measured exact text-Jaccard signal.
 ### 3. Source coverage that matches the taxonomy
 
 Every stream the digest promises must have at least one feed, or the promise is removed.
@@ -89,8 +87,7 @@ Three streams get **no dedicated feed in M1** and the plan must stop promising t
 
 ## What stays in M2
 
-Story clustering with embeddings · independent benchmark verification · feedback learning ·
-25–40 sources · health baselines · deployment · breaking-news path.
+Independent benchmark verification · feedback learning ·25–40 sources · health baselines · deployment · breaking-news path.
 
 ## Consequences
 

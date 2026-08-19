@@ -129,9 +129,9 @@ def test_source_yield_counts_the_funnel():
     call_command("source_yield", stdout=out)
     line = next(li for li in out.getvalue().splitlines() if "yield_src" in li)
 
-    assert "3" in line       # articles
-    assert "2" in line       # classified
-    assert "1" in line       # published, the one with a channel_message_id
+    assert "3" in line  # articles
+    assert "2" in line  # classified
+    assert "1" in line  # published, the one with a channel_message_id
 
 
 @pytest.mark.django_db
@@ -353,8 +353,9 @@ Append these to the `SOURCES` list in `apps/digest/management/commands/seed_sour
 the closing `]`. All eleven were verified live on 2026-08-18.
 
 ```python
-    # --- Added 2026-08-18. Feeds verified live the same day. -------------------
-    # govtech had no source at all before this; these five are its whole supply.
+# --- Added 2026-08-18. Feeds verified live the same day. -------------------
+# govtech had no source at all before this; these five are its whole supply.
+(
     {
         "name": "nextgov",
         "connector": "rss",
@@ -362,6 +363,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://www.nextgov.com/rss/all/",
         "stream": Topic.GOVTECH,
     },
+)
+(
     {
         "name": "fedscoop",
         "connector": "rss",
@@ -369,6 +372,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://fedscoop.com/feed/",
         "stream": Topic.GOVTECH,
     },
+)
+(
     {
         "name": "statescoop",
         "connector": "rss",
@@ -376,6 +381,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://statescoop.com/feed/",
         "stream": Topic.GOVTECH,
     },
+)
+(
     {
         "name": "ec_digital",
         "connector": "rss",
@@ -383,6 +390,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://digital-strategy.ec.europa.eu/en/rss.xml",
         "stream": Topic.GOVTECH,
     },
+)
+(
     {
         "name": "gds_uk",
         "connector": "rss",
@@ -390,7 +399,9 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://gds.blog.gov.uk/feed/",
         "stream": Topic.GOVTECH,
     },
-    # speech_voice: the three large vendors publish no feed, so release feeds are the supply.
+)
+# speech_voice: the three large vendors publish no feed, so release feeds are the supply.
+(
     {
         "name": "gh_sherpa_onnx",
         "connector": "github",
@@ -399,6 +410,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "stream": Topic.SPEECH_VOICE,
         "config": {"repo": "k2-fsa/sherpa-onnx"},
     },
+)
+(
     {
         "name": "gh_pyannote",
         "connector": "github",
@@ -407,6 +420,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "stream": Topic.SPEECH_VOICE,
         "config": {"repo": "pyannote/pyannote-audio"},
     },
+)
+(
     {
         "name": "gh_whisperx",
         "connector": "github",
@@ -415,7 +430,9 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "stream": Topic.SPEECH_VOICE,
         "config": {"repo": "m-bain/whisperX"},
     },
-    # startups
+)
+# startups
+(
     {
         "name": "techcrunch_ai",
         "connector": "rss",
@@ -423,6 +440,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
         "stream": Topic.STARTUPS,
     },
+)
+(
     {
         "name": "crunchbase_news",
         "connector": "rss",
@@ -430,6 +449,8 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://news.crunchbase.com/feed/",
         "stream": Topic.STARTUPS,
     },
+)
+(
     {
         "name": "sifted",
         "connector": "rss",
@@ -437,6 +458,7 @@ the closing `]`. All eleven were verified live on 2026-08-18.
         "url": "https://sifted.eu/feed",
         "stream": Topic.STARTUPS,
     },
+)
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -541,10 +563,11 @@ Expected: FAIL, listing all twelve
 Append to `SOURCES`, before the closing `]`:
 
 ```python
-    # --- Second expansion, 2026-08-18. Feeds verified live the same day. -------
-    # Six of these publish less often than ARTICLE_MAX_AGE_DAYS, so they contribute
-    # nothing on most days without being broken: gh_a2a last released 82 days ago,
-    # uk_gov_tech 42, gh_fineract 34, gh_lerobot 15, gh_garak 14, gh_transformers 8.
+# --- Second expansion, 2026-08-18. Feeds verified live the same day. -------
+# Six of these publish less often than ARTICLE_MAX_AGE_DAYS, so they contribute
+# nothing on most days without being broken: gh_a2a last released 82 days ago,
+# uk_gov_tech 42, gh_fineract 34, gh_lerobot 15, gh_garak 14, gh_transformers 8.
+(
     {
         "name": "mistral_news",
         "connector": "rss",
@@ -552,6 +575,8 @@ Append to `SOURCES`, before the closing `]`:
         "url": "https://mistral.ai/news/rss",
         "stream": Topic.FRONTIER_MODELS,
     },
+)
+(
     {
         "name": "gh_openai_agents",
         "connector": "github",
@@ -560,6 +585,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.AI_AGENTS,
         "config": {"repo": "openai/openai-agents-python"},
     },
+)
+(
     {
         "name": "gh_a2a",
         "connector": "github",
@@ -568,6 +595,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.AI_AGENTS,
         "config": {"repo": "a2aproject/A2A"},
     },
+)
+(
     {
         "name": "gh_vllm",
         "connector": "github",
@@ -576,6 +605,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.PRODUCTION_ENGINEERING,
         "config": {"repo": "vllm-project/vllm"},
     },
+)
+(
     {
         "name": "gh_transformers",
         "connector": "github",
@@ -584,6 +615,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.PRODUCTION_ENGINEERING,
         "config": {"repo": "huggingface/transformers"},
     },
+)
+(
     {
         "name": "gh_llamacpp",
         "connector": "github",
@@ -592,6 +625,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.PRODUCTION_ENGINEERING,
         "config": {"repo": "ggml-org/llama.cpp"},
     },
+)
+(
     {
         "name": "gh_lerobot",
         "connector": "github",
@@ -600,6 +635,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.ROBOTICS,
         "config": {"repo": "huggingface/lerobot"},
     },
+)
+(
     {
         "name": "gh_fineract",
         "connector": "github",
@@ -608,6 +645,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.FINTECH,
         "config": {"repo": "apache/fineract"},
     },
+)
+(
     {
         "name": "bis_fsi",
         "connector": "rss",
@@ -615,6 +654,8 @@ Append to `SOURCES`, before the closing `]`:
         "url": "https://www.bis.org/doclist/bis_fsi_publs.rss",
         "stream": Topic.FINTECH,
     },
+)
+(
     {
         "name": "uk_gov_tech",
         "connector": "rss",
@@ -622,6 +663,8 @@ Append to `SOURCES`, before the closing `]`:
         "url": "https://technology.blog.gov.uk/feed/",
         "stream": Topic.GOVTECH,
     },
+)
+(
     {
         "name": "gh_garak",
         "connector": "github",
@@ -630,6 +673,8 @@ Append to `SOURCES`, before the closing `]`:
         "stream": Topic.SAFETY_SECURITY,
         "config": {"repo": "NVIDIA/garak"},
     },
+)
+(
     {
         "name": "modal_blog",
         "connector": "rss",
@@ -637,6 +682,7 @@ Append to `SOURCES`, before the closing `]`:
         "url": "https://modal.com/blog/atom.xml",
         "stream": Topic.STARTUPS,
     },
+)
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**

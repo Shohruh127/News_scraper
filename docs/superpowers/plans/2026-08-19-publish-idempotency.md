@@ -64,7 +64,7 @@ non-empty, and a missing auto-forward appends to that same list:
 ```python
 failed_items.append(f"#{item.position} (forward not found for msg {ch_msg_id})")
 ...
-if failed_items:                                          # apps/digest/publish.py:337
+if failed_items:  # apps/digest/publish.py:337
     digest.status = Digest.Status.FAILED
 ```
 
@@ -294,12 +294,12 @@ suite green is not a guard.
 In `apps/digest/management/commands/publish_digest.py`, add the argument:
 
 ```python
-        parser.add_argument(
-            "--republish",
-            action="store_true",
-            help="Re-send items that already have a channel_message_id. Use only after deleting "
-                 "those posts by hand; without it, published items are skipped.",
-        )
+parser.add_argument(
+    "--republish",
+    action="store_true",
+    help="Re-send items that already have a channel_message_id. Use only after deleting "
+    "those posts by hand; without it, published items are skipped.",
+)
 ```
 
 Pass it through:
@@ -412,9 +412,7 @@ Change the two appendix error paths to use it. The render failure:
 and the missing forward:
 
 ```python
-                    appendix_failures.append(
-                        f"#{item.position} (forward not found for msg {ch_msg_id})"
-                    )
+appendix_failures.append(f"#{item.position} (forward not found for msg {ch_msg_id})")
 ```
 
 Replace the whole status decision block with:

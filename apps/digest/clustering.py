@@ -1,10 +1,10 @@
-"""Story clustering — Tier A (ADR-004 §3, measured in docs/spike/DEDUP_MEASUREMENT.md).
+"""Story clustering — exact text Jaccard (ADR-004 §3; measured in DEDUP_MEASUREMENT.md).
 
 Canonical-URL duplicates never reach this module: `Article.canonical_url` is UNIQUE, so
 the database rejects them at ingestion. Clustering by URL here was dead code — it could
 not fire. The signal that actually works is text similarity.
 
-Tier A: character 5-gram Jaccard over the article text, threshold from settings.
+Character 5-gram Jaccard over article text uses the measured threshold from settings.
 Measured over 17,020 pairs of live articles:
 
     Qwen3.8-2.4T-A95B-FP8  vs  Qwen3.8-2.4T-A95B     0.900   must merge
@@ -16,9 +16,7 @@ Titles score 0.000 on both cases and are useless for this.
 Source is deliberately ignored. The duplicate that reached the first published digest
 arrived twice through `hn`; ADR-003's same-source exclusion would have blocked it.
 
-Tier B — embedding cosine ~0.85 for the same story written independently by two outlets —
-is not built. It remains the open gap against PROJECT_PLAN.md §2.
-"""
+This measured exact comparison is the complete clustering architecture for this project."""
 
 import logging
 import re
@@ -45,7 +43,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 
 def text_similarity(a: Article, b: Article) -> float:
-    """Tier A similarity between two articles. 0.0 when either has no usable text."""
+    """Text similarity between two articles. 0.0 when either has no usable text."""
     k = settings.CLUSTER_SHINGLE_SIZE
     limit = settings.CLUSTER_TEXT_CHARS
     return _jaccard(
@@ -74,12 +72,8 @@ def cluster_candidates(
 
     k = settings.CLUSTER_SHINGLE_SIZE
     limit = settings.CLUSTER_TEXT_CHARS
-    # Shingle each article once; the comparison is O(n^2) but n is the candidate count,
-    # not the corpus. MinHash/LSH only becomes worthwhile past ~10k (ADR-004 §3).
-    shingles = {
-        art.id: _shingles(art.extracted_text or "", k, limit) for art, _, _ in candidates
-    }
-
+    # Shingle once per article; O(n^2) is bounded by the small post-filter candidate set.
+    shingles = {art.id: _shingles(art.extracted_text or "", k, limit) for art, _, _ in candidates}
     clusters: list[list[tuple[Article, Analysis, float]]] = []
     for cand in candidates:
         art = cand[0]

@@ -13,6 +13,8 @@ import trafilatura
 from django.conf import settings
 from django.utils import timezone
 
+from . import media
+
 log = logging.getLogger(__name__)
 
 #: Stripped before hashing a URL, so the same article shared with different campaign
@@ -61,8 +63,8 @@ def looks_blocked(text: str) -> bool:
     return any(m in low for m in BLOCKED_MARKERS)
 
 
-def fetch_text(url: str) -> tuple[str, str]:
-    """Return (text, method). Raises ExtractionFailed when the page is unusable."""
+def fetch_text_and_image(url: str) -> tuple[str, str, str | None]:
+    """Return (text, method, image_url). Raises ExtractionFailed when the page is unusable."""
     downloaded = trafilatura.fetch_url(url)
     if not downloaded:
         raise ExtractionFailed(f"could not download {url}")
@@ -74,7 +76,15 @@ def fetch_text(url: str) -> tuple[str, str]:
         raise ExtractionFailed(f"page looks blocked (bot wall or paywall): {url}")
     if len(text) < settings.ARTICLE_MIN_CHARS:
         raise ExtractionFailed(f"only {len(text)} chars, below {settings.ARTICLE_MIN_CHARS}: {url}")
-    return text, "trafilatura"
+
+    image_url = media.extract_image_url_from_html(downloaded, base_url=url)
+    return text, "trafilatura", image_url
+
+
+def fetch_text(url: str) -> tuple[str, str]:
+    """Return (text, method). Raises ExtractionFailed when the page is unusable."""
+    text, method, _ = fetch_text_and_image(url)
+    return text, method
 
 
 def page_title(url: str) -> str | None:
@@ -93,10 +103,16 @@ def normalize(item: dict, source) -> dict:
     """
     url = item["url"]
     text = (item.get("raw_text") or "").strip()
+    raw_html = item.get("raw_html") or ""
+    image_url = item.get("meta", {}).get("image_url") or (
+        media.extract_image_url_from_html(raw_html, base_url=url) if raw_html else None
+    )
     method = "source"
 
     if len(text) < settings.ARTICLE_MIN_CHARS:
-        text, method = fetch_text(url)
+        text, method, fetched_img = fetch_text_and_image(url)
+        if not image_url and fetched_img:
+            image_url = fetched_img
 
     title = (item.get("title") or "").strip()
     if item.get("meta", {}).get("needs_title"):
@@ -107,6 +123,9 @@ def normalize(item: dict, source) -> dict:
     published = item.get("published_at")
     meta = dict(item.get("meta") or {})
     meta["extraction_method"] = method
+    if image_url:
+        meta["image_url"] = image_url
+
     if published is None:
         # Undated items are kept but flagged, so the 7-day rule filter in llm.py can
         # treat them differently from genuinely fresh ones.

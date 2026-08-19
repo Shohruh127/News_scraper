@@ -26,6 +26,9 @@ htmlcov/
 *.sqlite3
 db.sqlite3
 db.sqlite3-journal
+*.dump
+*.backup
+backups/
 media/
 staticfiles/
 *.log
@@ -36,6 +39,7 @@ staticfiles/
 *.swp
 *.swo
 *~
+.agents/
 
 # Graphify artifacts
 graphify-out/
