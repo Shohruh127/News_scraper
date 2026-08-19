@@ -1,6 +1,7 @@
 """Long-polling Telegram bot for feedback callbacks and group forwards."""
 
 import asyncio
+import logging
 import os
 
 import django
@@ -9,6 +10,8 @@ from aiogram.types import CallbackQuery, Message
 from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import IntegrityError, connections, transaction
+
+log = logging.getLogger(__name__)
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
@@ -127,12 +130,27 @@ def create_dispatcher() -> Dispatcher:
     return dispatcher
 
 
+async def _bot_heartbeat_loop() -> None:
+    from . import tasks
+
+    while True:
+        try:
+            await asyncio.to_thread(tasks.record_heartbeat, "bot")
+        except Exception as exc:
+            log.warning("Bot heartbeat error: %s", exc)
+        await asyncio.sleep(30)
+
+
 async def run_bot() -> None:
     token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required to run the feedback bot")
-    async with Bot(token=token) as bot:
-        await create_dispatcher().start_polling(bot)
+    heartbeat_task = asyncio.create_task(_bot_heartbeat_loop())
+    try:
+        async with Bot(token=token) as bot:
+            await create_dispatcher().start_polling(bot)
+    finally:
+        heartbeat_task.cancel()
 
 
 def main() -> None:

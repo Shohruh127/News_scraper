@@ -13,8 +13,8 @@ x-app-service: &app-service
   env_file:
     - .env
   environment:
-    DATABASE_URL: ${DATABASE_URL:-postgresql://news_radar:news_radar@postgres:5432/news_radar}
-    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    DATABASE_URL: postgresql://${POSTGRES_USER:-news_radar}:${POSTGRES_PASSWORD:-news_radar}@postgres:5432/${POSTGRES_DB:-news_radar}
+    REDIS_URL: redis://redis:6379/0
   depends_on:
     postgres:
       condition: service_healthy
