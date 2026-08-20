@@ -21,7 +21,7 @@
 |  3. TRIAGE & CLASSIFY (worker-llm): Fast triage & deep classification (Ollama)    |
 |  4. EDITORIAL & TRANSLATION (worker-llm): Prose synthesis with Uzbek glossary     |
 |  5. PUBLISH (worker-publish): Idempotent Telegram Bot API delivery               |
-|  6. FEEDBACK BOT (bot): Interactive Telegram feedback collecting reader signals   |
+|  6. GROUP FORWARD BOT (bot): Tracks channel-to-group message forwards          |
 +-----------------------------------------+-----------------------------------------+
                                           |
                                           v
@@ -44,7 +44,7 @@
   - Strict delivery state machine (`pending` $\rightarrow$ `sending` $\rightarrow$ `sent` / `unknown` / `failed`).
   - Network timeouts and 5xx errors transition to `unknown` and notify the admin without duplicate retries.
   - Direct public image URL delegation to Telegram's `sendPhoto` API without local SSRF risk or Pillow dependency.
-- **Interactive Feedback Bot:** Native polling bot receiving reader feedback (`like`/`dislike`) to continuously measure and refine ranking scores.
+- **Group Forward Bot:** Native polling bot tracking channel-to-group message forwards for technical appendix delivery.
 - **Production Observability & Monitoring:**
   - `/healthz/` (process liveness).
   - `/readyz/` (DB, Redis, and schema migration readiness).

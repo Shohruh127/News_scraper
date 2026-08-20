@@ -172,26 +172,6 @@ def test_a_publish_never_writes_the_bot_token_to_the_log(db, digest_1, settings,
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
 
 
-@respx.mock
-def test_feedback_keyboard_is_sent_only_with_channel_post(settings):
-    settings.PUBLISHING_ENABLED = True
-    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
-    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
-    route = respx.post(f"{base_tg}/sendMessage").mock(
-        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
-    )
-
-    publish.send_message(
-        chat_id="-100111111",
-        text="post",
-        reply_markup=publish.feedback_keyboard(123),
-    )
-
-    payload = route.calls[0].request.content.decode()
-    assert "feedback:123:useful" in payload
-    assert "feedback:123:not_useful" in payload
-    assert "feedback:123:want_to_build" in payload
-
 
 @respx.mock
 def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, settings):
@@ -832,13 +812,11 @@ def test_send_photo_payload_structure(settings):
     )
 
     photo_url = "https://cdn.example.com/image.jpg"
-    keyboard = publish.feedback_keyboard(42)
 
     res = publish.send_photo(
         chat_id="-100123",
         photo_url=photo_url,
         caption="Caption text",
-        reply_markup=keyboard,
     )
 
     assert res["result"]["message_id"] == 999
@@ -847,7 +825,6 @@ def test_send_photo_payload_structure(settings):
     assert req_payload["photo"] == "https://cdn.example.com/image.jpg"
     assert req_payload["caption"] == "Caption text"
     assert req_payload["parse_mode"] == "HTML"
-    assert req_payload["reply_markup"] == keyboard
 
 
 @pytest.mark.django_db
@@ -900,7 +877,6 @@ def test_publish_digest_v2_with_valid_image_sends_photo(digest_item_factory, set
     assert req_payload["photo"] == "https://example.com/img.jpg"
     assert "caption" in req_payload
     assert req_payload["parse_mode"] == "HTML"
-    assert "reply_markup" in req_payload
 
     item.refresh_from_db()
     assert item.channel_message_id == 777

@@ -19,7 +19,7 @@ from django.conf import settings
 from pydantic import BaseModel, Field, ValidationError, create_model
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from . import artifacts, translation_gates
+from . import artifacts, post_format, translation_gates
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Maturity, Topic
 
 log = logging.getLogger(__name__)
@@ -502,8 +502,11 @@ TRANSLATION_PROMPT = (
     "Do not add information, opinions, or sentences that are not in the source. Do not "
     "remove any. Keep the same number of sentences per field.\n\n"
     "## Link Anchor Translation\n"
-    "For link_anchor_en, translate it to link_anchor_uz. The translated link_anchor_uz must "
+    "For link_anchor_en, translate it to link_anchor_uz. The translated link_anchor_uz MUST be "
+    "EXACTLY ONE WORD token (a single word verb with no spaces or punctuation) and MUST "
     "appear verbatim in lead_uz, ideally as the concluding verb of the first sentence.\n\n"
+    "## Kicker Translation\n"
+    "kicker_uz must be MAXIMUM 8 WORDS (strict upper bound). Keep it punchy and short.\n\n"
     "## Keep in English\n"
     "Model names, product names, company names, metric names, file formats, and "
     "established technical terms: model, API, agent, framework, open-weight, weights, "
@@ -1167,6 +1170,33 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
     return article.status == Article.Status.CLASSIFIED
 
 
+def _normalize_uz_payload(payload: dict) -> dict:
+    """Normalize Uzbek translation payload to satisfy deterministic gates."""
+    if not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    # Link anchor normalization: if multiword, resolve action verb or take last word
+    anchor = normalized.get("link_anchor_uz", "")
+    if anchor and " " in anchor.strip():
+        lead = normalized.get("lead_uz") or normalized.get("summary_uz") or ""
+        resolved = post_format.resolve_anchor(lead, anchor)
+        if resolved:
+            normalized["link_anchor_uz"] = resolved
+        else:
+            words = [
+                post_format.clean_token(w)
+                for w in anchor.split()
+                if post_format.clean_token(w)
+            ]
+            if words:
+                normalized["link_anchor_uz"] = words[-1]
+    # Kicker normalization: enforce maximum 8 words
+    kicker = normalized.get("kicker_uz", "")
+    if kicker and len(kicker.strip().split()) > 8:
+        normalized["kicker_uz"] = " ".join(kicker.strip().split()[:8])
+    return normalized
+
+
 def analyse_for_digest_logic(
     article_ids: list[int],
     client: httpx.Client | None = None,
@@ -1249,6 +1279,8 @@ def analyse_for_digest_logic(
                 ollama_model=settings.OLLAMA_FAST_MODEL,
             )
 
+            payload = _normalize_uz_payload(payload)
+
             # Translation quality gates (T1.16)
             violations = translation_gates.validate_translation(fields, payload)
             if violations:
@@ -1273,6 +1305,7 @@ def analyse_for_digest_logic(
                         provider=settings.TRANSLATION_PROVIDER,
                         ollama_model=settings.OLLAMA_FAST_MODEL,
                     )
+                    retry_payload = _normalize_uz_payload(retry_payload)
                     uz_model.model_validate(retry_payload)
                     retry_violations = translation_gates.validate_translation(fields, retry_payload)
                     if retry_violations:

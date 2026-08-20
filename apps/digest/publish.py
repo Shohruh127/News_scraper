@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 import redis
+import trafilatura
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -27,26 +28,6 @@ from .models import DeliveryState, Digest, DigestItem
 from .telegram_updates import wait_for_group_forward
 
 log = logging.getLogger(__name__)
-FEEDBACK_REACTIONS = (
-    ("👍", "useful"),
-    ("👎", "not_useful"),
-    ("🛠", "want_to_build"),
-)
-
-
-def feedback_keyboard(digest_item_id: int) -> dict:
-    """Return the stable callback keyboard shared by publisher and bot."""
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": label,
-                    "callback_data": f"feedback:{digest_item_id}:{reaction}",
-                }
-                for label, reaction in FEEDBACK_REACTIONS
-            ]
-        ]
-    }
 
 
 def _bot_url(method: str) -> str:
@@ -474,6 +455,26 @@ def publish_digest(
             try:
                 if v2_enabled:
                     image_url = item.article.meta.get("image_url")
+                    if not image_url and item.article.canonical_url:
+                        try:
+                            downloaded = trafilatura.fetch_url(item.article.canonical_url)
+                            if downloaded:
+                                fetched_img = media.extract_image_url_from_html(
+                                    downloaded, base_url=item.article.canonical_url
+                                )
+                                if fetched_img:
+                                    image_url = fetched_img
+                                    meta = dict(item.article.meta or {})
+                                    meta["image_url"] = fetched_img
+                                    item.article.meta = meta
+                                    item.article.save(update_fields=["meta"])
+                        except Exception as exc:
+                            log.debug(
+                                "On-demand image fetch failed for item #%s: %s",
+                                item.position,
+                                exc,
+                            )
+
                     valid_image_url = media.validate_image_url(image_url) if image_url else None
                     if image_url and not valid_image_url:
                         log.info(
@@ -488,7 +489,6 @@ def publish_digest(
                                 chat_id=channel_id,
                                 photo_url=valid_image_url,
                                 caption=post_html,
-                                reply_markup=feedback_keyboard(item.id),
                                 client=client,
                             )
                             sent_as_photo = True
@@ -503,7 +503,6 @@ def publish_digest(
                                 res_post = send_message(
                                     chat_id=channel_id,
                                     text=post_html,
-                                    reply_markup=feedback_keyboard(item.id),
                                     disable_preview=True,
                                     client=client,
                                 )
@@ -514,7 +513,6 @@ def publish_digest(
                         res_post = send_message(
                             chat_id=channel_id,
                             text=post_html,
-                            reply_markup=feedback_keyboard(item.id),
                             disable_preview=True,
                             client=client,
                         )
@@ -523,7 +521,6 @@ def publish_digest(
                     res_post = send_message(
                         chat_id=channel_id,
                         text=post_html,
-                        reply_markup=feedback_keyboard(item.id),
                         client=client,
                     )
                     sent_as_photo = False
