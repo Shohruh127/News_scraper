@@ -2,9 +2,19 @@
 set -eu
 . "$(dirname "$0")/common.sh"
 
+ALLOW_PUBLISHING=false
+if [ "${1:-}" = "--allow-publishing" ]; then
+    ALLOW_PUBLISHING=true
+elif [ "$#" -gt 0 ]; then
+    fail "Usage: $0 [--allow-publishing]"
+fi
+
 compose config --quiet
 
-compose run --rm --no-deps web python - <<'PY'
+compose run --rm --no-deps -e NEWS_RADAR_ALLOW_PUBLISHING="$ALLOW_PUBLISHING" \
+    web python - <<'PY'
+import os
+
 from django.conf import settings
 
 errors = []
@@ -15,7 +25,13 @@ if settings.SECRET_KEY == "dev-only-not-for-production" or len(settings.SECRET_K
 if not settings.ALLOWED_HOSTS:
     errors.append("DJANGO_ALLOWED_HOSTS must not be empty")
 if settings.PUBLISHING_ENABLED:
-    errors.append("PUBLISHING_ENABLED must be false during deployment")
+    if os.environ.get("NEWS_RADAR_ALLOW_PUBLISHING") == "true":
+        print("WARNING: kill switch is on and --allow-publishing was passed.")
+    else:
+        errors.append(
+            "PUBLISHING_ENABLED must be false during deployment "
+            "(pass --allow-publishing to accept the risk)"
+        )
 providers = {
     "LLM_PROVIDER": settings.LLM_PROVIDER,
     "EDITORIAL_EN_PROVIDER": settings.EDITORIAL_EN_PROVIDER,

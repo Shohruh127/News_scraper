@@ -3,11 +3,15 @@ set -eu
 . "$(dirname "$0")/common.sh"
 
 SKIP_BACKUP=false
-if [ "${1:-}" = "--skip-backup" ]; then
-    SKIP_BACKUP=true
-elif [ "$#" -gt 0 ]; then
-    fail "Usage: $0 [--skip-backup]"
-fi
+ALLOW_PUBLISHING=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --skip-backup) SKIP_BACKUP=true ;;
+        --allow-publishing) ALLOW_PUBLISHING=true ;;
+        *) fail "Usage: $0 [--skip-backup] [--allow-publishing]" ;;
+    esac
+    shift
+done
 
 [ -z "$(git status --porcelain)" ] || fail "Deployment checkout is dirty."
 compose config --quiet
@@ -17,7 +21,11 @@ if [ "$SKIP_BACKUP" = false ] && [ -n "$(compose ps -q postgres)" ]; then
 fi
 
 compose build
-"$(dirname "$0")/preflight.sh"
+if [ "$ALLOW_PUBLISHING" = true ]; then
+    "$(dirname "$0")/preflight.sh" --allow-publishing
+else
+    "$(dirname "$0")/preflight.sh"
+fi
 compose up -d postgres redis
 compose up -d
 
