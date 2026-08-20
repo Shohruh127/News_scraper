@@ -584,8 +584,8 @@ def linkify_lead(lead: str, url: str, anchor: str) -> str:
 
     # Trailing punctuation of the first sentence (e.g. '.', '!')
     punct_suffix = first_sent_full[len(first_sent_text) :]
-
-    return linked_first_text + html_escape(punct_suffix) + html_escape(rest)
+    space_after = " " if rest else ""
+    return linked_first_text + html_escape(punct_suffix) + space_after + html_escape(rest)
 
 
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")

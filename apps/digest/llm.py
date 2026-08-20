@@ -322,35 +322,57 @@ EDITORIAL_EN_PROMPT = (
     "You are a senior editor for a daily AI-engineering digest read by engineering "
     "leaders and AI engineers in Uzbekistan.\n\n"
     "Write the English analysis of the article below in ULTRA-CONCISE Telegram channel "
-    "news format (maximum 30 words total for the post content: 1 short lead sentence + "
-    "1 short context sentence). Return JSON only.\n\n"
+    "news format (maximum 30 words total for the post content: exactly 1 short lead "
+    "sentence + 1 short context sentence). Return JSON only.\n\n"
     + ARCHETYPE_DEFINITIONS
-    + "## Post Structure & Fields (STRICT LENGTH CONSTRAINTS)\n"
+    + "## Post Structure & Strict Field Rules\n"
     "- headline_en: exactly 1 short punchy title (3-6 words)\n"
     "- summary_en: 1-2 concise sentences\n"
-    "- lead_en: exactly 1 short sentence (10-15 words max). The sentence must state the "
-    "core news clearly and contain or end with a single-word action verb serving as the "
-    "link anchor (e.g. 'released', 'launched', 'open-sourced'). "
-    "Do NOT include markdown, bolding, bullet points, headlines, or URLs in the text.\n"
+    "- lead_en: exactly 1 short sentence (10-15 words max). State the core news clearly "
+    "and end with a single-word action verb as the link anchor (e.g. 'released', 'launched', "
+    "'open-sourced'). Do NOT include markdown, bolding, bullet points, headlines, or URLs.\n"
     "- link_anchor_en: the exact single-word action verb from lead_en to attach the "
     "source link to. Must appear verbatim in lead_en.\n"
     "- body_1_en: exactly 1 short sentence (10-15 words max) carrying the most critical "
-    "concrete fact/metric/context. No bullet points.\n"
-    '- body_2_en: "" (leave empty string)\n'
-    '- kicker_en: "" (leave empty string)\n'
+    "concrete fact/metric/benchmark/number. No bullet points.\n"
+    '- body_2_en: "" (always leave empty string)\n'
+    '- kicker_en: "" (always leave empty string)\n'
     "- why_it_matters_en: exactly 1 short sentence\n"
-    "- uzbekistan_application_en: exactly 1 sentence, or empty if there is no honest one\n\n"
-    "CRITICAL REQUIREMENT: The combined text of lead_en + body_1_en must NOT exceed 30 words!\n\n"
+    "- uzbekistan_application_en: exactly 1 sentence, or empty if none\n\n"
+    "## Style Constraints (HIGH INFORMATION DENSITY)\n"
+    "1. NO FLUFF / NO HYPE: Never use words like 'revolutionary', 'game-changer', "
+    "'groundbreaking', 'powerful', 'game-changing', 'excited to announce'.\n"
+    "2. MANDATORY NUMBER OR CONCRETE FACT: body_1_en must contain specific metrics "
+    "(parameters, benchmark score, speedup, cost, license, context window).\n"
+    "3. STRICT LENGTH: lead_en + body_1_en combined must NOT exceed 30 words!\n\n"
+    "## Few-Shot Example (English):\n"
+    'Input Article: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context '
+    'window, achieving 84.0% on MMLU."\n'
+    "Output JSON:\n"
+    "{{\n"
+    '  "headline_en": "Mistral Releases Mistral-Large-2",\n'
+    '  "summary_en": "Mistral-Large-2 is a 123B parameter frontier model with 128k context.",\n'
+    '  "lead_en": "Mistral released Mistral-Large-2 with 123B parameters for frontier '
+    'reasoning.",\n'
+    '  "link_anchor_en": "released",\n'
+    '  "body_1_en": "The model features a 128k context window and scores 84% on MMLU.",\n'
+    '  "body_2_en": "",\n'
+    '  "kicker_en": "",\n'
+    '  "why_it_matters_en": "Provides a competitive open-weight alternative to proprietary '
+    'LLMs.",\n'
+    '  "uzbekistan_application_en": "Can be self-hosted for enterprise multilingual '
+    'applications.",\n'
+    '  "archetype": "release",\n'
+    '  "release_details": {{\n'
+    '    "what_changed_en": "Released 123B weights and 128k context support."\n'
+    "  }}\n"
+    "}}\n\n"
     "## Grounding\n"
     "Every claim must come from the article text. If a detail is absent — license, "
     'benchmark number, repo URL, hardware requirement — leave that field as "". Never '
-    "infer, never fill from background knowledge. An empty field is correct; an invented "
-    "one is a defect.\n"
+    "infer, never fill from background knowledge.\n"
     "- local_deployable: true only if weights or code can actually be self-hosted\n"
     '- evidence_level: "vendor_claim_only" unless the article cites independent validation\n\n'
-    "## Language\n"
-    "Write in English only. Do not emit any other script or language, including single "
-    "words. This output is translated in a later stage.\n\n"
     "ARTICLE\n"
     "Title: {title}\n"
     "Source: {source}\n"
@@ -448,40 +470,56 @@ def translation_schema_for(fields: dict) -> dict:
 
 TRANSLATION_PROMPT = (
     "Translate the fields below into Uzbek (Latin script). Return JSON only.\n\n"
-    "## Ultra-concise Post Length (MUHIM TALAB)\n"
-    "Kanal postining asosiy matni (lead_uz + body_1_uz) JAMI 30 TA SO'ZDAN OSHMASLIGI "
-    "SHART (maximum 30 words total):\n"
-    "- lead_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy yangilikni ifodalaydi va "
-    "link_anchor_uz fe'lini o'z ichiga oladi.\n"
-    "- body_1_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy raqam yoki kontekstni ifodalaydi.\n"
-    '- body_2_uz: "" (bo\'sh qoldiring).\n'
-    '- kicker_uz: "" (bo\'sh qoldiring).\n\n'
-    "## You are translating, not writing\n"
-    "Do not add information, opinions, or sentences that are not in the source. Do not "
-    "remove any. Keep the same number of sentences per field.\n\n"
+    "## Ultra-concise Post Length & Quality Rules (QAT'IY TALABLAR)\n"
+    "1. Post matni (lead_uz + body_1_uz) JAMI 30 TA SO'ZDAN OSHMASLIGI SHART "
+    "(max 30 words total).\n"
+    "2. lead_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy yangilikni bildiradi va link_anchor_uz "
+    "fe'lini o'z ichiga oladi.\n"
+    "3. body_1_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy raqam, mezon yoki texnik faktni "
+    "ifodalaydi.\n"
+    '4. body_2_uz: "" (har doim bo\'sh qoldiring).\n'
+    '5. kicker_uz: "" (har doim bo\'sh qoldiring).\n'
+    "6. RAQAM VA VERSIYALAR: Barcha raqamlar, versiyalar (masalan, v0.32.12, 3.8, 27B) "
+    "tarjimada to'liq saqlanishi shart.\n"
+    "7. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli', "
+    "'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.\n\n"
+    "## Few-Shot Namuna (O'zbek tili):\n"
+    "Misol 1 (Model relizi):\n"
+    'English input: {{"lead_en": "Mistral released Mistral-Large-2 with 123B parameters.", '
+    '"link_anchor_en": "released", "body_1_en": "The model features 128k context and 84% score '
+    'on MMLU."}}\n'
+    "Uzbek output JSON:\n"
+    "{{\n"
+    '  "lead_uz": "Mistral jamoasi 123B parametrli yangi Mistral-Large-2 modelini ochiq taqdim '
+    'etdi.",\n'
+    '  "link_anchor_uz": "etdi",\n'
+    '  "body_1_uz": "Model 128k kontekstga ega bo\'lib, MMLU testida 84% natija ko\'rsatgan.",\n'
+    '  "body_2_uz": "",\n'
+    '  "kicker_uz": ""\n'
+    "}}\n\n"
+    "Misol 2 (Dasturiy vosita / Versiya relizi):\n"
+    'English input: {{"lead_en": "Ollama v0.32.12 released with support for Qwen 3.8 27B.", '
+    '"link_anchor_en": "released", "body_1_en": "The 27B model runs locally on Apple Silicon '
+    'with low latency."}}\n'
+    "Uzbek output JSON:\n"
+    "{{\n"
+    '  "lead_uz": "Ollama jamoasi Qwen 3.8 27B modelini qo\'llab-quvvatlovchi v0.32.12 '
+    'versiyasini chiqardi.",\n'
+    '  "link_anchor_uz": "chiqardi",\n'
+    '  "body_1_uz": "Yangi 27B model Apple Silicon chiplarida past kechikish bilan mahalliy '
+    'ishlaydi.",\n'
+    '  "body_2_uz": "",\n'
+    '  "kicker_uz": ""\n'
+    "}}\n\n"
     "## Link Anchor Translation\n"
-    "For link_anchor_en, translate it to link_anchor_uz. The translated link_anchor_uz MUST be "
-    "EXACTLY ONE WORD token (a single word verb with no spaces or punctuation) and MUST "
-    "appear verbatim in lead_uz, ideally as the concluding verb of the first sentence.\n\n"
-    "## Kicker Translation\n"
-    "kicker_uz must be MAXIMUM 8 WORDS (strict upper bound) or empty string.\n\n"
+    "link_anchor_uz MUST be EXACTLY ONE WORD token (a single word verb like 'chiqardi', "
+    "'tushirdi', 'etdi', 'e'lon qildi') and MUST appear verbatim in lead_uz.\n\n"
     "## Keep in English\n"
-    "Model names, product names, company names, metric names, file formats, and "
-    "established technical terms: model, API, agent, framework, open-weight, weights, "
-    "checkpoint, benchmark, context, token, inference, latency, fine-tuning, quantization, "
-    "repo, MoE, embedding, prompt.\n"
-    "Do not transliterate these into Cyrillic-style Uzbek spellings. 'framework' stays "
-    "'framework', not 'freymvork'.\n\n"
-    "## Language\n"
-    "Output Uzbek Latin script only. Never emit Chinese, Russian, or any other script — "
-    "not even a single character. If a term has no natural Uzbek equivalent, keep the "
-    "English word.\n\n"
+    "Model names, product names, company names, metric names, and terms: model, API, agent, "
+    "framework, benchmark, context, token, inference, latency, prompt, repo, open-source.\n\n"
     "## Plain text formatting\n"
     "Do NOT use markdown bolding (like **word**), asterisks, backticks, or bullet points in any "
     "field. Output clean plain text.\n\n"
-    "## Natural Uzbek\n"
-    "Translate meaning, not word order. The result must read as though written by an "
-    "Uzbek technical journalist, not as a machine rendering of English syntax.\n\n"
     "FIELDS TO TRANSLATE\n"
     "{fields}\n"
 )

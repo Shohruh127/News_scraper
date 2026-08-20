@@ -48,19 +48,24 @@ def extract_numbers(text: str) -> set[str]:
 
 
 def check_numbers(en_fields: dict, uz_fields: dict) -> list[str]:
-    """Gate 1: every number in English must appear in Uzbek.
+    """Gate 1: every number in translated English fields must appear in Uzbek.
 
     Catches errors like 2.4 trillion -> 2 trillion (mimo-v2.5 defect).
+    Compares corresponding field pairs (e.g. lead_en vs lead_uz, limitations_en vs limitations_uz).
     """
-    en_text = " ".join(str(v) for v in en_fields.values())
-    uz_text = " ".join(str(v) for v in uz_fields.values())
+    missing_all: set[str] = set()
+    for k_en, v_en in en_fields.items():
+        k_uz = k_en[:-3] + "_uz" if k_en.endswith("_en") else k_en + "_uz"
+        v_uz = uz_fields.get(k_uz)
+        if v_uz and isinstance(v_en, str) and isinstance(v_uz, str):
+            en_nums = extract_numbers(v_en)
+            uz_nums = extract_numbers(v_uz)
+            missing = en_nums - uz_nums
+            if missing:
+                missing_all.update(missing)
 
-    en_numbers = extract_numbers(en_text)
-    uz_numbers = extract_numbers(uz_text)
-
-    missing = en_numbers - uz_numbers
-    if missing:
-        return [f"Numbers missing in Uzbek: {', '.join(sorted(missing))}"]
+    if missing_all:
+        return [f"Numbers missing in Uzbek: {', '.join(sorted(missing_all))}"]
     return []
 
 
