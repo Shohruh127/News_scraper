@@ -51,6 +51,18 @@ def get_topic_tag(topic: Topic | str | None) -> str:
     return TOPIC_TAGS[topic]
 
 
+def strip_markdown_formatting(text: str) -> str:
+    """Strip markdown bolding, italics, and backticks from text."""
+    if not text or not isinstance(text, str):
+        return ""
+    # Strip bolding **word** or __word__
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
+    # Strip backticks
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    return cleaned
+
+
 _FIRST_SENTENCE_RE = re.compile(r"^(.*?)(?:[.!?](?:\s+|$))", re.DOTALL)
 _CLEAN_TOKEN_RE = re.compile(r"^[.,!?:;\"'()«»“”’`]+|[.,!?:;\"'()«»“”’`]+$")
 _WORD_CHAR_PATTERN = r"[a-zA-Z0-9_ʻ‘’'`]"
@@ -731,17 +743,17 @@ def validate_rendered_post(rendered_html: str, max_chars: int = 900) -> list[str
 def render_item_post_v2(item_data: dict, max_chars: int = 900) -> str:
     """Render a clean v2 post conforming to the approved spec."""
     url = item_data.get("url", "")
-    lead = item_data.get("lead_uz") or item_data.get("summary_uz") or ""
+    lead = strip_markdown_formatting(item_data.get("lead_uz") or item_data.get("summary_uz") or "")
     if not lead.strip():
         raise ValueError("Cannot render post: lead_uz / summary_uz is empty")
 
-    requested_anchor = item_data.get("link_anchor_uz") or ""
+    requested_anchor = strip_markdown_formatting(item_data.get("link_anchor_uz") or "")
     anchor = resolve_anchor(lead, requested_anchor)
     lead_html = linkify_lead(lead, url, anchor)
 
-    body_1 = item_data.get("body_1_uz") or ""
-    body_2 = item_data.get("body_2_uz") or ""
-    kicker = item_data.get("kicker_uz") or ""
+    body_1 = strip_markdown_formatting(item_data.get("body_1_uz") or "")
+    body_2 = strip_markdown_formatting(item_data.get("body_2_uz") or "")
+    kicker = strip_markdown_formatting(item_data.get("kicker_uz") or "")
 
     topic = item_data.get("topic") or item_data.get("primary_topic")
     tag = get_topic_tag(topic)

@@ -518,6 +518,9 @@ TRANSLATION_PROMPT = (
     "Output Uzbek Latin script only. Never emit Chinese, Russian, or any other script — "
     "not even a single character. If a term has no natural Uzbek equivalent, keep the "
     "English word.\n\n"
+    "## Plain text formatting\n"
+    "Do NOT use markdown bolding (like **word**), asterisks, backticks, or bullet points in any "
+    "field. Output clean plain text.\n\n"
     "## Natural Uzbek\n"
     "Translate meaning, not word order. The result must read as though written by an "
     "Uzbek technical journalist, not as a machine rendering of English syntax.\n\n"
@@ -1174,7 +1177,13 @@ def _normalize_uz_payload(payload: dict) -> dict:
     """Normalize Uzbek translation payload to satisfy deterministic gates."""
     if not isinstance(payload, dict):
         return payload
-    normalized = dict(payload)
+    normalized = {}
+    for k, v in payload.items():
+        if isinstance(v, str):
+            normalized[k] = post_format.strip_markdown_formatting(v)
+        else:
+            normalized[k] = v
+
     # Link anchor normalization: if multiword, resolve action verb or take last word
     anchor = normalized.get("link_anchor_uz", "")
     if anchor and " " in anchor.strip():

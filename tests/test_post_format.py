@@ -127,6 +127,17 @@ def test_linkify_lead_rejects_unsafe_schemes():
         post_format.linkify_lead(lead, "ftp://example.com/file", "boshladi")
 
 
+def test_strip_markdown_formatting():
+    """strip_markdown_formatting removes **, __, and ` markdown formatting."""
+    assert post_format.strip_markdown_formatting("**bold text**") == "bold text"
+    assert post_format.strip_markdown_formatting("__italic text__") == "italic text"
+    assert post_format.strip_markdown_formatting("`code`") == "code"
+    assert (
+        post_format.strip_markdown_formatting("Normal **important** news.")
+        == "Normal important news."
+    )
+
+
 def test_visible_length_strips_tags_and_unescapes_entities():
     """visible_length computes character count seen by readers."""
     html = 'Hello <a href="https://example.com">world</a> &amp; friends'
