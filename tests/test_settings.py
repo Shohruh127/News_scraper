@@ -88,3 +88,10 @@ def test_post_format_v2_defaults_to_off_when_unset(monkeypatch):
 
     monkeypatch.delenv("POST_FORMAT_V2_ENABLED", raising=False)
     assert environ.Env(POST_FORMAT_V2_ENABLED=(bool, False))("POST_FORMAT_V2_ENABLED") is False
+
+
+def test_post_budget_defaults():
+    from django.conf import settings as _settings
+
+    assert _settings.POST_MAX_SENTENCES == 3
+    assert _settings.POST_MAX_CHARS == 450

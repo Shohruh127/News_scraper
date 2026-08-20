@@ -160,8 +160,13 @@ BENCHMARK_VERIFICATION_ENABLED = env.bool("BENCHMARK_VERIFICATION_ENABLED", defa
 TELEGRAM_LINK_PREVIEW = env.bool("TELEGRAM_LINK_PREVIEW", default=True)
 
 # --- Post format v2 redesign ------------------------------------------------
-POST_FORMAT_V2_ENABLED = env.bool("POST_FORMAT_V2_ENABLED", default=False)
-POST_MAX_CHARS = env.int("POST_MAX_CHARS", default=900)
+POST_FORMAT_V2_ENABLED = env.bool("POST_FORMAT_V2_ENABLED", default=True)
+#: Guard only. The real budget is POST_MAX_SENTENCES.
+POST_MAX_CHARS = env.int("POST_MAX_CHARS", default=450)
+#: Words are the wrong unit for Uzbek: it folds prepositions into suffixes, so the same
+#: content is fewer, longer words than in English or Russian. 3 = lead + body_1 +
+#: body_2, with body_2 the first to go when trimming.
+POST_MAX_SENTENCES = env.int("POST_MAX_SENTENCES", default=3)
 
 # --- Ingestion --------------------------------------------------------------
 USER_AGENT = "news-radar/0.1 (+daily AI digest)"

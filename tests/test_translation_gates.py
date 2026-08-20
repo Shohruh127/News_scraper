@@ -228,48 +228,5 @@ def test_glossary_does_not_require_context_at_all():
     assert translation_gates.check_glossary(en, uz) == []
 
 
-def test_check_kicker_passes_valid_kicker():
-    """Valid punchy kicker under 8 words with no cliché and no new numbers passes."""
-    kicker = "Lokal serverda qulay ishlaydi."
-    assert translation_gates.check_kicker(kicker, "Model 24 milliard parametr.") == []
-
-
-def test_check_kicker_rejects_over_8_words():
-    """Kicker with more than 8 words fails the kicker gate."""
-    kicker = (
-        "Bu yangi texnologiya butun dunyo bo'ylab barcha dasturchilar uchun "
-        "juda katta yengillik beradi."
-    )
-    violations = translation_gates.check_kicker(kicker)
-    assert any("exceeds 8 words" in v for v in violations)
-
-
-def test_check_kicker_rejects_banned_cliches():
-    """Banned clichés such as 'yangi davr boshlanmoqda' or 'kelajak keldi' fail."""
-    for cliche in translation_gates.BANNED_KICKER_CLICHES:
-        kicker = f"Tizimda {cliche}."
-        violations = translation_gates.check_kicker(kicker)
-        assert any("banned cliché" in v for v in violations)
-
-
-def test_check_kicker_rejects_new_numbers_not_in_body():
-    """Kicker must not introduce a new numeric token not present in the body text."""
-    body = "Model 24 milliard parametrga ega."
-    kicker = "Narxi 110 dollar turadi."
-    violations = translation_gates.check_kicker(kicker, body)
-    assert any("repeats or introduces number not in body" in v for v in violations)
-
-
-def test_check_link_anchor_passes_single_token():
-    """Single-word link anchor passes the gate."""
-    assert translation_gates.check_link_anchor("chiqardi") == []
-    assert translation_gates.check_link_anchor("tushirdi") == []
-
-
-def test_check_link_anchor_rejects_multiword_or_url():
-    """Multiword phrases or URLs fail the link anchor translation gate."""
-    v1 = translation_gates.check_link_anchor("yo'lga qo'ymoqda")
-    assert any("single word token" in msg for msg in v1)
-
-    v2 = translation_gates.check_link_anchor("https://github.com/zed")
-    assert any("URLs or domains" in msg for msg in v2)
+def test_link_anchor_gate_is_gone():
+    assert not hasattr(translation_gates, "check_link_anchor")

@@ -357,8 +357,6 @@ _COMMON_UZ_KEYS = frozenset(
         "lead_uz",
         "body_1_uz",
         "body_2_uz",
-        "kicker_uz",
-        "link_anchor_uz",
     }
 )
 
@@ -414,11 +412,6 @@ def _item_data(item: DigestItem) -> dict:
     ]
 
     evidence_level = en_payload.get("evidence_level", "vendor_claim_only")
-    maturity = str(cls.maturity if cls else "")
-    kicker_uz = uz_payload.get("kicker_uz", "")
-    # Suppress kicker only when vendor_claim_only AND announcement_only
-    if evidence_level == "vendor_claim_only" and maturity == "announcement_only":
-        kicker_uz = ""
 
     topic_str = str(cls.topic) if (cls and cls.topic) else "frontier_models"
     maturity_str = str(cls.maturity) if (cls and cls.maturity) else "live_product"
@@ -442,8 +435,6 @@ def _item_data(item: DigestItem) -> dict:
         "lead_uz": lead_uz,
         "body_1_uz": uz_payload.get("body_1_uz", ""),
         "body_2_uz": uz_payload.get("body_2_uz", ""),
-        "kicker_uz": kicker_uz,
-        "link_anchor_uz": uz_payload.get("link_anchor_uz", ""),
         "why_it_matters_uz": uz_payload.get("why_it_matters_uz", ""),
         "leadership_uz": uz_payload.get("leadership_uz", ""),
         "uzbekistan_application_uz": (
@@ -500,8 +491,11 @@ def render_item_post(item: DigestItem) -> str:
     if getattr(settings, "POST_FORMAT_V2_ENABLED", False):
         from . import post_format
 
-        max_chars = getattr(settings, "POST_MAX_CHARS", 900)
-        return post_format.render_item_post_v2(data, max_chars=max_chars)
+        max_chars = getattr(settings, "POST_MAX_CHARS", 450)
+        max_sentences = getattr(settings, "POST_MAX_SENTENCES", 4)
+        return post_format.render_item_post_v2(
+            data, max_chars=max_chars, max_sentences=max_sentences
+        )
 
     archetype = data.get("archetype", "")
     template = ARCHETYPE_TEMPLATES.get(archetype)

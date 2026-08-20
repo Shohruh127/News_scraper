@@ -52,7 +52,6 @@ def digest_item(db):
         art,
         summary_uz="Muhim AI yangiligi matni.",
         lead_uz="Yangi model ishga tushirildi.",
-        link_anchor_uz="tushirildi",
         body_1_uz="Asosiy tafsilotlar va raqamlar.",
     )
     d = Digest.objects.create(digest_date=timezone.now().date())

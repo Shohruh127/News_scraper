@@ -481,56 +481,6 @@ def test_rule_is_silent_when_every_subject_is_distinct(db, source):
     assert len(ranking.select_digest_candidates()) == 3
 
 
-def test_kicker_suppression_rule_only_on_vendor_claim_and_announcement(db, source):
-    """Kicker suppressed only when vendor_claim_only AND announcement_only."""
-    article = Article.objects.create(
-        source=source,
-        canonical_url="https://site.example/announcement",
-        content_hash="hash-ann",
-        title="Announcement item",
-        extracted_text="Text " * 40,
-        status=Article.Status.CLASSIFIED,
-    )
-    Analysis.objects.create(
-        article=article,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag="gemma4:31b",
-        payload={
-            "primary_topic": "ai_agents",
-            "maturity": "announcement_only",
-            "novelty": 8,
-            "evidence": 8,
-            "production_readiness": 8,
-            "reason": "fixture",
-        },
-        latency_ms=1000,
-    )
-    make_editorial(article, kicker_uz="Muhim zarba.")
-
-    digest = Digest.objects.create(digest_date=date(2026, 8, 22))
-    item = DigestItem.objects.create(digest=digest, article=article, position=1, score=0.9)
-
-    # 1. vendor_claim_only + announcement_only -> kicker suppressed
-    data = ranking._item_data(item)
-    assert data["kicker_uz"] == ""
-
-    # 2. multiple_evidence + announcement_only -> kicker preserved
-    en = article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
-    en.payload["evidence_level"] = "multiple_evidence"
-    en.save()
-    data2 = ranking._item_data(item)
-    assert data2["kicker_uz"] == "Muhim zarba."
-
-    # 3. vendor_claim_only + live_product -> kicker preserved
-    en.payload["evidence_level"] = "vendor_claim_only"
-    en.save()
-    cls = article.analyses.get(stage=Analysis.Stage.CLASSIFICATION)
-    cls.payload["maturity"] = "live_product"
-    cls.save()
-    data3 = ranking._item_data(item)
-    assert data3["kicker_uz"] == "Muhim zarba."
-
-
 def test_render_item_post_respects_v2_flag(db, source, settings):
     """render_item_post switches between v1 HTML template and v2 post_format."""
     article = Article.objects.create(
@@ -558,7 +508,6 @@ def test_render_item_post_respects_v2_flag(db, source, settings):
     make_editorial(
         article,
         lead_uz="EHang uchar taksi xizmatini yo'lga qo'ydi.",
-        link_anchor_uz="qo'ydi",
         body_1_uz="Parvoz 20 daqiqa davom etadi.",
     )
 

@@ -1,7 +1,11 @@
-"""Pure post-format layer (v2 redesign).
+"""Pure post-format layer (v3).
 
-Renders clean Uzbek prose: safe photo/text caption with no headers, no bullets,
-exactly one inline link on the lead verb, closed topic hashtag, and <=900 visible chars.
+Renders clean Uzbek prose: 3-4 sentences, no headline, no bullets, exactly one inline
+link, a closing topic hashtag, and a character guard.
+
+The link anchor is positional, not chosen by the model: it is the tail of the lead's
+first sentence, taking the preceding word too when that tail is a light verb. Uzbek is
+SOV, so the predicate already lands there — which is why this needs no verb list.
 """
 
 import logging
@@ -67,410 +71,6 @@ _FIRST_SENTENCE_RE = re.compile(r"^(.*?)(?:[.!?](?:\s+|$))", re.DOTALL)
 _CLEAN_TOKEN_RE = re.compile(r"^[.,!?:;\"'()«»“”’`]+|[.,!?:;\"'()«»“”’`]+$")
 _WORD_CHAR_PATTERN = r"[a-zA-Z0-9_ʻ‘’'`]"
 
-# Common non-verb tokens (source names, domains, common nouns, pronouns, conjunctions, tech terms)
-BANNED_ANCHOR_TOKENS: set[str] = {
-    # Sources / Companies / Products
-    "nextgov",
-    "github",
-    "zed",
-    "wiz",
-    "openai",
-    "google",
-    "meta",
-    "anthropic",
-    "apple",
-    "microsoft",
-    "amazon",
-    "techcrunch",
-    "huggingface",
-    "gitlab",
-    "snowflake",
-    "jira",
-    "docker",
-    "redis",
-    "postgres",
-    "python",
-    "javascript",
-    "fedscoop",
-    "statescoop",
-    "arstechnica",
-    "theverge",
-    "venturebeat",
-    "reuters",
-    "bloomberg",
-    "copilot",
-    "chatgpt",
-    "claude",
-    "gemini",
-    "llama",
-    "deepseek",
-    # Countries / Entities / Abbreviations
-    "aqsh",
-    "u.s",
-    "u.s.",
-    "us",
-    "usa",
-    "uzbekistan",
-    "o'zbekiston",
-    "xitoy",
-    "rossiya",
-    "evropa",
-    # Technical nouns & Archetypes
-    "model",
-    "modellar",
-    "modeli",
-    "modelini",
-    "agent",
-    "agentlar",
-    "agentlik",
-    "dastur",
-    "dasturiy",
-    "tizim",
-    "tizimi",
-    "tizimini",
-    "platforma",
-    "platformasi",
-    "kompaniya",
-    "kompaniyasi",
-    "loyiha",
-    "tadqiqot",
-    "tadqiqoti",
-    "infratuzilma",
-    "xavfsizlik",
-    "fintex",
-    "davlat",
-    "startap",
-    "suhbat",
-    "nutq",
-    "robototexnika",
-    "arxiv",
-    "paper",
-    "maqola",
-    "post",
-    "blog",
-    "yangilik",
-    "kod",
-    "server",
-    "muhit",
-    "baza",
-    "kodlash",
-    "xizmat",
-    "xizmati",
-    "xizmatini",
-    "xatolik",
-    "kamchilik",
-    # Common function words (pronouns, conjunctions, adverbs, numbers)
-    "bu",
-    "shu",
-    "ushbu",
-    "ular",
-    "ularning",
-    "u",
-    "biz",
-    "siz",
-    "men",
-    "sen",
-    "yangi",
-    "katta",
-    "kichik",
-    "uchun",
-    "bilan",
-    "hamda",
-    "ammo",
-    "lekin",
-    "biroq",
-    "chunki",
-    "barcha",
-    "har",
-    "bir",
-    "ikki",
-    "uch",
-    "to'rt",
-    "besh",
-    "oltin",
-    "yetti",
-    "sakkiz",
-    "to'qqiz",
-    "o'n",
-    "foiz",
-    "dollar",
-    "dollarli",
-    "grant",
-    "ega",
-    "emas",
-    "kerak",
-    "mumkin",
-    "lozim",
-    "bo'yicha",
-    "haqida",
-    "orqali",
-    "asosida",
-    "asosiy",
-    "aniq",
-    "to'liq",
-    "optimal",
-    "oddiy",
-    "native",
-    "klassik",
-}
-
-# Known Uzbek tech action verbs
-KNOWN_ACTION_VERBS: set[str] = {
-    "chiqardi",
-    "chiqargan",
-    "chiqaradi",
-    "chiqarildi",
-    "chiqarilmoqda",
-    "chiqarmoqda",
-    "tushirdi",
-    "tushirgan",
-    "tushiradi",
-    "tushirildi",
-    "tushirilmoqda",
-    "tushirmoqda",
-    "qildi",
-    "qilgan",
-    "qiladi",
-    "qilindi",
-    "qilinmoqda",
-    "qilmoqda",
-    "etdi",
-    "etgan",
-    "etadi",
-    "etildi",
-    "etilmoqda",
-    "etmoqda",
-    "boshladi",
-    "boshlagan",
-    "boshlaydi",
-    "boshlandi",
-    "boshlanmoqda",
-    "boshlamoqda",
-    "yaratdi",
-    "yaratgan",
-    "yaratadi",
-    "yaratildi",
-    "yaratilmoqda",
-    "yaratmoqda",
-    "kiritdi",
-    "kiritgan",
-    "kiritadi",
-    "kiritildi",
-    "kiritilmoqda",
-    "kiritmoqda",
-    "o'rnatdi",
-    "o'rnatgan",
-    "o'rnatadi",
-    "o'rnatildi",
-    "o'rnatilmoqda",
-    "o'rnatmoqda",
-    "ochdi",
-    "ochgan",
-    "ochadi",
-    "ochildi",
-    "ochilmoqda",
-    "ochmoqda",
-    "berdi",
-    "bergan",
-    "beradi",
-    "berildi",
-    "berilmoqda",
-    "bermoqda",
-    "ko'rsatdi",
-    "ko'rsatgan",
-    "ko'rsatadi",
-    "ko'rsatildi",
-    "ko'rsatilmoqda",
-    "ko'rsatmoqda",
-    "qurdi",
-    "qurgan",
-    "quradi",
-    "qurildi",
-    "qurilmoqda",
-    "qurmoqda",
-    "joylashtirdi",
-    "joylashtirgan",
-    "joylashtiradi",
-    "joylashtirildi",
-    "joylashtirilmoqda",
-    "ishlaydi",
-    "ishlagan",
-    "ishladi",
-    "ishlamoqda",
-    "ishlamoqchi",
-    "aniqladi",
-    "aniqlagan",
-    "aniqlaydi",
-    "aniqlandi",
-    "aniqlangan",
-    "aniqlanmoqda",
-    "yangiladi",
-    "yangilagan",
-    "yangilaydi",
-    "yangilandi",
-    "yangilanmoqda",
-    "kengaytirdi",
-    "kengaytirgan",
-    "kengaytiradi",
-    "kengaytirildi",
-    "qo'shdi",
-    "qo'shgan",
-    "qo'shadi",
-    "qo'shildi",
-    "qo'shilmoqda",
-    "o'tkazdi",
-    "o'tkazgan",
-    "o'tkazadi",
-    "o'tkazildi",
-    "o'tkazilmoqda",
-    "ulashdi",
-    "ulashgan",
-    "ulashadi",
-    "ulashildi",
-    "yubordi",
-    "yuborgan",
-    "yuboradi",
-    "yuborildi",
-    "yuborilmoqda",
-    "tizdi",
-    "tizgan",
-    "tizadi",
-    "tizildi",
-    "saqlaydi",
-    "saqlagan",
-    "saqladi",
-    "saqlandi",
-    "saqlangan",
-    "yozdi",
-    "yozgan",
-    "yozadi",
-    "yozildi",
-    "yozilmoqda",
-    "oshirdi",
-    "oshirgan",
-    "oshiradi",
-    "oshirildi",
-    "kamaytirdi",
-    "kamaytirgan",
-    "kamaytiradi",
-    "kamaytirildi",
-    "qaytardi",
-    "qaytargan",
-    "qaytaradi",
-    "qaytarildi",
-    "foydalandi",
-    "foydalangan",
-    "foydalanadi",
-    "foydalanildi",
-    "birlashdi",
-    "birlashtirdi",
-    "birlashtirgan",
-    "birlashtiradi",
-    "birlashtirildi",
-    "avtomatlashtirdi",
-    "avtomatlashtirgan",
-    "avtomatlashtiradi",
-    "avtomatlashtirildi",
-    "blokladi",
-    "bloklagan",
-    "bloklaydi",
-    "bloklandi",
-    "topdi",
-    "topgan",
-    "topadi",
-    "topildi",
-    "topilmoqda",
-    "rivojlantirdi",
-    "rivojlantirgan",
-    "rivojlantiradi",
-    "rivojlantirildi",
-    "o'rgatadi",
-    "o'rgatgan",
-    "o'rgatdi",
-    "o'rgatildi",
-    "tekshiradi",
-    "tekshirgan",
-    "tekshirdi",
-    "tekshirildi",
-    "boshqaradi",
-    "boshqargan",
-    "boshqardi",
-    "boshqarildi",
-    "baholaydi",
-    "baholagan",
-    "baholadi",
-    "baholandi",
-    "qo'ydi",
-    "qo'ygan",
-    "qo'yadi",
-    "qo'yildi",
-    "qo'ymoqda",
-    "olindi",
-    "olingan",
-    "oladi",
-    "oldi",
-    "olmoqda",
-    "yutdi",
-    "yutqazdi",
-    "sinadi",
-    "yopildi",
-    "yopdi",
-    "yopgan",
-    "yopadi",
-    "bog'ladi",
-    "bog'lagan",
-    "bog'laydi",
-    "bog'landi",
-    "yetkazdi",
-    "yetkazgan",
-    "yetkazadi",
-    "yetkazildi",
-    "o'tdi",
-    "o'tgan",
-    "o'tadi",
-    "o'tildi",
-}
-
-_VERB_SUFFIX_RE = re.compile(
-    r"^[a-zA-Zʻ‘’'`]+(di|tdi|ydi|gan|qan|kan|moqda|yapti|adi|yadi|ildi|tildi|rildi|ndi|shdi|shtirdi|tirdi|yotgan)$",
-    re.IGNORECASE,
-)
-
-
-def is_valid_action_verb(token: str) -> bool:
-    """Check if token is a valid, single-word Uzbek action verb."""
-    if not token or not token.strip():
-        return False
-
-    clean = _CLEAN_TOKEN_RE.sub("", token.strip())
-    # Must be single token (no spaces, no slashes, no dots)
-    forbidden_chars = (" ", "/", "\\", ".", ":", "@")
-    if any(c in clean for c in forbidden_chars):
-        return False
-
-    if len(clean) < 2:
-        return False
-
-    # Check that it contains only letters and Uzbek apostrophe variants
-    if not re.match(r"^[a-zA-Zʻ‘’'`]+$", clean):
-        return False
-
-    clean_lower = (
-        clean.lower().replace("’", "'").replace("‘", "'").replace("ʻ", "'").replace("`", "'")
-    )
-
-    if clean_lower in BANNED_ANCHOR_TOKENS:
-        return False
-
-    if clean_lower in KNOWN_ACTION_VERBS:
-        return True
-
-    # Fallback to verb suffix morphology if not explicitly banned
-    if _VERB_SUFFIX_RE.match(clean_lower):
-        return True
-
-    return False
-
 
 def clean_token(token: str) -> str:
     """Strip leading and trailing punctuation from a token."""
@@ -480,7 +80,7 @@ def clean_token(token: str) -> str:
 def split_first_sentence(text: str) -> tuple[str, str, str]:
     """Extract first sentence components (inner text, full match with punct, rest of text).
 
-    Handles abbreviations (such as U.S., e.g., i.e., Inc., Dr.) by checking whether
+    Handles abbreviations (such as U.S., e.g., i.e., Inc., Dr., AQSH) by checking whether
     the preceding token is an abbreviation before splitting at punctuation followed by whitespace.
     """
     if not text or not text.strip():
@@ -513,65 +113,92 @@ def split_first_sentence(text: str) -> tuple[str, str, str]:
     return (inner_text, clean, "")
 
 
-def resolve_anchor(lead: str, requested_anchor: str = "") -> str:
-    """Find a valid one-word Uzbek action verb anchor in the first sentence of lead.
+#: Uzbek light verbs that carry no meaning on their own. A lead ending in one of these
+#: gives up its preceding word to the anchor, so the link reads "taqdim etdi" rather than
+#: the bare auxiliary "etdi". Measured on 28 stored leads: 32% end this way.
+AUXILIARY_TAILS: frozenset[str] = frozenset(
+    {
+        "etdi",
+        "etadi",
+        "etildi",
+        "etiladi",
+        "qildi",
+        "qiladi",
+        "qilindi",
+        "qilinadi",
+        "bo'ldi",
+        "bo'ladi",
+        "oldi",
+        "oladi",
+        "berdi",
+        "beradi",
+    }
+)
 
-    Scans the first sentence:
-    1. If requested_anchor is a valid action verb present in the first sentence, use it.
-    2. Otherwise, scans first sentence tokens from end to beginning for the first valid action verb.
-    3. Returns '' if no valid action verb is found.
+
+def normalise_apostrophes(token: str) -> str:
+    """Fold every apostrophe variant real data uses onto the plain ASCII one."""
+    for variant in ("’", "‘", "ʻ", "`"):
+        token = token.replace(variant, "'")
+    return token
+
+
+def anchor_from_lead(lead: str) -> str:
+    """The link anchor: the tail of the lead's first sentence.
+
+    Uzbek is SOV, so the predicate already lands last. The anchor therefore needs no
+    model input, no verb list and no company-name blocklist - only position. This cannot
+    fail to find an anchor for a non-empty lead, which is why there is no fallback path.
     """
-    if not lead or not lead.strip():
+    first_sentence, _, _ = split_first_sentence(lead or "")
+    tokens = [clean_token(t) for t in first_sentence.split() if clean_token(t)]
+    if not tokens:
         return ""
-
-    first_sent_text, _, _ = split_first_sentence(lead)
-    tokens = [clean_token(t) for t in first_sent_text.split() if clean_token(t)]
-
-    # 1. If requested_anchor is a valid action verb and present in first sentence tokens, use it
-    req_clean = clean_token(requested_anchor)
-    if req_clean and is_valid_action_verb(req_clean):
-        for tok in tokens:
-            if tok.lower() == req_clean.lower():
-                return tok
-
-    # 2. Deterministically scan from end of first sentence backwards for the first valid action verb
-    for tok in reversed(tokens):
-        if is_valid_action_verb(tok):
-            return tok
-
-    # 3. No valid action verb found in first sentence
-    return ""
+    if len(tokens) > 1 and normalise_apostrophes(tokens[-1].lower()) in AUXILIARY_TAILS:
+        return " ".join(tokens[-2:])
+    return tokens[-1]
 
 
-def linkify_lead(lead: str, url: str, anchor: str) -> str:
+def linkify_lead(lead: str, url: str, anchor: str = "") -> str:
     """Insert exactly one <a href="..."> inside the first sentence of lead on anchor.
 
-    Requires a valid one-word action verb anchor matching a distinct token in the first sentence.
-    Uses boundary-aware token matching so matching 'etdi' does not link 'ketdi'.
+    The anchor is positional (see `anchor_from_lead`), so an empty argument is normal:
+    it is derived here. Uses boundary-aware matching so linking 'etdi' does not also
+    match inside 'ketdi'.
     """
-    if not anchor or not is_valid_action_verb(anchor):
-        raise ValueError(f"Invalid or missing action verb anchor: '{anchor}'")
+    if not lead or not lead.strip():
+        raise ValueError("Cannot linkify empty lead")
 
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError(f"Invalid URL scheme or missing host: {url}")
 
     escaped_url = html_escape(url, quote=True)
-    clean_anch = clean_token(anchor)
-
-    # Separate first sentence and rest of lead
     first_sent_text, first_sent_full, rest = split_first_sentence(lead)
 
-    # Boundary-aware token replacement in first sentence text
-    # Avoid matching inside longer tokens like 'ketdi' when anchor is 'etdi'
-    token_pattern = re.compile(
-        rf"(?<!{_WORD_CHAR_PATTERN})({re.escape(clean_anch)})(?!{_WORD_CHAR_PATTERN})",
-        re.IGNORECASE,
-    )
+    clean_anch = clean_token(anchor) if anchor else ""
+    if not clean_anch:
+        clean_anch = anchor_from_lead(lead)
 
-    match_anch = token_pattern.search(first_sent_text)
+    if not clean_anch:
+        raise ValueError(f"Could not determine link anchor from sentence: '{first_sent_text}'")
+
+    def _find(needle: str):
+        pattern = re.compile(
+            rf"(?<!{_WORD_CHAR_PATTERN})({re.escape(needle)})(?!{_WORD_CHAR_PATTERN})",
+            re.IGNORECASE,
+        )
+        return pattern.search(first_sent_text)
+
+    match_anch = _find(clean_anch)
     if not match_anch:
-        raise ValueError(f"Anchor '{clean_anch}' not found in sentence: '{first_sent_text}'")
+        # A caller-supplied anchor that is not in the sentence falls back to the derived
+        # one. The pattern must be rebuilt for the new needle, not merely re-searched.
+        derived = anchor_from_lead(lead)
+        match_anch = _find(derived) if derived and derived != clean_anch else None
+        if not match_anch:
+            raise ValueError(f"Anchor '{clean_anch}' not found in sentence: '{first_sent_text}'")
+        clean_anch = derived
 
     start, end = match_anch.span(1)
     matched_word = first_sent_text[start:end]
@@ -582,7 +209,6 @@ def linkify_lead(lead: str, url: str, anchor: str) -> str:
         + html_escape(first_sent_text[end:])
     )
 
-    # Trailing punctuation of the first sentence (e.g. '.', '!')
     punct_suffix = first_sent_full[len(first_sent_text) :]
     space_after = " " if rest else ""
     return linked_first_text + html_escape(punct_suffix) + space_after + html_escape(rest)
@@ -597,14 +223,6 @@ def visible_length(html_text: str) -> int:
     return len(html_unescape(plain))
 
 
-def count_words(html_text: str) -> int:
-    """Calculate word count of visible text (tags stripped, entities unescaped)."""
-    plain = _TAG_STRIP_RE.sub("", html_text)
-    unescaped = html_unescape(plain)
-    words = [w for w in unescaped.split() if not w.startswith("#")]
-    return len(words)
-
-
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZА-ЯЁO‘OʻG‘Gʻ\d\W])")
 
 
@@ -616,14 +234,32 @@ def split_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
-def _assemble_candidate(lead_html: str, body_1: str, body_2: str, kicker: str, tag: str) -> str:
+def count_sentences(html_text: str) -> int:
+    """Sentences a reader sees. The hashtag line is a label, not a sentence.
+
+    Sentences, not words: Uzbek folds prepositions into suffixes, so a word count that
+    reads correctly in one language is meaningless in the other. A sentence carries
+    roughly one fact in both.
+    """
+    plain = _TAG_STRIP_RE.sub("", html_text)
+    unescaped = html_unescape(plain).strip()
+    lines = [
+        line.strip()
+        for line in unescaped.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    total = 0
+    for line in lines:
+        total += len(split_sentences(line))
+    return total
+
+
+def _assemble_candidate(lead_html: str, body_1: str, body_2: str, tag: str) -> str:
     parts = [lead_html.strip()]
     if body_1.strip():
         parts.append(html_escape(body_1.strip()))
     if body_2.strip():
         parts.append(html_escape(body_2.strip()))
-    if kicker.strip():
-        parts.append(html_escape(kicker.strip()))
     if tag.strip():
         parts.append(tag.strip())
     return "\n\n".join(parts)
@@ -633,61 +269,54 @@ def trim_post_fields(
     lead_html: str,
     body_1: str,
     body_2: str,
-    kicker: str,
     tag: str,
-    max_chars: int = 900,
-    max_words: int = 35,
-) -> tuple[str, str, str]:
-    """Progressively trim fields until visible length <= max_chars and words <= max_words."""
-    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
-    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
-        return body_1, body_2, kicker
+    max_chars: int = 450,
+    max_sentences: int = 4,
+) -> tuple[str, str]:
+    """Progressively trim fields until visible length and sentence count are in budget."""
+    candidate = _assemble_candidate(lead_html, body_1, body_2, tag)
+    if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
+        return body_1, body_2
 
     # Step 1: Drop trailing sentences from body_2
     b2_sentences = split_sentences(body_2)
     while b2_sentences:
-        candidate = _assemble_candidate(lead_html, body_1, " ".join(b2_sentences), kicker, tag)
-        if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
-            return body_1, " ".join(b2_sentences), kicker
+        candidate = _assemble_candidate(lead_html, body_1, " ".join(b2_sentences), tag)
+        if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
+            return body_1, " ".join(b2_sentences)
         b2_sentences.pop()
     body_2 = ""
 
-    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
-    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
-        return body_1, body_2, kicker
+    candidate = _assemble_candidate(lead_html, body_1, body_2, tag)
+    if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
+        return body_1, body_2
 
-    # Step 2: Drop kicker if still over budget
-    kicker = ""
-    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
-    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
-        return body_1, body_2, kicker
-
-    # Step 3: Drop trailing sentences from body_1 (down to 1 sentence)
+    # Step 2: Drop trailing sentences from body_1 (down to 1 sentence)
     b1_sentences = split_sentences(body_1)
     while len(b1_sentences) > 1:
         b1_sentences.pop()
-        candidate = _assemble_candidate(lead_html, " ".join(b1_sentences), body_2, kicker, tag)
-        if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
-            return " ".join(b1_sentences), body_2, kicker
+        candidate = _assemble_candidate(lead_html, " ".join(b1_sentences), body_2, tag)
+        if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
+            return " ".join(b1_sentences), body_2
 
     body_1 = " ".join(b1_sentences)
-    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
-    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
-        return body_1, body_2, kicker
+    candidate = _assemble_candidate(lead_html, body_1, body_2, tag)
+    if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
+        return body_1, body_2
 
-    # Step 4: Drop body_1 completely if lead alone still fits
-    candidate_lead_only = _assemble_candidate(lead_html, "", "", "", tag)
+    # Step 3: Drop body_1 completely if lead alone still fits
+    candidate_lead_only = _assemble_candidate(lead_html, "", "", tag)
     if (
         visible_length(candidate_lead_only) <= max_chars
-        and count_words(candidate_lead_only) <= max_words
+        and count_sentences(candidate_lead_only) <= max_sentences
     ):
-        return "", "", ""
+        return "", ""
 
     vis = visible_length(candidate_lead_only)
     if vis > max_chars:
         raise ValueError(f"Lead and tag alone exceed max_chars budget ({vis} > {max_chars})")
 
-    return body_1, body_2, kicker
+    return body_1, body_2
 
 
 _FORBIDDEN_TAGS_RE = re.compile(r"<(?!/?a(?:\s+[^>]*)?>)[^>]+>", re.IGNORECASE)
@@ -695,7 +324,9 @@ _BULLET_RE = re.compile(r"^\s*[•\*\-]\s+", re.MULTILINE)
 _A_TAG_RE = re.compile(r'<a\s+href="[^"]+">.*?</a>', re.DOTALL | re.IGNORECASE)
 
 
-def validate_rendered_post(rendered_html: str, max_chars: int = 900) -> list[str]:
+def validate_rendered_post(
+    rendered_html: str, max_chars: int = 450, max_sentences: int = 4
+) -> list[str]:
     """Validate rendered HTML satisfies all post contract constraints."""
     violations = []
 
@@ -704,15 +335,18 @@ def validate_rendered_post(rendered_html: str, max_chars: int = 900) -> list[str
     if len(a_matches) != 1:
         violations.append(f"Post must contain exactly one <a> tag, found {len(a_matches)}")
     else:
-        # Check that anchor text inside <a> is exactly one approved action verb
-        anchor_inner = re.sub(
-            r'<a\s+href="[^"]+">(.*?)</a>', r"\1", a_matches[0], flags=re.DOTALL | re.IGNORECASE
-        )
-        plain_anchor = html_unescape(anchor_inner).strip()
-        if not plain_anchor or " " in plain_anchor or not is_valid_action_verb(plain_anchor):
-            violations.append(
-                f"Anchor inside <a> must be a single approved action verb, got '{plain_anchor}'"
-            )
+        # The anchor is positional now: it must close the lead. Anything other than
+        # sentence punctuation after </a> means the link is not on the tail.
+        first_block = rendered_html.split("\n\n", 1)[0]
+        tail_match = re.search(r"</a>(.*)$", first_block, re.DOTALL)
+        if tail_match is None:
+            violations.append("The <a> tag must be inside the lead (the first block)")
+        else:
+            trailing = html_unescape(_TAG_STRIP_RE.sub("", tail_match.group(1)))
+            if trailing.strip(" .!?"):
+                violations.append(
+                    f"Anchor must end the lead sentence; text follows it: '{trailing.strip()}'"
+                )
 
     # No forbidden tags (<b>, <i>, <code>, <blockquote>, etc.)
     forbidden = _FORBIDDEN_TAGS_RE.findall(rendered_html)
@@ -741,41 +375,45 @@ def validate_rendered_post(rendered_html: str, max_chars: int = 900) -> list[str
     if vis_len > max_chars:
         violations.append(f"Visible length {vis_len} exceeds max budget of {max_chars} characters")
 
+    # Check sentence count
+    num_sentences = count_sentences(rendered_html)
+    if num_sentences > max_sentences:
+        violations.append(
+            f"Post exceeds sentence limit ({num_sentences} > {max_sentences} sentences)"
+        )
+
     return violations
 
 
-def render_item_post_v2(item_data: dict, max_chars: int = 900, max_words: int = 35) -> str:
-    """Render a clean v2 post conforming to the ultra-concise approved spec."""
+def render_item_post_v2(item_data: dict, max_chars: int = 450, max_sentences: int = 4) -> str:
+    """Render a v3 post: lead, body_1, optional body_2, one positional link, one hashtag."""
     url = item_data.get("url", "")
     lead = strip_markdown_formatting(item_data.get("lead_uz") or item_data.get("summary_uz") or "")
     if not lead.strip():
         raise ValueError("Cannot render post: lead_uz / summary_uz is empty")
 
-    requested_anchor = strip_markdown_formatting(item_data.get("link_anchor_uz") or "")
-    anchor = resolve_anchor(lead, requested_anchor)
+    anchor = anchor_from_lead(lead)
     lead_html = linkify_lead(lead, url, anchor)
 
     body_1 = strip_markdown_formatting(item_data.get("body_1_uz") or "")
     body_2 = strip_markdown_formatting(item_data.get("body_2_uz") or "")
-    kicker = strip_markdown_formatting(item_data.get("kicker_uz") or "")
 
     topic = item_data.get("topic") or item_data.get("primary_topic")
     tag = get_topic_tag(topic)
 
     # Trim fields if over budget
-    b1_trimmed, b2_trimmed, k_trimmed = trim_post_fields(
+    b1_trimmed, b2_trimmed = trim_post_fields(
         lead_html=lead_html,
         body_1=body_1,
         body_2=body_2,
-        kicker=kicker,
         tag=tag,
         max_chars=max_chars,
-        max_words=max_words,
+        max_sentences=max_sentences,
     )
 
-    rendered = _assemble_candidate(lead_html, b1_trimmed, b2_trimmed, k_trimmed, tag)
+    rendered = _assemble_candidate(lead_html, b1_trimmed, b2_trimmed, tag)
 
-    violations = validate_rendered_post(rendered, max_chars=max_chars)
+    violations = validate_rendered_post(rendered, max_chars=max_chars, max_sentences=max_sentences)
     if violations:
         raise ValueError(f"Rendered post contract violation: {'; '.join(violations)}")
 

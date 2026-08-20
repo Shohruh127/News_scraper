@@ -20,10 +20,8 @@ pytestmark = pytest.mark.django_db
 
 EN_PAYLOAD = {
     "lead_en": "Qwen released 2.4T open-weight model for enterprise reasoning.",
-    "link_anchor_en": "released",
     "body_1_en": "The model features 2.4 trillion parameters and scores high on benchmarks.",
     "body_2_en": "",
-    "kicker_en": "",
     "why_it_matters_en": "It can be self-hosted.",
     "uzbekistan_application_en": "Local teams can self-host it.",
     "archetype": "release",
@@ -32,10 +30,8 @@ EN_PAYLOAD = {
 
 UZ_PAYLOAD = {
     "lead_uz": "Qwen jamoasi 2.4T parametrli ochiq modelni taqdim etdi.",
-    "link_anchor_uz": "etdi",
     "body_1_uz": "Model 2.4 trillion parametrga ega bo'lib, yuqori natijalar ko'rsatgan.",
     "body_2_uz": "",
-    "kicker_uz": "",
     "why_it_matters_uz": "Uni mahalliy serverda ishlatish mumkin.",
     "uzbekistan_application_uz": "Mahalliy jamoalar o'zida joylashtira oladi.",
 }
@@ -252,7 +248,7 @@ def test_micro_pipeline_schema_required_fields():
     from apps.digest.llm import EDITORIAL_EN_SCHEMA
 
     required = EDITORIAL_EN_SCHEMA["required"]
-    for field in ["lead_en", "link_anchor_en", "body_1_en", "why_it_matters_en"]:
+    for field in ["lead_en", "body_1_en", "why_it_matters_en"]:
         assert field in required
 
 
@@ -262,7 +258,6 @@ def test_editorial_model_validation():
 
     payload = {
         "lead_en": "Ollama released v0.32.10 with speedup.",
-        "link_anchor_en": "released",
         "body_1_en": "The release changes a default and speeds up prefill by 2x.",
         "why_it_matters_en": "It standardises behaviour across engines.",
         "uzbekistan_application_en": "Local teams running Ollama benefit directly.",
@@ -271,7 +266,6 @@ def test_editorial_model_validation():
     }
     obj = EditorialEn(**payload)
     assert obj.lead_en.startswith("Ollama")
-    assert obj.link_anchor_en == "released"
 
 
 def test_archetype_fields_flattens_only_the_chosen_block():
@@ -388,8 +382,6 @@ def test_editorial_en_v2_schema_validation():
         "lead_en": "EHang launched a fully autonomous passenger eVTOL route.",
         "body_1_en": "Flights take 20 minutes and cost 800 yuan per seat.",
         "body_2_en": "Civil aviation regulators issued complete type certificates.",
-        "kicker_en": "Only place in the world to buy pilotless tickets.",
-        "link_anchor_en": "launched",
         "why_it_matters_en": "Commercialises urban air mobility.",
         "uzbekistan_application_en": "Could inform regional drone delivery regulations.",
         "technical": {
@@ -402,8 +394,6 @@ def test_editorial_en_v2_schema_validation():
     }
     model = llm.EditorialEn.model_validate(v2_data)
     assert model.lead_en.startswith("EHang")
-    assert model.link_anchor_en == "launched"
-    assert model.kicker_en.startswith("Only place")
 
 
 def test_translation_schema_for_v2_fields():
@@ -412,8 +402,6 @@ def test_translation_schema_for_v2_fields():
         "lead_en": "Lead text",
         "body_1_en": "Body 1 text",
         "body_2_en": "Body 2 text",
-        "kicker_en": "Kicker text",
-        "link_anchor_en": "launched",
         "why_it_matters_en": "Why text",
         "uzbekistan_application_en": "UZ text",
     }
@@ -422,10 +410,113 @@ def test_translation_schema_for_v2_fields():
         "lead_uz",
         "body_1_uz",
         "body_2_uz",
-        "kicker_uz",
-        "link_anchor_uz",
         "why_it_matters_uz",
         "uzbekistan_application_uz",
     }
     assert set(schema["properties"]) == expected
     assert set(schema["required"]) == expected
+
+
+# --- v3 prompt and schema contracts -------------------------------------------
+
+
+def test_no_schema_mentions_the_link_anchor():
+    from apps.digest.llm import (
+        COMMON_TRANSLATED_FIELDS,
+        EDITORIAL_EN_SCHEMA,
+        TRANSLATION_SCHEMA,
+    )
+
+    assert "link_anchor_en" not in EDITORIAL_EN_SCHEMA["properties"]
+    assert "link_anchor_en" not in EDITORIAL_EN_SCHEMA["required"]
+    assert "link_anchor_uz" not in TRANSLATION_SCHEMA["properties"]
+    assert "link_anchor_uz" not in TRANSLATION_SCHEMA["required"]
+    assert "link_anchor_en" not in COMMON_TRANSLATED_FIELDS
+
+
+def test_editorial_en_schema_covers_the_appendix_template():
+    """A field the appendix renders but the schema cannot produce is dead ink."""
+    import re as _re
+    from pathlib import Path
+
+    from django.conf import settings as _settings
+
+    from apps.digest.llm import EDITORIAL_EN_SCHEMA
+
+    template = Path(_settings.BASE_DIR) / "apps/digest/templates/digest/item_appendix.html"
+    rendered_vars = set(_re.findall(r"{{\s*(\w+)", template.read_text(encoding="utf-8")))
+    technical_props = set(EDITORIAL_EN_SCHEMA["properties"]["technical"]["properties"])
+    from_technical = {
+        "what_was_built",
+        "architecture",
+        "license",
+        "repo_url",
+        "api_url",
+        "install",
+        "benchmarks",
+        "limitations",
+    }
+    missing = (rendered_vars & from_technical) - technical_props
+    assert not missing, f"appendix renders {sorted(missing)} but the schema cannot produce them"
+    assert "local_deployable" in technical_props
+
+
+def test_editorial_en_prompt_documents_every_technical_field():
+    """Schema and prompt must not drift: a field the prompt never names is never filled."""
+    from apps.digest.llm import EDITORIAL_EN_PROMPT, EDITORIAL_EN_SCHEMA
+
+    for field in EDITORIAL_EN_SCHEMA["properties"]["technical"]["properties"]:
+        assert field in EDITORIAL_EN_PROMPT, f"prompt never mentions technical.{field}"
+
+
+def test_editorial_en_prompt_example_obeys_its_own_rules():
+    """The few-shot dominates the model's behaviour, so it must not contradict the rules."""
+    import json as _json
+    import re as _re
+
+    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_PROMPT
+
+    filled = EDITORIAL_EN_PROMPT.format(title="T", source="S", text="X")
+    block = filled.split("Output JSON:", 1)[1].split("ARTICLE", 1)[0].strip()
+    example = _json.loads(block)
+
+    def sentences(text):
+        return [s for s in _re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+
+    assert len(sentences(example["lead_en"])) == 1, "lead_en must be exactly one sentence"
+    assert example["lead_en"].rstrip().endswith("."), "lead_en must be a complete sentence"
+    assert len(sentences(example["body_1_en"])) == 1, "body_1_en must be exactly one sentence"
+    assert _re.search(r"\d", example["body_1_en"]), "body_1_en must carry a concrete number"
+    assert example["archetype"] in ARCHETYPES
+    assert "link_anchor_en" not in example, "the anchor is derived, not modelled"
+    assert "technical" in example, "the appendix depends on the technical block"
+
+
+def test_translation_prompt_has_no_anchor_rules():
+    from apps.digest.llm import TRANSLATION_PROMPT
+
+    assert "link_anchor" not in TRANSLATION_PROMPT
+    assert "Link Anchor Translation" not in TRANSLATION_PROMPT
+
+
+def test_translation_prompt_does_not_force_empty_fields():
+    """v3 needs body_2_uz; v2 hard-coded it to an empty string."""
+    from apps.digest.llm import TRANSLATION_PROMPT
+
+    assert 'body_2_uz: ""' not in TRANSLATION_PROMPT
+
+
+def test_translation_prompt_examples_are_complete():
+    import json as _json
+    import re as _re
+
+    from apps.digest.llm import TRANSLATION_PROMPT
+
+    filled = TRANSLATION_PROMPT.format(fields="{}")
+    blocks = _re.findall(r"Chiquvchi JSON:\s*(\{.*?\n\})", filled, _re.DOTALL)
+    assert len(blocks) == 2, "both few-shot examples must be parseable"
+    for raw in blocks:
+        example = _json.loads(raw)
+        for key in ("lead_uz", "body_1_uz", "body_2_uz"):
+            assert example.get(key), f"{key} missing or empty in a few-shot example"
+        assert "link_anchor_uz" not in example

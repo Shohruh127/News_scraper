@@ -166,8 +166,6 @@ class EditorialEn(BaseModel):
     lead_en: str = ""
     body_1_en: str = ""
     body_2_en: str = ""
-    kicker_en: str = ""
-    link_anchor_en: str = ""
 
     # v1 fields (kept for backward compatibility & historical records)
     headline_en: str = ""
@@ -194,8 +192,6 @@ class Translation(BaseModel):
     lead_uz: str = ""
     body_1_uz: str = ""
     body_2_uz: str = ""
-    kicker_uz: str = ""
-    link_anchor_uz: str = ""
 
     # v1 fields
     headline_uz: str = ""
@@ -215,8 +211,6 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
         "lead_en": {"type": "string"},
         "body_1_en": {"type": "string"},
         "body_2_en": {"type": "string"},
-        "kicker_en": {"type": "string"},
-        "link_anchor_en": {"type": "string"},
         "why_it_matters_en": {"type": "string"},
         "uzbekistan_application_en": {"type": "string"},
         "archetype": {"type": "string", "enum": list(ARCHETYPES)},
@@ -228,6 +222,13 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
             "type": "object",
             "properties": {
                 "what_was_built": {"type": "string"},
+                "architecture": {"type": "string"},
+                "license": {"type": "string"},
+                "repo_url": {"type": "string"},
+                "api_url": {"type": "string"},
+                "install": {"type": "string"},
+                "hardware": {"type": "string"},
+                "benchmarks": {"type": "string"},
                 "limitations": {"type": "string"},
                 "local_deployable": {"type": "boolean"},
             },
@@ -236,47 +237,67 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
     "required": [
         "lead_en",
         "body_1_en",
-        "link_anchor_en",
         "why_it_matters_en",
     ],
 }
 
 EDITORIAL_EN_PROMPT = (
-    "Extract core high-signal facts from the AI engineering article below for an "
-    "ultra-concise Telegram channel news post (max 30 words total). Return JSON only.\n\n"
+    "Extract the high-signal facts from the AI engineering article below for a short "
+    "Telegram news post. Return JSON only.\n\n"
+    "## Length\n"
+    "The post is 2 to 3 sentences: lead_en, body_1_en and an optional body_2_en. Each of "
+    "those fields is EXACTLY ONE sentence. Count sentences, not words.\n\n"
     "## Output Fields:\n"
-    "- lead_en: exactly 1 short sentence (10-15 words). Who did what, ending with a "
-    "single-word action verb as the link anchor (e.g. 'released', 'launched', 'open-sourced'). "
-    "No markdown or headlines.\n"
-    "- link_anchor_en: the exact single-word action verb from lead_en (e.g. 'released').\n"
-    "- body_1_en: exactly 1 short sentence (10-15 words) with key metrics, numbers, "
-    "benchmarks, or technical specs. No fluff.\n"
-    '- body_2_en: ""\n'
-    '- kicker_en: ""\n'
-    "- why_it_matters_en: 1 short sentence on developer/engineering impact.\n"
-    "- uzbekistan_application_en: 1 short sentence or empty string.\n"
+    "- lead_en: one complete sentence with a finite main verb. Who did what. It must be "
+    "a sentence, not a noun phrase and not a fragment; 'X is a tool that does Y' is "
+    "wrong. Do not end it with a particle or a dangling conjunction. No markdown, no "
+    "headline.\n"
+    "- body_1_en: one sentence carrying the key number, benchmark, or technical spec.\n"
+    "- body_2_en: one sentence of cause or context, or an empty string.\n"
+    "- why_it_matters_en: one sentence on developer or engineering impact.\n"
+    "- uzbekistan_application_en: one sentence, or an empty string.\n"
     "- archetype: 'release', 'company_product', 'research', 'agent_protocol', "
     "'risk_hardening', or 'policy'\n"
-    "- evidence_level: 'vendor_claim_only' or 'multiple_evidence'\n\n"
+    "- evidence_level: 'vendor_claim_only' or 'multiple_evidence'\n"
+    "- technical: an object with what_was_built, architecture, license, repo_url, "
+    "api_url, install, hardware, benchmarks, limitations, local_deployable.\n"
+    "  Copy each value VERBATIM from the article. If the article does not state it, "
+    "return an empty string. Never guess a URL, a licence name, or an install command "
+    "- these are published as live links.\n\n"
     "## Style Rules:\n"
-    "1. NO FLUFF / NO HYPE: Never use words like 'revolutionary', 'game-changer', 'powerful'.\n"
-    "2. MANDATORY NUMBERS / METRICS: body_1_en must carry concrete numbers.\n"
-    "3. STRICT LENGTH: lead_en + body_1_en combined must NOT exceed 30 words!\n\n"
+    "1. NO FLUFF / NO HYPE: never use words like 'revolutionary', 'game-changer', "
+    "'powerful'.\n"
+    "2. MANDATORY NUMBERS: body_1_en must carry a concrete number.\n"
+    "3. ONE SENTENCE PER FIELD. A field with two sentences is wrong.\n\n"
     "## Few-Shot Example:\n"
     'Input: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context, '
-    'scoring 84% on MMLU."\n'
+    'scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."\n'
     "Output JSON:\n"
     "{{\n"
-    '  "lead_en": "Mistral released Mistral-Large-2 with 123B parameters for frontier '
-    'reasoning.",\n'
-    '  "link_anchor_en": "released",\n'
-    '  "body_1_en": "The model features a 128k context window and scores 84% on MMLU.",\n'
-    '  "body_2_en": "",\n'
-    '  "kicker_en": "",\n'
-    '  "why_it_matters_en": "Provides an open-weight alternative to proprietary LLMs.",\n'
-    '  "uzbekistan_application_en": "Can be self-hosted for local multilingual applications.",\n'
+    '  "lead_en": "Mistral released Mistral-Large-2, an open-weight successor to its '
+    'previous frontier model.",\n'
+    '  "body_1_en": "The model has 123B parameters, a 128k context window, and scores '
+    '84% on MMLU.",\n'
+    '  "body_2_en": "Apache-2.0 licensing places it alongside the open-weight models it '
+    'competes with.",\n'
+    '  "why_it_matters_en": "Teams can self-host a frontier-class model without an API '
+    'contract.",\n'
+    '  "uzbekistan_application_en": "Local teams can run it on their own hardware for '
+    'multilingual work.",\n'
     '  "archetype": "release",\n'
-    '  "evidence_level": "vendor_claim_only"\n'
+    '  "evidence_level": "vendor_claim_only",\n'
+    '  "technical": {{\n'
+    '    "what_was_built": "An open-weight large language model.",\n'
+    '    "architecture": "123B parameters, 128k context window",\n'
+    '    "license": "Apache-2.0",\n'
+    '    "repo_url": "https://github.com/mistralai/mistral-large-2",\n'
+    '    "api_url": "",\n'
+    '    "install": "",\n'
+    '    "hardware": "",\n'
+    '    "benchmarks": "84% on MMLU",\n'
+    '    "limitations": "",\n'
+    '    "local_deployable": true\n'
+    "  }}\n"
     "}}\n\n"
     "ARTICLE\n"
     "Title: {title}\n"
@@ -293,15 +314,12 @@ TRANSLATION_SCHEMA: dict[str, Any] = {
         "lead_uz": {"type": "string"},
         "body_1_uz": {"type": "string"},
         "body_2_uz": {"type": "string"},
-        "kicker_uz": {"type": "string"},
-        "link_anchor_uz": {"type": "string"},
         "why_it_matters_uz": {"type": "string"},
         "uzbekistan_application_uz": {"type": "string"},
     },
     "required": [
         "lead_uz",
         "body_1_uz",
-        "link_anchor_uz",
         "why_it_matters_uz",
     ],
 }
@@ -311,8 +329,6 @@ COMMON_TRANSLATED_FIELDS = (
     "lead_en",
     "body_1_en",
     "body_2_en",
-    "kicker_en",
-    "link_anchor_en",
     "why_it_matters_en",
     "uzbekistan_application_en",
 )
@@ -350,47 +366,52 @@ def translation_schema_for(fields: dict) -> dict:
 
 
 TRANSLATION_PROMPT = (
-    "Quyidagi faktlar asosida O'zbekistondagi AI muhandislari uchun 2 ta qisqa gapdan iborat "
-    "ravon va ixcham Telegram posti yoz (Latin script). Faqat JSON qaytar.\n\n"
+    "Quyidagi faktlar asosida O'zbekistondagi AI muhandislari uchun qisqa Telegram posti "
+    "yoz (Latin script). Faqat JSON qaytar.\n\n"
+    "## Post tuzilishi\n"
+    "Post 2 yoki 3 ta gapdan iborat: lead_uz, body_1_uz va ixtiyoriy body_2_uz. "
+    "Har bir maydon AYNAN BITTA gap. Gaplarni sana, so'zlarni emas.\n"
+    "Postni yakuniy izoh yoki xulosa jumlasi bilan tugatma - faqat faktlar.\n\n"
     "## Qat'iy qoidalar:\n"
-    "1. Post matni (lead_uz + body_1_uz) JAMI 30 TA SO'ZDAN OSHMASIN (max 30 words total).\n"
-    "2. lead_uz: Aniq 1 ta qisqa gap (10-15 so'z). Kim nima qilganini bildiradi va link_anchor_uz "
-    "fe'lini o'z ichiga oladi.\n"
-    "3. body_1_uz: Aniq 1 ta qisqa gap (10-15 so'z). Asosiy raqam, mezon yoki texnik faktni "
-    "ifodalaydi.\n"
-    "4. link_anchor_uz: lead_uz ichidagi aynan 1 ta so'zdan iborat harakat fe'li "
-    "(masalan: 'chiqardi', 'tushirdi', 'almashtirdi', 'qo'shdi', 'etdi').\n"
-    "5. Barcha raqamlar, versiyalar (masalan, v0.32.12, $12K, 95.3%) tarjimada aniq saqlansin.\n"
-    "6. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',\n"
-    "   'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.\n"
-    '7. body_2_uz: "" va kicker_uz: "" bo\'lsin.\n\n'
+    "1. lead_uz: aynan 1 ta to'liq gap. Kim nima qilganini bildiradi va kesim bilan "
+    "tugaydi. Uni yuklama bilan tugatma ('ham', 'esa') va gapni chala qoldirma.\n"
+    "2. body_1_uz: aynan 1 ta gap. Asosiy raqam, mezon yoki texnik faktni ifodalaydi.\n"
+    "3. body_2_uz: aynan 1 ta gap - sabab yoki kontekst - yoki bo'sh satr.\n"
+    "4. Barcha raqamlar, versiyalar (masalan, v0.32.12, $12K, 95.3%) tarjimada aniq "
+    "saqlansin.\n"
+    "5. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',\n"
+    "   'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.\n\n"
+    # PROVISIONAL Uzbek. The owner is the native speaker and these two examples are his
+    # to write - see docs/superpowers/specs/2026-08-20-post-format-gold-examples.md
+    # sections 1-2. They obey the rules above so the prompt is not self-contradictory in
+    # the meantime, but replace them with his gold text before this reaches the channel.
     "## Few-Shot Namunalar:\n"
     "Misol 1 (Model relizi):\n"
-    'Kiruvchi faktlar: {{"lead_en": "Mistral released Mistral-Large-2 with 123B parameters.", '
-    '"link_anchor_en": "released", "body_1_en": "The model features 128k context and 84% score '
-    'on MMLU."}}\n'
+    'Kiruvchi faktlar: {{"lead_en": "Mistral released Mistral-Large-2 with 123B '
+    'parameters.", "body_1_en": "The model features 128k context and 84% score on '
+    'MMLU.", "body_2_en": "Apache-2.0 licensing allows commercial use."}}\n'
     "Chiquvchi JSON:\n"
     "{{\n"
-    '  "lead_uz": "Mistral jamoasi 123B parametrli yangi Mistral-Large-2 modelini ochiq taqdim '
-    'etdi.",\n'
-    '  "link_anchor_uz": "etdi",\n'
-    '  "body_1_uz": "Model 128k kontekstga ega bo\'lib, MMLU testida 84% natija ko\'rsatgan.",\n'
-    '  "body_2_uz": "",\n'
-    '  "kicker_uz": ""\n'
+    '  "lead_uz": "Mistral jamoasi 123B parametrli yangi Mistral-Large-2 modelini '
+    'ochiq taqdim etdi.",\n'
+    '  "body_1_uz": "Model 128k kontekstga ega bo\'lib, MMLU testida 84% natija '
+    "ko'rsatgan.\",\n"
+    '  "body_2_uz": "Apache-2.0 litsenziyasi uni tijorat loyihalarida ham ishlatishga '
+    'ruxsat beradi."\n'
     "}}\n\n"
     "Misol 2 (Dasturiy vosita / Keys):\n"
-    'Kiruvchi faktlar: {{"lead_en": "Asana replaced outdated testing system in 2 weeks for $12K '
-    'with OpenAI Codex.", "link_anchor_en": "replaced", "body_1_en": "The project finished in two '
-    'weeks instead of estimated 5 years and $6M."}}\n'
+    'Kiruvchi faktlar: {{"lead_en": "Asana replaced outdated testing system in 2 weeks '
+    'for $12K with OpenAI Codex.", "body_1_en": "The project finished in two weeks '
+    'instead of estimated 5 years and $6M.", "body_2_en": "Parallel coding agents did '
+    'the migration."}}\n'
     "Chiquvchi JSON:\n"
     "{{\n"
-    '  "lead_uz": "Asana jamoasi OpenAI Codex yordamida eskirgan sinov tizimini ikki haftada '
-    '$12K ga almashtirdi.",\n'
-    '  "link_anchor_uz": "almashtirdi",\n'
-    '  "body_1_uz": "Avval 5 yil va $6M deb taxmin qilingan loyiha parallel kodlovchi agentlar '
-    'bilan yakunlandi.",\n'
-    '  "body_2_uz": "",\n'
-    '  "kicker_uz": ""\n'
+    '  "lead_uz": "Asana jamoasi OpenAI Codex yordamida eskirgan sinov tizimini ikki '
+    'haftada $12K ga almashtirdi.",\n'
+    '  "body_1_uz": "Avval 5 yil va $6M deb taxmin qilingan ish ikki haftada '
+    'yakunlandi.",\n'
+    '  "body_2_uz": "Ko\'chirishni yollangan jamoa emas, parallel kodlovchi agentlar '
+    'bajardi."\n'
     "}}\n\n"
     "## Lug'at va atamalar (Glossary):\n"
     "- 'US', 'U.S.', 'United States' -> 'AQSH'\n"
@@ -403,17 +424,13 @@ TRANSLATION_PROMPT = (
     "1. Faqat adabiy va to'g'ri o'zbek tili so'zlaridan foydalanilsin. Soxta, noto'g'ri yoki "
     "buzilgan so'zlar (masalan: 'sinifikatori', 'takib') qat'iyan taqiqlanadi.\n"
     "2. Har bir gap mantiqiy va grammatik jihatdan to'liq bo'lsin (Ega + To'ldiruvchi + Kesim).\n\n"
-    "## Link Anchor Translation\n"
-    "link_anchor_uz MUST be EXACTLY ONE WORD token (a single word verb like 'chiqardi', "
-    "'tushirdi', 'etdi', 'almashtirdi', 'qo'shdi', 'tikladi') and MUST appear verbatim "
-    "in lead_uz.\n\n"
-    "## Keep in English\n"
-    "Model names, product names, company names, metric names, and terms: model, API, agent, "
-    "framework, benchmark, context, token, inference, latency, prompt, repo, open-source, "
-    "weights, open-weight, toolchain.\n\n"
-    "## Plain text formatting\n"
-    "Do NOT use markdown bolding (like **word**), asterisks, backticks, or bullet points in any "
-    "field. Output clean plain text.\n\n"
+    "## Ingliz tilida qoladigan atamalar\n"
+    "Model nomlari, mahsulot nomlari, kompaniya nomlari, mezon nomlari va quyidagilar: "
+    "model, API, agent, framework, benchmark, context, token, inference, latency, "
+    "prompt, repo, open-source, weights, open-weight, toolchain.\n\n"
+    "## Oddiy matn formati\n"
+    "Hech qaysi maydonda markdown qalinlik (**so'z**), yulduzcha, teskari qo'shtirnoq "
+    "yoki ro'yxat belgilaridan foydalanma. Toza oddiy matn qaytar.\n\n"
     "FIELDS TO TRANSLATE\n"
     "{fields}\n"
 )
@@ -1074,23 +1091,6 @@ def _normalize_uz_payload(payload: dict) -> dict:
         else:
             normalized[k] = v
 
-    # Link anchor normalization: if multiword, resolve action verb or take last word
-    anchor = normalized.get("link_anchor_uz", "")
-    if anchor and " " in anchor.strip():
-        lead = normalized.get("lead_uz") or normalized.get("summary_uz") or ""
-        resolved = post_format.resolve_anchor(lead, anchor)
-        if resolved:
-            normalized["link_anchor_uz"] = resolved
-        else:
-            words = [
-                post_format.clean_token(w) for w in anchor.split() if post_format.clean_token(w)
-            ]
-            if words:
-                normalized["link_anchor_uz"] = words[-1]
-    # Kicker normalization: enforce maximum 8 words
-    kicker = normalized.get("kicker_uz", "")
-    if kicker and len(kicker.strip().split()) > 8:
-        normalized["kicker_uz"] = " ".join(kicker.strip().split()[:8])
     return normalized
 
 

@@ -28,58 +28,6 @@ def test_get_topic_tag_valid_and_invalid():
         post_format.get_topic_tag("non_existent_topic")
 
 
-def test_is_valid_action_verb():
-    """is_valid_action_verb accepts real action verbs and rejects multiwords, sources, and nouns."""
-    assert post_format.is_valid_action_verb("chiqardi") is True
-    assert post_format.is_valid_action_verb("boshladi") is True
-    assert post_format.is_valid_action_verb("etdi") is True
-    assert post_format.is_valid_action_verb("qo'ymoqda") is True
-    assert post_format.is_valid_action_verb("tushirdi.") is True  # punctuation stripped
-
-    # Rejects multiwords
-    assert post_format.is_valid_action_verb("yo'lga qo'ymoqda") is False
-    assert post_format.is_valid_action_verb("taqdim etdi") is False
-
-    # Rejects sources and domains
-    assert post_format.is_valid_action_verb("github.com") is False
-    assert post_format.is_valid_action_verb("Nextgov") is False
-    assert post_format.is_valid_action_verb("Wiz") is False
-    assert post_format.is_valid_action_verb("U.S") is False
-
-    # Rejects common nouns
-    assert post_format.is_valid_action_verb("model") is False
-    assert post_format.is_valid_action_verb("agent") is False
-    assert post_format.is_valid_action_verb("tizim") is False
-
-
-def test_resolve_anchor_exact_match():
-    """When requested_anchor is a valid single-word verb in sentence one, use it."""
-    lead = "EHang kompaniyasi uchar taksi xizmatini yo'lga qo'ymoqda. Parvoz 20 daqiqa."
-    anchor = post_format.resolve_anchor(lead, "qo'ymoqda")
-    assert anchor == "qo'ymoqda"
-
-
-def test_resolve_anchor_rejects_multiword_and_selects_verb():
-    """When requested_anchor is multiword, resolve_anchor falls back to first sentence verb."""
-    lead = "EHang kompaniyasi uchar taksi xizmatini yo'lga qo'ymoqda. Parvoz 20 daqiqa."
-    anchor = post_format.resolve_anchor(lead, "yo'lga qo'ymoqda")
-    assert anchor == "qo'ymoqda"
-
-
-def test_resolve_anchor_rejects_source_name_and_selects_verb():
-    """When requested_anchor is a source/domain name, resolve_anchor ignores it and finds verb."""
-    lead = "Nextgov ma'lumotlariga ko'ra agentlik yangi grant berdi. Bu uch yillik loyiha."
-    anchor = post_format.resolve_anchor(lead, "Nextgov")
-    assert anchor == "berdi"
-
-
-def test_resolve_anchor_returns_empty_when_no_verb_in_first_sentence():
-    """When the first sentence has no action verb, resolve_anchor returns empty string."""
-    lead = "Yangi model va yangi dasturiy ta'minot haqida hisobot. U yaxshi ishlaydi."
-    anchor = post_format.resolve_anchor(lead, "hisobot")
-    assert anchor == ""
-
-
 def test_linkify_lead_boundary_etdi_vs_ketdi():
     """etdi vs ketdi: 'etdi' must NOT link inside 'ketdi'."""
     lead = "Qwen dasturchilar jamoasi ketdi va yangi model taqdim etdi. Muhim natijalar."
@@ -112,7 +60,6 @@ def test_linkify_lead_repeated_same_token():
     linked = post_format.linkify_lead(lead, url, anchor)
     assert linked.count("<a ") == 1
     assert linked.count("</a>") == 1
-    # First occurrence linked, second occurrence unlinked
     expected = 'tez <a href="https://example.com/model">ishlaydi</a> va juda samarali ishlaydi.'
     assert expected in linked
 
@@ -144,6 +91,12 @@ def test_visible_length_strips_tags_and_unescapes_entities():
     assert post_format.visible_length(html) == len("Hello world & friends")
 
 
+def test_count_sentences():
+    """count_sentences counts sentences across paragraphs excluding hashtags."""
+    post = "Birinchi gap. Ikkinchi gap.\n\nUchinchi gap!\n\n#modellar"
+    assert post_format.count_sentences(post) == 3
+
+
 def test_trim_post_fields_within_budget():
     """trim_post_fields preserves all text when within budget."""
     lead_html = (
@@ -151,26 +104,22 @@ def test_trim_post_fields_within_budget():
     )
     body_1 = "Parvoz 20 daqiqa davom etadi va 800 yuan turadi."
     body_2 = "Sertifikatlar to'liq olingan."
-    kicker = "Dunyo bo'yicha yagona xizmat."
     tag = "#robototexnika"
 
-    b1, b2, k = post_format.trim_post_fields(lead_html, body_1, body_2, kicker, tag, max_chars=900)
+    b1, b2 = post_format.trim_post_fields(lead_html, body_1, body_2, tag, max_chars=900)
     assert b1 == body_1
     assert b2 == body_2
-    assert k == kicker
 
 
 def test_trim_post_fields_drops_body_2_first_when_overbudget():
-    """When over budget, body_2 sentences are dropped first, then body_1, then kicker."""
+    """When over budget, body_2 sentences are dropped first, then body_1."""
     lead_html = 'EHang kompaniyasi <a href="https://example.com">boshladi</a>.'
     body_1 = "Birinchi muhim fakt. Ikkinchi fakt."
     body_2 = "Ortiqcha uchinchi fakt. Ortiqcha to'rtinchi fakt."
-    kicker = "Ixcham zarba."
     tag = "#robototexnika"
 
-    b1, b2, k = post_format.trim_post_fields(lead_html, body_1, body_2, kicker, tag, max_chars=110)
+    b1, b2 = post_format.trim_post_fields(lead_html, body_1, body_2, tag, max_chars=80)
     assert b2 == ""
-    assert k == kicker
     assert "Birinchi muhim fakt" in b1
 
 
@@ -202,28 +151,13 @@ def test_validate_rendered_post_rejects_forbidden_tags_and_multiple_links():
     assert any("approved hashtag" in v for v in violations)
 
 
-def test_render_item_post_v2_fails_controlled_when_no_verb():
-    """render_item_post_v2 raises ValueError when first sentence has no valid action verb."""
-    item_data = {
-        "url": "https://example.com/test",
-        "lead_uz": "Yangi model va yangi dasturiy ta'minot haqida hisobot.",
-        "link_anchor_uz": "",
-        "body_1_uz": "Birinchi fakt.",
-        "topic": Topic.ROBOTICS,
-    }
-    with pytest.raises(ValueError, match="Invalid or missing action verb anchor"):
-        post_format.render_item_post_v2(item_data, max_chars=900)
-
-
 def test_render_item_post_v2_end_to_end():
     """render_item_post_v2 produces conforming HTML."""
     item_data = {
         "url": "https://example.com/ehang-evtol",
         "lead_uz": "EHang kompaniyasi yo'lovchi uchar taksi xizmatini yo'lga qo'ymoqda.",
-        "link_anchor_uz": "qo'ymoqda",
         "body_1_uz": "Parvoz 20 daqiqa davom etadi va bir o'rindiq 800 yuan turadi.",
         "body_2_uz": "Xitoy aviatsiya regulyatori to'liq sertifikat bergan.",
-        "kicker_uz": "Uchuvchisiz parvozga chipta sotiladigan yagona joy.",
         "topic": Topic.ROBOTICS,
     }
     rendered = post_format.render_item_post_v2(item_data, max_chars=900)
@@ -235,19 +169,150 @@ def test_render_item_post_v2_end_to_end():
     assert post_format.visible_length(rendered) <= 900
 
 
-def test_render_item_post_v2_ultra_concise_under_30_words():
-    """render_item_post_v2 renders ultra-concise post with <= 30 words."""
+def test_render_item_post_v2_stays_within_the_sentence_budget():
+    """The budget is sentences now. The anchor pairs the light verb: 'qayd etildi'."""
     item_data = {
-        "url": "https://t.me/customs_rf/12219",
-        "lead_uz": (
-            "Rossiya va Gruziya chegarasida yangi rekord qayd etildi: "
-            "18-avgust kuni 20 ming kishi o'tdi."
-        ),
-        "link_anchor_uz": "etildi",
-        "body_1_uz": "Yo'lovchilar oqimi keskin oshgan — bu o'tgan yillarga nisbatan ancha ko'p.",
+        "url": "https://example.com/customs",
+        "lead_uz": ("Rossiya va Gruziya chegarasida yangi rekord qayd etildi."),
+        "body_1_uz": "18-avgust kuni chegaradan 20 ming kishi o'tgan.",
         "topic": Topic.FINTECH,
     }
-    rendered = post_format.render_item_post_v2(item_data, max_words=30)
-    assert '<a href="https://t.me/customs_rf/12219">etildi</a>' in rendered
+    rendered = post_format.render_item_post_v2(item_data, max_chars=450, max_sentences=4)
+    assert '<a href="https://example.com/customs">qayd etildi</a>' in rendered
     assert "#fintex" in rendered
-    assert post_format.count_words(rendered) <= 30
+    assert post_format.count_sentences(rendered) <= 4
+    assert post_format.validate_rendered_post(rendered, max_chars=450) == []
+
+
+# --- v3: positional anchor and sentence budget --------------------------------
+
+
+@pytest.mark.parametrize(
+    "lead,expected",
+    [
+        ("Modular Mojo kompilyatorini ochiq kodga chiqardi.", "chiqardi"),
+        ("Alibaba yangi Qwen modelini taqdim etdi.", "taqdim etdi"),
+        ("Mojo tili Apache 2.0 ostida open-source qildi.", "open-source qildi"),
+        ("Yangi ochiq vaznli model taqdim etildi.", "taqdim etildi"),
+        ("Roboflow Playground ishga tushirdi. Keyin narxni oshirdi.", "tushirdi"),
+        ("Google TurboQuant algoritmini chiqardi!", "chiqardi"),
+        ("Chiqardi.", "Chiqardi"),
+        ("Loyiha to'liq ochiq manba bo'ldi.", "manba bo'ldi"),
+        ("Loyiha to’liq ochiq manba bo’ldi.", "manba bo’ldi"),
+    ],
+)
+def test_anchor_from_lead(lead, expected):
+    assert post_format.anchor_from_lead(lead) == expected
+
+
+def test_anchor_from_lead_is_empty_for_empty_input():
+    assert post_format.anchor_from_lead("") == ""
+    assert post_format.anchor_from_lead("   ") == ""
+
+
+def test_anchor_from_lead_never_fails_on_real_shapes():
+    for lead in (
+        "openleetcode — bu Haskell tilida yozilgan test tushiruvchisi.",
+        "Mojo tili endi to'liq open source qilingan, shu bilan birga ham",
+        "Tadqiqotchilar agent framework'ini 14,560 ta holatda foydalanganlar.",
+    ):
+        assert post_format.anchor_from_lead(lead) != ""
+
+
+def test_linkify_lead_accepts_a_two_word_anchor():
+    lead = "Alibaba yangi Qwen modelini taqdim etdi."
+    out = post_format.linkify_lead(lead, "https://example.com/q", "taqdim etdi")
+    assert '<a href="https://example.com/q">taqdim etdi</a>' in out
+    assert out.endswith(".")
+
+
+def test_linkify_lead_no_longer_requires_an_approved_verb():
+    lead = "Bu yangi tushiruvchisi."
+    out = post_format.linkify_lead(lead, "https://example.com/x", "tushiruvchisi")
+    assert '<a href="https://example.com/x">tushiruvchisi</a>' in out
+
+
+def test_the_verb_machinery_is_gone():
+    for name in (
+        "BANNED_ANCHOR_TOKENS",
+        "KNOWN_ACTION_VERBS",
+        "is_valid_action_verb",
+        "resolve_anchor",
+        "count_words",
+    ):
+        assert not hasattr(post_format, name), f"{name} should have been deleted"
+
+
+def test_validate_rejects_an_anchor_that_does_not_end_the_lead():
+    html = (
+        'Modular <a href="https://example.com/m">chiqardi</a> yangi kompilyatorni.'
+        "\n\nIkkinchi gap shu yerda."
+        "\n\nQisqa yakun."
+        "\n\n#infratuzilma"
+    )
+    violations = post_format.validate_rendered_post(html, max_chars=450)
+    assert any("end the lead" in v for v in violations)
+
+
+def test_validate_accepts_an_anchor_at_the_end_of_the_lead():
+    html = (
+        'Modular yangi kompilyatorni <a href="https://example.com/m">chiqardi</a>.'
+        "\n\nIkkinchi gap shu yerda."
+        "\n\nQisqa yakun."
+        "\n\n#infratuzilma"
+    )
+    assert post_format.validate_rendered_post(html, max_chars=450) == []
+
+
+def test_count_sentences_ignores_the_hashtag_line():
+    html = (
+        'Model <a href="https://e.com/x">chiqardi</a>.'
+        "\n\nIkkinchi gap."
+        "\n\nUchinchi gap."
+        "\n\n#modellar"
+    )
+    assert post_format.count_sentences(html) == 3
+
+
+V3_DATA = {
+    "url": "https://example.com/a",
+    "topic": "frontier_models",
+    "lead_uz": "Alibaba yangi Qwen modelini taqdim etdi.",
+    "body_1_uz": "Model 52 ball to'pladi.",
+    "body_2_uz": "Litsenziya tijoriy foydalanishga ruxsat beradi.",
+}
+
+
+def test_render_drops_body_2_first_when_over_the_sentence_budget():
+    out = post_format.render_item_post_v2(dict(V3_DATA), max_chars=450, max_sentences=2)
+    assert "Litsenziya" not in out
+    assert post_format.count_sentences(out) == 2
+
+
+def test_render_keeps_all_three_sentences_within_budget():
+    out = post_format.render_item_post_v2(dict(V3_DATA), max_chars=450, max_sentences=3)
+    assert post_format.count_sentences(out) == 3
+    assert "Litsenziya" in out
+    assert '<a href="https://example.com/a">taqdim etdi</a>' in out
+
+
+@pytest.mark.parametrize(
+    "lead_uz,body_1_uz",
+    [
+        ("Alibaba yangi Qwen modelini taqdim etdi.", "Model 52 ball to'pladi."),
+        ("Modular kompilyatorni ochiq kodga chiqardi.", "Til 1.0 ga yetdi."),
+        ("Mojo tili Apache 2.0 ostida open-source qildi.", "GPU uchun 2x tez."),
+        ("openleetcode mahalliy runner sifatida chiqdi.", "14,560 ta test bor."),
+    ],
+)
+def test_every_lead_shape_renders(lead_uz, body_1_uz):
+    data = {
+        "url": "https://example.com/a",
+        "topic": "frontier_models",
+        "lead_uz": lead_uz,
+        "body_1_uz": body_1_uz,
+        "body_2_uz": "",
+    }
+    out = post_format.render_item_post_v2(data, max_chars=450, max_sentences=4)
+    assert post_format.validate_rendered_post(out, max_chars=450) == []
+    assert out.count("<a href=") == 1
