@@ -20,6 +20,13 @@ class Command(BaseCommand):
             help="Date in YYYY-MM-DD format or 'today'",
         )
         parser.add_argument(
+            "--edition",
+            type=str,
+            choices=["morning", "evening"],
+            default=None,
+            help="Digest edition ('morning' or 'evening'). Defaults to time-based.",
+        )
+        parser.add_argument(
             "--digest-id",
             type=int,
             default=None,
@@ -47,19 +54,27 @@ class Command(BaseCommand):
             else:
                 target_date = dt_date.fromisoformat(date_str)
 
-            digest = Digest.objects.filter(digest_date=target_date).first()
+            edition = options.get("edition")
+            if not edition:
+                current_hour = timezone.localtime().hour
+                edition = Digest.Edition.MORNING if current_hour < 14 else Digest.Edition.EVENING
+
+            digest = Digest.objects.filter(digest_date=target_date, edition=edition).first()
             if not digest:
-                self.stdout.write(f"Composing new digest for {target_date}...")
-                digest = ranking.compose_digest(target_date)
+                self.stdout.write(f"Composing new {edition} digest for {target_date}...")
+                digest = ranking.compose_digest(target_date, edition=edition)
 
         if digest.items.count() == 0:
             self.stdout.write(
-                self.style.WARNING(f"Digest {digest.digest_date} has 0 items. Nothing to publish.")
+                self.style.WARNING(
+                    f"Digest {digest.digest_date} ({digest.edition}) has 0 items."
+                )
             )
             return
 
         self.stdout.write(
-            f"Publishing digest for {digest.digest_date} ({digest.items.count()} items)..."
+            f"Publishing {digest.edition} digest for {digest.digest_date} "
+            f"({digest.items.count()} items)..."
         )
         res = publish.publish_digest(digest, republish=options["republish"])
         if res.get("suppressed"):

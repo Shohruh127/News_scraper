@@ -20,25 +20,27 @@ def test_compose_and_publish_hands_off_selected_candidates(monkeypatch):
         lambda article_ids: analysed_ids.append(article_ids),
     )
 
-    def compose(digest_date, candidates=None):
-        compose_calls.append((digest_date, candidates))
+    def compose(digest_date, edition=None, candidates=None):
+        compose_calls.append((digest_date, edition, candidates))
         return object()
 
     monkeypatch.setattr(ranking, "compose_digest", compose)
     monkeypatch.setattr(publish, "publish_digest", lambda digest: {"status": "published"})
 
-    result = tasks.compose_and_publish(target_date.isoformat())
+    result = tasks.compose_and_publish(target_date.isoformat(), edition="morning")
 
     assert result == {"status": "published"}
     assert analysed_ids == [[42]]
-    assert compose_calls == [(target_date, selected)]
+    assert compose_calls == [(target_date, "morning", selected)]
 
 
 @pytest.mark.django_db
 def test_compose_and_publish_does_not_verify_when_flag_is_off(monkeypatch, settings):
     settings.BENCHMARK_VERIFICATION_ENABLED = False
     monkeypatch.setattr(ranking, "select_digest_candidates", lambda target: [])
-    monkeypatch.setattr(ranking, "compose_digest", lambda digest_date, candidates=None: object())
+    monkeypatch.setattr(
+        ranking, "compose_digest", lambda digest_date, edition=None, candidates=None: object()
+    )
     monkeypatch.setattr(publish, "publish_digest", lambda digest: {"status": "published"})
     monkeypatch.setattr(
         verification,
@@ -54,7 +56,9 @@ def test_compose_and_publish_verifies_before_publish_when_flag_is_on(monkeypatch
     settings.BENCHMARK_VERIFICATION_ENABLED = True
     events = []
     monkeypatch.setattr(ranking, "select_digest_candidates", lambda target: [])
-    monkeypatch.setattr(ranking, "compose_digest", lambda digest_date, candidates=None: object())
+    monkeypatch.setattr(
+        ranking, "compose_digest", lambda digest_date, edition=None, candidates=None: object()
+    )
     monkeypatch.setattr(
         verification,
         "apply_cluster_evidence",

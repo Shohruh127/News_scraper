@@ -165,11 +165,12 @@ def select_digest_candidates(
 
 def compose_digest(
     digest_date: dt_date | None = None,
+    edition: str = Digest.Edition.EVENING,
     candidates: list[tuple[Article, Analysis, float, list[Article]]] | None = None,
 ) -> Digest:
-    """Compose digest and digest items for a specific date.
+    """Compose digest and digest items for a specific date and edition.
 
-    A second call for the same date will fail on the unique constraint of Digest.digest_date.
+    A second call for the same date and edition will fail on the unique constraint.
     """
     if digest_date is None:
         digest_date = timezone.localdate()
@@ -177,6 +178,7 @@ def compose_digest(
     with transaction.atomic():
         digest = Digest.objects.create(
             digest_date=digest_date,
+            edition=edition,
             status=Digest.Status.COMPOSED,
         )
 

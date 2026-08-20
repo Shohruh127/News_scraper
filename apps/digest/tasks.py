@@ -317,7 +317,10 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
 
 
 @shared_task(name="digest.compose_and_publish")
-def compose_and_publish(digest_date_str: str | None = None) -> dict:
+def compose_and_publish(
+    digest_date_str: str | None = None,
+    edition: str | None = None,
+) -> dict:
     """Causal pipeline: select candidates -> editorial deep analysis -> compose -> publish."""
     from . import llm, publish, ranking, verification
     from .models import Digest
@@ -327,13 +330,17 @@ def compose_and_publish(digest_date_str: str | None = None) -> dict:
     else:
         target_date = timezone.localdate()
 
+    if not edition:
+        current_hour = timezone.localtime().hour
+        edition = Digest.Edition.MORNING if current_hour < 14 else Digest.Edition.EVENING
+
     # Step 1: Check if already published
     existing = Digest.objects.filter(
-        digest_date=target_date, status=Digest.Status.PUBLISHED
+        digest_date=target_date, edition=edition, status=Digest.Status.PUBLISHED
     ).first()
     if existing:
-        log.info("Digest for %s is already published.", target_date)
-        return {"status": "already_published", "digest_date": str(target_date)}
+        log.info("Digest for %s (%s) is already published.", target_date, edition)
+        return {"status": "already_published", "digest_date": str(target_date), "edition": edition}
 
     try:
         # Step 2: Select candidates
@@ -349,12 +356,14 @@ def compose_and_publish(digest_date_str: str | None = None) -> dict:
 
         # Step 4: Compose Digest
         try:
-            digest = ranking.compose_digest(target_date, candidates=candidates)
+            digest = ranking.compose_digest(target_date, edition=edition, candidates=candidates)
         except IntegrityError:
             log.warning(
-                "Digest for %s already exists. Using existing composed digest.", target_date
+                "Digest for %s (%s) already exists. Using existing composed digest.",
+                target_date,
+                edition,
             )
-            digest = Digest.objects.get(digest_date=target_date)
+            digest = Digest.objects.get(digest_date=target_date, edition=edition)
 
         # Step 5: Promote corroborated benchmark evidence when explicitly enabled.
         if settings.BENCHMARK_VERIFICATION_ENABLED:
@@ -375,6 +384,7 @@ def compose_and_publish(digest_date_str: str | None = None) -> dict:
                     {
                         "completed_at": timezone.now().isoformat(),
                         "digest_date": str(target_date),
+                        "edition": edition,
                         "status": res.get("status", "unknown"),
                         "items_sent": res.get("items_sent", 0),
                     }
@@ -386,9 +396,11 @@ def compose_and_publish(digest_date_str: str | None = None) -> dict:
         return res
 
     except Exception as exc:
-        log.error("Failed in compose_and_publish for %s: %s", target_date, exc)
-        publish.send_admin_alert(f"Failed compose_and_publish for {target_date}: {exc}")
-        return {"error": str(exc), "digest_date": str(target_date)}
+        log.error("Failed in compose_and_publish for %s (%s): %s", target_date, edition, exc)
+        publish.send_admin_alert(
+            f"Failed compose_and_publish for {target_date} ({edition}): {exc}"
+        )
+        return {"error": str(exc), "digest_date": str(target_date), "edition": edition}
 
 
 @shared_task(name="digest.heartbeat")

@@ -67,9 +67,12 @@ def test_content_hash_is_unique(source):
 def test_digest_date_is_unique():
     """Idempotency is enforced by the database, not by an `if` two workers could both pass."""
     today = dt.date(2026, 8, 14)
-    Digest.objects.create(digest_date=today)
+    d1 = Digest.objects.create(digest_date=today, edition=Digest.Edition.MORNING)
+    d2 = Digest.objects.create(digest_date=today, edition=Digest.Edition.EVENING)
+    assert d1.id != d2.id
+
     with pytest.raises(IntegrityError), transaction.atomic():
-        Digest.objects.create(digest_date=today)
+        Digest.objects.create(digest_date=today, edition=Digest.Edition.MORNING)
 
 
 def test_article_cannot_appear_twice_in_one_digest(source):

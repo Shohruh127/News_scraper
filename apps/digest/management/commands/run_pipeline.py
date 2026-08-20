@@ -20,6 +20,13 @@ class Command(BaseCommand):
             help="Date in YYYY-MM-DD format or 'today' (default: today)",
         )
         parser.add_argument(
+            "--edition",
+            type=str,
+            choices=["morning", "evening"],
+            default=None,
+            help="Digest edition ('morning' or 'evening'). Defaults to time-based.",
+        )
+        parser.add_argument(
             "--skip-fetch",
             action="store_true",
             help="Skip the fetch stage and run triage/classify/publish on existing articles",
@@ -32,7 +39,12 @@ class Command(BaseCommand):
         else:
             target_date = dt_date.fromisoformat(date_str)
 
-        self.stdout.write(f"\n[>>] Running full pipeline for date: {target_date}\n")
+        edition = options.get("edition")
+        if not edition:
+            current_hour = timezone.localtime().hour
+            edition = Digest.Edition.MORNING if current_hour < 14 else Digest.Edition.EVENING
+
+        self.stdout.write(f"\n[>>] Running full pipeline for date: {target_date} ({edition})\n")
 
         # Step 1: Fetch sources synchronously if not skipped
         if not options.get("skip_fetch"):
@@ -78,15 +90,16 @@ class Command(BaseCommand):
         )
 
         # Step 3: Compose and Publish
-        self.stdout.write(f"\n3. Composing and publishing digest for {target_date}...")
-        existing_digest = Digest.objects.filter(digest_date=target_date).first()
+        self.stdout.write(f"\n3. Composing and publishing {edition} digest for {target_date}...")
+        existing_digest = Digest.objects.filter(digest_date=target_date, edition=edition).first()
         if existing_digest and existing_digest.status == Digest.Status.PUBLISHED:
             self.stdout.write(
                 self.style.WARNING(
-                    f"   * Digest for {target_date} already published. Duplicate run refused."
+                    f"   * Digest for {target_date} ({edition}) already published. "
+                    "Duplicate run refused."
                 )
             )
             return
 
-        res = tasks.compose_and_publish(str(target_date))
+        res = tasks.compose_and_publish(str(target_date), edition=edition)
         self.stdout.write(self.style.SUCCESS(f"   * Pipeline finished: {res}"))

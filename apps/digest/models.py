@@ -143,18 +143,33 @@ class Digest(models.Model):
         PUBLISHED = "published"
         FAILED = "failed"
 
-    #: Unique, so a second run for the same day is refused by the database rather
-    #: than by an `if` that two concurrent workers could both pass.
-    digest_date = models.DateField(unique=True)
+    class Edition(models.TextChoices):
+        MORNING = "morning", "Morning"
+        EVENING = "evening", "Evening"
+
+    #: Unique together with edition, so a second run for the same slot is refused by DB.
+    digest_date = models.DateField()
+    edition = models.CharField(
+        max_length=16,
+        choices=Edition.choices,
+        default=Edition.EVENING,
+        db_index=True,
+    )
     status = models.CharField(max_length=20, choices=Status, default=Status.COMPOSED)
     composed_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-digest_date"]
+        ordering = ["-digest_date", "-edition"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["digest_date", "edition"],
+                name="unique_digest_date_edition",
+            )
+        ]
 
     def __str__(self):
-        return f"{self.digest_date} ({self.status})"
+        return f"{self.digest_date} {self.edition} ({self.status})"
 
 
 class DeliveryState(models.TextChoices):
