@@ -528,4 +528,6 @@ def render_item_post(item: DigestItem) -> str:
 
 def render_item_appendix(item: DigestItem) -> str:
     """Render a single technical appendix for one news item."""
-    return render_to_string("digest/item_appendix.html", _item_data(item)).strip()
+    rendered = render_to_string("digest/item_appendix.html", _item_data(item))
+    lines = [line.strip() for line in rendered.splitlines() if line.strip()]
+    return "\n".join(lines)

@@ -19,27 +19,25 @@ pytestmark = pytest.mark.django_db
 
 
 EN_PAYLOAD = {
-    "headline_en": "Qwen releases 2.4T open-weight model",
-    "summary_en": "Qwen released a 2.4 trillion parameter open-weight model.",
+    "lead_en": "Qwen released 2.4T open-weight model for enterprise reasoning.",
+    "link_anchor_en": "released",
+    "body_1_en": "The model features 2.4 trillion parameters and scores high on benchmarks.",
+    "body_2_en": "",
+    "kicker_en": "",
     "why_it_matters_en": "It can be self-hosted.",
-    "leadership_en": "Reduces API dependency.",
     "uzbekistan_application_en": "Local teams can self-host it.",
-    "technical": {
-        "what_was_built": "A 2.4T MoE model",
-        "limitations": "Requires large VRAM",
-        "local_deployable": True,
-    },
+    "archetype": "release",
     "evidence_level": "vendor_claim_only",
 }
 
 UZ_PAYLOAD = {
-    "headline_uz": "Qwen 2.4T open-weight model chiqardi",
-    "summary_uz": "Qwen 2.4 trillion parametrli open-weight model taqdim etdi.",
+    "lead_uz": "Qwen jamoasi 2.4T parametrli ochiq modelni taqdim etdi.",
+    "link_anchor_uz": "etdi",
+    "body_1_uz": "Model 2.4 trillion parametrga ega bo'lib, yuqori natijalar ko'rsatgan.",
+    "body_2_uz": "",
+    "kicker_uz": "",
     "why_it_matters_uz": "Uni mahalliy serverda ishlatish mumkin.",
-    "leadership_uz": "API'ga bog'liqlikni kamaytiradi.",
     "uzbekistan_application_uz": "Mahalliy jamoalar o'zida joylashtira oladi.",
-    "what_was_built_uz": "2.4T MoE model",
-    "limitations_uz": "Katta VRAM talab qiladi",
 }
 
 
@@ -94,8 +92,7 @@ def test_two_stages_produce_two_analyses_on_ollama(article, settings):
     assert stages == {Analysis.Stage.EDITORIAL_EN, Analysis.Stage.EDITORIAL_UZ}
 
     en = article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
-    assert en.payload["summary_en"].startswith("Qwen released")
-    assert en.payload["technical"]["local_deployable"] is True
+    assert en.payload["lead_en"].startswith("Qwen released")
     # The Ollama tag can be repointed silently, so the digest is recorded.
     assert en.model_digest == "d31b"
 
@@ -127,7 +124,7 @@ def test_two_stages_on_mimo_record_the_mimo_tag(article, settings):
     assert uz.model_tag == "mimo-v2.5"
     # MiMo exposes no digest, so the drift-detection field is deliberately empty.
     assert uz.model_digest == ""
-    assert uz.payload["summary_uz"].startswith("Qwen 2.4 trillion")
+    assert uz.payload["lead_uz"].startswith("Qwen jamoasi")
 
 
 @respx.mock
@@ -182,7 +179,7 @@ def test_translation_never_sees_the_article_only_the_english(article, settings):
     assert len(prompts) == 2
     assert "FP8 quantisation" in prompts[0], "English stage gets the article text"
     assert "FP8 quantisation" not in prompts[1], "translation stage must not get the source"
-    assert "Qwen released a 2.4 trillion" in prompts[1], "it gets the English fields instead"
+    assert "Qwen released 2.4T" in prompts[1], "it gets the English fields instead"
 
 
 def test_rendering_requires_the_translation_stage(article):
@@ -242,67 +239,39 @@ def test_rendering_succeeds_with_both_stages(article):
     assert "Fast transformer layer" in appendix
 
 
-def test_archetype_enum_matches_the_detail_blocks():
-    """Every archetype must have a block, and every block an archetype."""
+def test_archetype_enum_matches_the_schema():
+    """Archetypes are supported in the editorial schema."""
     from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_SCHEMA
 
     props = EDITORIAL_EN_SCHEMA["properties"]
     assert set(props["archetype"]["enum"]) == set(ARCHETYPES)
-    for name in ARCHETYPES:
-        assert f"{name}_details" in props, f"{name} has no detail block"
 
 
-def test_no_detail_field_is_required_in_the_schema():
-    """A strict schema does not make the model know an answer, it makes it produce one.
+def test_micro_pipeline_schema_required_fields():
+    """Strict micro-pipeline required fields."""
+    from apps.digest.llm import EDITORIAL_EN_SCHEMA
 
-    Measured 2026-08-18: a change to a default sampling parameter was given HIGH severity.
-    """
-    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_SCHEMA
-
-    top_required = EDITORIAL_EN_SCHEMA["required"]
-    for name in ARCHETYPES:
-        block = EDITORIAL_EN_SCHEMA["properties"][f"{name}_details"]
-        assert not block.get("required"), f"{name}_details marks fields required"
-        assert f"{name}_details" not in top_required
+    required = EDITORIAL_EN_SCHEMA["required"]
+    for field in ["lead_en", "link_anchor_en", "body_1_en", "why_it_matters_en"]:
+        assert field in required
 
 
-def test_editorial_model_accepts_one_block_and_none():
-    """The model validates a payload with a single block, and one with no block at all."""
+def test_editorial_model_validation():
+    """The model validates a micro-pipeline payload."""
     from apps.digest.llm import EditorialEn
 
-    common = {
-        "headline_en": "Ollama v0.32.10 changes the default repeat penalty",
-        "summary_en": "The release changes a default and speeds up prefill.",
+    payload = {
+        "lead_en": "Ollama released v0.32.10 with speedup.",
+        "link_anchor_en": "released",
+        "body_1_en": "The release changes a default and speeds up prefill by 2x.",
         "why_it_matters_en": "It standardises behaviour across engines.",
-        "leadership_en": "A routine update with a measurable speedup.",
         "uzbekistan_application_en": "Local teams running Ollama benefit directly.",
-        "technical": {
-            "what_was_built": "Ollama v0.32.10",
-            "limitations": "Applies to NVFP4 MLX models only",
-            "local_deployable": True,
-        },
+        "archetype": "release",
         "evidence_level": "vendor_claim_only",
     }
-
-    with_block = EditorialEn(
-        archetype="release",
-        release_details={"what_changed_en": "repeat_penalty now defaults to 1.0"},
-        **common,
-    )
-    assert with_block.release_details.what_changed_en.startswith("repeat_penalty")
-    assert with_block.risk_hardening_details is None
-
-    without_block = EditorialEn(archetype="release", **common)
-    assert without_block.release_details is None
-
-
-def test_archetype_definitions_are_in_the_prompt():
-    """The definitions moved accuracy from 0/6 to 5/6, so their absence is a defect."""
-    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_PROMPT
-
-    for name in ARCHETYPES:
-        assert name in EDITORIAL_EN_PROMPT, f"{name} is not defined in the prompt"
-    assert "Pricing is not policy" in EDITORIAL_EN_PROMPT
+    obj = EditorialEn(**payload)
+    assert obj.lead_en.startswith("Ollama")
+    assert obj.link_anchor_en == "released"
 
 
 def test_archetype_fields_flattens_only_the_chosen_block():
