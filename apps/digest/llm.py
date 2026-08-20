@@ -107,17 +107,6 @@ class TechnicalDetails(BaseModel):
     local_deployable: bool = False
 
 
-class DeepAnalysis(BaseModel):
-    """Legacy single-step editorial (strategy C). Superseded by EditorialEn + Translation."""
-
-    summary_uz: str
-    why_it_matters_uz: str
-    leadership_uz: str
-    technical: TechnicalDetails
-    uzbekistan_application_uz: str
-    evidence_level: str = Field(default="vendor_claim_only")
-
-
 #: The shape of a post. Boundary definitions live in CONTENT_SCHEMA.md §5 and are quoted into
 #: EDITORIAL_EN_PROMPT verbatim, because measurement showed they carry the accuracy: without
 #: them the model scored 0/6 and filled six irrelevant blocks; with them, 5/6 and none.
@@ -216,44 +205,6 @@ class Translation(BaseModel):
     why_it_matters_uz: str = ""
     uzbekistan_application_uz: str = ""
 
-
-DEEP_ANALYSIS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "summary_uz": {"type": "string"},
-        "why_it_matters_uz": {"type": "string"},
-        "leadership_uz": {"type": "string"},
-        "technical": {
-            "type": "object",
-            "properties": {
-                "what_was_built": {"type": "string"},
-                "architecture": {"type": "string"},
-                "license": {"type": "string"},
-                "repo_url": {"type": "string"},
-                "api_url": {"type": "string"},
-                "hardware": {"type": "string"},
-                "install": {"type": "string"},
-                "benchmarks": {"type": "string"},
-                "limitations": {"type": "string"},
-                "local_deployable": {"type": "boolean"},
-            },
-            "required": ["what_was_built", "limitations", "local_deployable"],
-        },
-        "uzbekistan_application_uz": {"type": "string"},
-        "evidence_level": {
-            "type": "string",
-            "enum": ["vendor_claim_only", "multiple_evidence"],
-        },
-    },
-    "required": [
-        "summary_uz",
-        "why_it_matters_uz",
-        "leadership_uz",
-        "technical",
-        "uzbekistan_application_uz",
-        "evidence_level",
-    ],
-}
 
 # --- Editorial: English analysis ---------------------------------------------
 # Separated from translation (ADR-005). English is verified on its own so that a poor
@@ -370,27 +321,26 @@ ARCHETYPE_DEFINITIONS = (
 EDITORIAL_EN_PROMPT = (
     "You are a senior editor for a daily AI-engineering digest read by engineering "
     "leaders and AI engineers in Uzbekistan.\n\n"
-    "Write the English analysis of the article below. Return JSON only.\n\n"
+    "Write the English analysis of the article below in ULTRA-CONCISE Telegram channel "
+    "news format (maximum 30 words total for the post content: 1 short lead sentence + "
+    "1 short context sentence). Return JSON only.\n\n"
     + ARCHETYPE_DEFINITIONS
-    + "## Post Structure & Fields\n"
-    "- headline_en: exactly 1 punchy title line\n"
-    "- summary_en: exactly 2-3 sentences\n"
-    "- lead_en: exactly 1-2 sentences. The first sentence must state the core news clearly and "
-    "end with a natural single-word or compound action verb that serves as the link anchor "
-    "(e.g. 'released', 'launched', 'open-sourced'). Do NOT include markdown, bolding, "
-    "bullet points, headlines, or URLs in the text.\n"
-    "- link_anchor_en: the exact word or compound verb from the first sentence of lead_en "
-    "to attach the source link to (e.g. 'launched', 'open-sourced'). "
-    "Must appear verbatim in lead_en.\n"
-    "- body_1_en: 1-3 concise prose sentences carrying the concrete required facts for the chosen "
-    "archetype (version, numbers, measurements, architecture, pricing). No bullet points.\n"
-    "- body_2_en: optional 1-2 sentences with additional technical detail or context, or "
-    "empty string.\n"
-    "- kicker_en: optional punchy closing line (8 words or fewer) stating a memorable fact or "
-    "witty takeaway. Must NOT repeat numbers already in the body. If no strong kicker exists, "
-    "return empty string.\n"
-    "- why_it_matters_en: exactly 1-2 sentences\n"
+    + "## Post Structure & Fields (STRICT LENGTH CONSTRAINTS)\n"
+    "- headline_en: exactly 1 short punchy title (3-6 words)\n"
+    "- summary_en: 1-2 concise sentences\n"
+    "- lead_en: exactly 1 short sentence (10-15 words max). The sentence must state the "
+    "core news clearly and contain or end with a single-word action verb serving as the "
+    "link anchor (e.g. 'released', 'launched', 'open-sourced'). "
+    "Do NOT include markdown, bolding, bullet points, headlines, or URLs in the text.\n"
+    "- link_anchor_en: the exact single-word action verb from lead_en to attach the "
+    "source link to. Must appear verbatim in lead_en.\n"
+    "- body_1_en: exactly 1 short sentence (10-15 words max) carrying the most critical "
+    "concrete fact/metric/context. No bullet points.\n"
+    '- body_2_en: "" (leave empty string)\n'
+    '- kicker_en: "" (leave empty string)\n'
+    "- why_it_matters_en: exactly 1 short sentence\n"
     "- uzbekistan_application_en: exactly 1 sentence, or empty if there is no honest one\n\n"
+    "CRITICAL REQUIREMENT: The combined text of lead_en + body_1_en must NOT exceed 30 words!\n\n"
     "## Grounding\n"
     "Every claim must come from the article text. If a detail is absent — license, "
     'benchmark number, repo URL, hardware requirement — leave that field as "". Never '
@@ -498,6 +448,14 @@ def translation_schema_for(fields: dict) -> dict:
 
 TRANSLATION_PROMPT = (
     "Translate the fields below into Uzbek (Latin script). Return JSON only.\n\n"
+    "## Ultra-concise Post Length (MUHIM TALAB)\n"
+    "Kanal postining asosiy matni (lead_uz + body_1_uz) JAMI 30 TA SO'ZDAN OSHMASLIGI "
+    "SHART (maximum 30 words total):\n"
+    "- lead_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy yangilikni ifodalaydi va "
+    "link_anchor_uz fe'lini o'z ichiga oladi.\n"
+    "- body_1_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy raqam yoki kontekstni ifodalaydi.\n"
+    '- body_2_uz: "" (bo\'sh qoldiring).\n'
+    '- kicker_uz: "" (bo\'sh qoldiring).\n\n'
     "## You are translating, not writing\n"
     "Do not add information, opinions, or sentences that are not in the source. Do not "
     "remove any. Keep the same number of sentences per field.\n\n"
@@ -506,7 +464,7 @@ TRANSLATION_PROMPT = (
     "EXACTLY ONE WORD token (a single word verb with no spaces or punctuation) and MUST "
     "appear verbatim in lead_uz, ideally as the concluding verb of the first sentence.\n\n"
     "## Kicker Translation\n"
-    "kicker_uz must be MAXIMUM 8 WORDS (strict upper bound). Keep it punchy and short.\n\n"
+    "kicker_uz must be MAXIMUM 8 WORDS (strict upper bound) or empty string.\n\n"
     "## Keep in English\n"
     "Model names, product names, company names, metric names, file formats, and "
     "established technical terms: model, API, agent, framework, open-weight, weights, "
@@ -1193,9 +1151,7 @@ def _normalize_uz_payload(payload: dict) -> dict:
             normalized["link_anchor_uz"] = resolved
         else:
             words = [
-                post_format.clean_token(w)
-                for w in anchor.split()
-                if post_format.clean_token(w)
+                post_format.clean_token(w) for w in anchor.split() if post_format.clean_token(w)
             ]
             if words:
                 normalized["link_anchor_uz"] = words[-1]

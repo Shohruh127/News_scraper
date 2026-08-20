@@ -66,9 +66,7 @@ class Command(BaseCommand):
 
         if digest.items.count() == 0:
             self.stdout.write(
-                self.style.WARNING(
-                    f"Digest {digest.digest_date} ({digest.edition}) has 0 items."
-                )
+                self.style.WARNING(f"Digest {digest.digest_date} ({digest.edition}) has 0 items.")
             )
             return
 

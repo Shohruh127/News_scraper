@@ -247,9 +247,491 @@ def send_admin_alert(text: str, client: httpx.Client | None = None) -> bool:
             log.warning("Failed to send admin alert: %s %s", r.status_code, r.text)
             return False
         return True
-    except Exception as exc:
-        log.error("Exception sending admin alert: %s", exc)
-        return False
+    finally:
+        if close_client:
+            client.close()
+
+
+def publish_digest_item(
+    item: DigestItem,
+    client: httpx.Client | None = None,
+    *,
+    republish: bool = False,
+) -> dict:
+    """Publish a single DigestItem as a channel post with its optional group appendix.
+
+    Respects PUBLISHING_ENABLED kill switch.
+    Handles per-item locking, format rendering, image/photo extraction and fallback,
+    Telegram rate limits/timeouts, error handling, state updating, and group appendix reply.
+    """
+    if not getattr(settings, "PUBLISHING_ENABLED", False):
+        log.info(
+            "[KILL SWITCH ACTIVE] Suppressed for item #%s.",
+            item.position,
+        )
+        return {
+            "success": False,
+            "status": "suppressed",
+            "item_id": item.id,
+            "position": item.position,
+            "channel_message_id": None,
+            "group_message_id": None,
+            "sent_as_photo": False,
+            "error": "Suppressed by kill switch (PUBLISHING_ENABLED is False)",
+            "appendix_error": None,
+            "suppressed": True,
+        }
+
+    channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
+    if not channel_id:
+        raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
+    group_id = getattr(settings, "TELEGRAM_GROUP_ID", "")
+
+    try:
+        item.refresh_from_db(
+            fields=[
+                "channel_message_id",
+                "group_message_id",
+                "channel_delivery_state",
+                "channel_delivery_error",
+            ]
+        )
+    except Exception:
+        pass
+
+    if item.channel_delivery_state == DeliveryState.SENT or item.channel_message_id:
+        if not republish:
+            log.info(
+                "Item #%s already sent (message %s); skipping",
+                item.position,
+                item.channel_message_id,
+            )
+            return {
+                "success": True,
+                "status": "skipped",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": item.channel_message_id,
+                "group_message_id": item.group_message_id,
+                "sent_as_photo": item.sent_as_photo,
+                "error": None,
+                "appendix_error": None,
+                "suppressed": False,
+            }
+
+    if item.channel_delivery_state == DeliveryState.UNKNOWN and not republish:
+        log.warning(
+            "Item #%s is in 'unknown' delivery state. Skipping automatic retry.",
+            item.position,
+        )
+        return {
+            "success": False,
+            "status": "skipped",
+            "item_id": item.id,
+            "position": item.position,
+            "channel_message_id": None,
+            "group_message_id": None,
+            "sent_as_photo": False,
+            "error": "ambiguous delivery state: unknown",
+            "appendix_error": None,
+            "suppressed": False,
+        }
+
+    if item.channel_delivery_state == DeliveryState.SENDING:
+        log.warning(
+            "Item #%s found in 'sending' state from previous attempt. "
+            "Promoting to 'unknown' to avoid duplicate.",
+            item.position,
+        )
+        with transaction.atomic():
+            DigestItem.objects.filter(
+                id=item.id, channel_delivery_state=DeliveryState.SENDING
+            ).update(
+                channel_delivery_state=DeliveryState.UNKNOWN,
+                channel_delivery_error="Stale sending state promoted to unknown",
+            )
+        item.refresh_from_db()
+        if not republish:
+            return {
+                "success": False,
+                "status": "skipped",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": "stale sending promoted to unknown",
+                "appendix_error": None,
+                "suppressed": False,
+            }
+
+    # --- Channel post rendering ---
+    try:
+        post_html = ranking.render_item_post(item)
+    except ValueError as exc:
+        log.error("Render failed for item #%s: %s", item.position, exc)
+        with transaction.atomic():
+            DigestItem.objects.filter(id=item.id).update(
+                channel_delivery_state=DeliveryState.FAILED,
+                channel_delivery_error=f"Render error: {exc}"[:512],
+            )
+        item.refresh_from_db()
+        return {
+            "success": False,
+            "status": "failed",
+            "item_id": item.id,
+            "position": item.position,
+            "channel_message_id": None,
+            "group_message_id": None,
+            "sent_as_photo": False,
+            "error": f"render: {exc}",
+            "appendix_error": None,
+            "suppressed": False,
+        }
+
+    # Lock row and transition pending -> sending
+    with transaction.atomic():
+        locked = DigestItem.objects.select_for_update().filter(id=item.id).first()
+        if not locked:
+            return {
+                "success": False,
+                "status": "failed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": "Item not found during lock",
+                "appendix_error": None,
+                "suppressed": False,
+            }
+        if locked.channel_delivery_state == DeliveryState.SENT and not republish:
+            return {
+                "success": True,
+                "status": "skipped",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": locked.channel_message_id,
+                "group_message_id": locked.group_message_id,
+                "sent_as_photo": locked.sent_as_photo,
+                "error": None,
+                "appendix_error": None,
+                "suppressed": False,
+            }
+        if locked.channel_delivery_state == DeliveryState.UNKNOWN and not republish:
+            return {
+                "success": False,
+                "status": "skipped",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": "ambiguous delivery state: unknown",
+                "appendix_error": None,
+                "suppressed": False,
+            }
+        locked.channel_delivery_state = DeliveryState.SENDING
+        locked.channel_delivery_attempted_at = timezone.now()
+        locked.save(update_fields=["channel_delivery_state", "channel_delivery_attempted_at"])
+    item.refresh_from_db()
+
+    v2_enabled = getattr(settings, "POST_FORMAT_V2_ENABLED", False)
+    sent_as_photo = False
+    res_post = None
+
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=30)
+        close_client = True
+
+    try:
+        try:
+            if v2_enabled:
+                image_url = item.article.meta.get("image_url") if item.article.meta else None
+                if not image_url and item.article.canonical_url:
+                    try:
+                        downloaded = trafilatura.fetch_url(item.article.canonical_url)
+                        if downloaded:
+                            fetched_img = media.extract_image_url_from_html(
+                                downloaded, base_url=item.article.canonical_url
+                            )
+                            if fetched_img:
+                                image_url = fetched_img
+                                meta = dict(item.article.meta or {})
+                                meta["image_url"] = fetched_img
+                                item.article.meta = meta
+                                item.article.save(update_fields=["meta"])
+                    except Exception as exc:
+                        log.debug(
+                            "On-demand image fetch failed for item #%s: %s",
+                            item.position,
+                            exc,
+                        )
+
+                valid_image_url = media.validate_image_url(image_url) if image_url else None
+                if image_url and not valid_image_url:
+                    log.info(
+                        "Image URL rejected by policy for item #%s (host: %s)",
+                        item.position,
+                        media.get_safe_image_log_host(image_url),
+                    )
+
+                if valid_image_url:
+                    try:
+                        res_post = send_photo(
+                            chat_id=channel_id,
+                            photo_url=valid_image_url,
+                            caption=post_html,
+                            client=client,
+                        )
+                        sent_as_photo = True
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code == 400:
+                            log.warning(
+                                "Telegram rejected photo for item #%s (400, host: %s). "
+                                "Falling back to text.",
+                                item.position,
+                                media.get_safe_image_log_host(valid_image_url),
+                            )
+                            res_post = send_message(
+                                chat_id=channel_id,
+                                text=post_html,
+                                disable_preview=True,
+                                client=client,
+                            )
+                            sent_as_photo = False
+                        else:
+                            raise
+                else:
+                    res_post = send_message(
+                        chat_id=channel_id,
+                        text=post_html,
+                        disable_preview=True,
+                        client=client,
+                    )
+                    sent_as_photo = False
+            else:
+                res_post = send_message(
+                    chat_id=channel_id,
+                    text=post_html,
+                    client=client,
+                )
+                sent_as_photo = False
+
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
+            log.error(
+                "Network/Timeout error during channel send for item #%s: %s. Setting UNKNOWN.",
+                item.position,
+                exc,
+            )
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_delivery_state=DeliveryState.UNKNOWN,
+                    channel_delivery_error=f"Timeout/Network error: {exc}"[:512],
+                )
+            send_admin_alert(
+                f"🚨 <b>Publishing Error</b>: Network timeout for item #{item.position}. "
+                "State set to UNKNOWN to prevent duplicates.",
+                client=client,
+            )
+            item.refresh_from_db()
+            return {
+                "success": False,
+                "status": "failed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": f"timeout/network error: {exc}",
+                "appendix_error": None,
+                "suppressed": False,
+            }
+
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code >= 500:
+                log.error(
+                    "Telegram 5xx error (%s) for item #%s. Setting state UNKNOWN.",
+                    status_code,
+                    item.position,
+                )
+                with transaction.atomic():
+                    DigestItem.objects.filter(id=item.id).update(
+                        channel_delivery_state=DeliveryState.UNKNOWN,
+                        channel_delivery_error=f"Telegram 5xx ({status_code}): {exc}"[:512],
+                    )
+                send_admin_alert(
+                    f"🚨 <b>Telegram 5xx Error</b> ({status_code}) for item #{item.position}. "
+                    "State set to UNKNOWN.",
+                    client=client,
+                )
+                item.refresh_from_db()
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "item_id": item.id,
+                    "position": item.position,
+                    "channel_message_id": None,
+                    "group_message_id": None,
+                    "sent_as_photo": False,
+                    "error": f"telegram 5xx: {exc}",
+                    "appendix_error": None,
+                    "suppressed": False,
+                }
+            else:
+                log.error(
+                    "HTTP error (%s) during channel send for item #%s: %s",
+                    status_code,
+                    item.position,
+                    exc,
+                )
+                with transaction.atomic():
+                    DigestItem.objects.filter(id=item.id).update(
+                        channel_delivery_state=DeliveryState.FAILED,
+                        channel_delivery_error=f"HTTP {status_code}: {exc}"[:512],
+                    )
+                item.refresh_from_db()
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "item_id": item.id,
+                    "position": item.position,
+                    "channel_message_id": None,
+                    "group_message_id": None,
+                    "sent_as_photo": False,
+                    "error": f"HTTP {status_code}: {exc}",
+                    "appendix_error": None,
+                    "suppressed": False,
+                }
+
+        except Exception as exc:
+            log.error(
+                "Unexpected error during channel send for item #%s: %s",
+                item.position,
+                exc,
+            )
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_delivery_state=DeliveryState.UNKNOWN,
+                    channel_delivery_error=f"Unexpected error: {exc}"[:512],
+                )
+            item.refresh_from_db()
+            return {
+                "success": False,
+                "status": "failed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": f"unexpected error: {exc}",
+                "appendix_error": None,
+                "suppressed": False,
+            }
+
+        ch_msg_id = res_post.get("result", {}).get("message_id") if res_post else None
+
+        if not ch_msg_id and not (res_post and res_post.get("suppressed")):
+            log.error("Channel post failed for item #%s: %s", item.position, res_post)
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_delivery_state=DeliveryState.FAILED,
+                    channel_delivery_error=f"No message ID returned: {res_post}"[:512],
+                )
+            item.refresh_from_db()
+            return {
+                "success": False,
+                "status": "failed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": "publish failed: no message_id",
+                "appendix_error": None,
+                "suppressed": False,
+            }
+
+        if ch_msg_id:
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_message_id=ch_msg_id,
+                    sent_as_photo=sent_as_photo,
+                    channel_delivery_state=DeliveryState.SENT,
+                    channel_delivery_error="",
+                )
+            item.refresh_from_db()
+        elif res_post and res_post.get("suppressed"):
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_delivery_state=DeliveryState.PENDING,
+                    channel_delivery_error="Suppressed by kill switch",
+                )
+            item.refresh_from_db()
+            return {
+                "success": False,
+                "status": "suppressed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "group_message_id": None,
+                "sent_as_photo": False,
+                "error": "Suppressed by kill switch",
+                "appendix_error": None,
+                "suppressed": True,
+            }
+
+        # --- Group appendix ---
+        grp_msg_id = None
+        appendix_error = None
+        if group_id and ch_msg_id:
+            send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
+            if send_delay > 0:
+                time.sleep(min(send_delay / 2, 1.5))
+            fwd_id = find_group_forward_message_id(ch_msg_id)
+            if fwd_id:
+                try:
+                    appendix_html = ranking.render_item_appendix(item)
+                except ValueError as exc:
+                    log.error("Appendix render failed for item #%s: %s", item.position, exc)
+                    appendix_error = f"appendix render: {exc}"
+                else:
+                    try:
+                        res_comment = send_message(
+                            chat_id=group_id,
+                            text=appendix_html,
+                            reply_to_message_id=fwd_id,
+                            client=client,
+                        )
+                        grp_msg_id = res_comment.get("result", {}).get("message_id")
+                        if grp_msg_id:
+                            item.group_message_id = grp_msg_id
+                            item.save(update_fields=["group_message_id"])
+                    except Exception as exc:
+                        log.error("Appendix send failed for item #%s: %s", item.position, exc)
+                        appendix_error = f"appendix send: {exc}"
+            else:
+                log.warning(
+                    "Auto-forward not found for item #%s (channel_msg %s)",
+                    item.position,
+                    ch_msg_id,
+                )
+                appendix_error = f"forward not found for msg {ch_msg_id}"
+
+        return {
+            "success": True,
+            "status": "sent",
+            "item_id": item.id,
+            "position": item.position,
+            "channel_message_id": ch_msg_id,
+            "group_message_id": grp_msg_id,
+            "sent_as_photo": sent_as_photo,
+            "error": None,
+            "appendix_error": appendix_error,
+            "suppressed": False,
+        }
     finally:
         if close_client:
             client.close()
@@ -339,7 +821,6 @@ def publish_digest(
     if not channel_id:
         raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
 
-    group_id = getattr(settings, "TELEGRAM_GROUP_ID", "")
     items = list(
         digest.items.select_related("article", "article__source")
         .prefetch_related(
@@ -363,298 +844,24 @@ def publish_digest(
     send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
     try:
         for idx, item in enumerate(items):
-            try:
-                item.refresh_from_db(
-                    fields=[
-                        "channel_message_id",
-                        "group_message_id",
-                        "channel_delivery_state",
-                        "channel_delivery_error",
-                    ]
-                )
-            except Exception:
-                pass
-
-            if item.channel_delivery_state == DeliveryState.SENT or item.channel_message_id:
-                if not republish:
-                    skipped_count += 1
-                    log.info(
-                        "Item #%s already sent (message %s); skipping",
-                        item.position,
-                        item.channel_message_id,
-                    )
-                    continue
-
-            if item.channel_delivery_state == DeliveryState.UNKNOWN and not republish:
-                skipped_count += 1
-                log.warning(
-                    "Item #%s is in 'unknown' delivery state. Skipping automatic retry.",
-                    item.position,
-                )
-                failed_items.append(f"#{item.position} (ambiguous delivery state: unknown)")
-                continue
-
-            if item.channel_delivery_state == DeliveryState.SENDING:
-                log.warning(
-                    "Item #%s found in 'sending' state from previous attempt. "
-                    "Promoting to 'unknown' to avoid duplicate.",
-                    item.position,
-                )
-                with transaction.atomic():
-                    DigestItem.objects.filter(
-                        id=item.id, channel_delivery_state=DeliveryState.SENDING
-                    ).update(
-                        channel_delivery_state=DeliveryState.UNKNOWN,
-                        channel_delivery_error="Stale sending state promoted to unknown",
-                    )
-                item.refresh_from_db()
-                if not republish:
-                    skipped_count += 1
-                    failed_items.append(f"#{item.position} (stale sending promoted to unknown)")
-                    continue
-
             # Rate-limit: configurable delay between sends (20 msg/min budget shared with appendix)
             if idx > 0 and send_delay > 0:
                 time.sleep(send_delay)
 
-            # --- Channel post rendering ---
-            try:
-                post_html = ranking.render_item_post(item)
-            except ValueError as exc:
-                log.error("Render failed for item #%s: %s", item.position, exc)
-                with transaction.atomic():
-                    DigestItem.objects.filter(id=item.id).update(
-                        channel_delivery_state=DeliveryState.FAILED,
-                        channel_delivery_error=f"Render error: {exc}"[:512],
-                    )
-                failed_items.append(f"#{item.position} (render: {exc})")
-                continue
-
-            # Lock row and transition pending -> sending
-            with transaction.atomic():
-                locked = DigestItem.objects.select_for_update().filter(id=item.id).first()
-                if not locked:
-                    continue
-                if locked.channel_delivery_state == DeliveryState.SENT and not republish:
-                    skipped_count += 1
-                    continue
-                if locked.channel_delivery_state == DeliveryState.UNKNOWN and not republish:
-                    skipped_count += 1
-                    continue
-                locked.channel_delivery_state = DeliveryState.SENDING
-                locked.channel_delivery_attempted_at = timezone.now()
-                locked.save(
-                    update_fields=["channel_delivery_state", "channel_delivery_attempted_at"]
-                )
-            item.refresh_from_db()
-
-            v2_enabled = getattr(settings, "POST_FORMAT_V2_ENABLED", False)
-            sent_as_photo = False
-            res_post = None
-
-            try:
-                if v2_enabled:
-                    image_url = item.article.meta.get("image_url")
-                    if not image_url and item.article.canonical_url:
-                        try:
-                            downloaded = trafilatura.fetch_url(item.article.canonical_url)
-                            if downloaded:
-                                fetched_img = media.extract_image_url_from_html(
-                                    downloaded, base_url=item.article.canonical_url
-                                )
-                                if fetched_img:
-                                    image_url = fetched_img
-                                    meta = dict(item.article.meta or {})
-                                    meta["image_url"] = fetched_img
-                                    item.article.meta = meta
-                                    item.article.save(update_fields=["meta"])
-                        except Exception as exc:
-                            log.debug(
-                                "On-demand image fetch failed for item #%s: %s",
-                                item.position,
-                                exc,
-                            )
-
-                    valid_image_url = media.validate_image_url(image_url) if image_url else None
-                    if image_url and not valid_image_url:
-                        log.info(
-                            "Image URL rejected by policy for item #%s (host: %s)",
-                            item.position,
-                            media.get_safe_image_log_host(image_url),
-                        )
-
-                    if valid_image_url:
-                        try:
-                            res_post = send_photo(
-                                chat_id=channel_id,
-                                photo_url=valid_image_url,
-                                caption=post_html,
-                                client=client,
-                            )
-                            sent_as_photo = True
-                        except httpx.HTTPStatusError as exc:
-                            if exc.response.status_code == 400:
-                                log.warning(
-                                    "Telegram rejected photo for item #%s (400, host: %s). "
-                                    "Falling back to text.",
-                                    item.position,
-                                    media.get_safe_image_log_host(valid_image_url),
-                                )
-                                res_post = send_message(
-                                    chat_id=channel_id,
-                                    text=post_html,
-                                    disable_preview=True,
-                                    client=client,
-                                )
-                                sent_as_photo = False
-                            else:
-                                raise
-                    else:
-                        res_post = send_message(
-                            chat_id=channel_id,
-                            text=post_html,
-                            disable_preview=True,
-                            client=client,
-                        )
-                        sent_as_photo = False
-                else:
-                    res_post = send_message(
-                        chat_id=channel_id,
-                        text=post_html,
-                        client=client,
-                    )
-                    sent_as_photo = False
-
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
-                log.error(
-                    "Network/Timeout error during channel send for item #%s: %s. Setting UNKNOWN.",
-                    item.position,
-                    exc,
-                )
-                with transaction.atomic():
-                    DigestItem.objects.filter(id=item.id).update(
-                        channel_delivery_state=DeliveryState.UNKNOWN,
-                        channel_delivery_error=f"Timeout/Network error: {exc}"[:512],
-                    )
-                send_admin_alert(
-                    f"🚨 <b>Publishing Error</b>: Network timeout for item #{item.position}. "
-                    "State set to UNKNOWN to prevent duplicates.",
-                    client=client,
-                )
-                failed_items.append(f"#{item.position} (timeout/network error: {exc})")
-                continue
-
-            except httpx.HTTPStatusError as exc:
-                status_code = exc.response.status_code
-                if status_code >= 500:
-                    log.error(
-                        "Telegram 5xx error (%s) for item #%s. Setting state UNKNOWN.",
-                        status_code,
-                        item.position,
-                    )
-                    with transaction.atomic():
-                        DigestItem.objects.filter(id=item.id).update(
-                            channel_delivery_state=DeliveryState.UNKNOWN,
-                            channel_delivery_error=f"Telegram 5xx ({status_code}): {exc}"[:512],
-                        )
-                    send_admin_alert(
-                        f"🚨 <b>Telegram 5xx Error</b> ({status_code}) for item #{item.position}. "
-                        "State set to UNKNOWN.",
-                        client=client,
-                    )
-                    failed_items.append(f"#{item.position} (telegram 5xx: {exc})")
-                    continue
-                else:
-                    log.error(
-                        "HTTP error (%s) during channel send for item #%s: %s",
-                        status_code,
-                        item.position,
-                        exc,
-                    )
-                    with transaction.atomic():
-                        DigestItem.objects.filter(id=item.id).update(
-                            channel_delivery_state=DeliveryState.FAILED,
-                            channel_delivery_error=f"HTTP {status_code}: {exc}"[:512],
-                        )
-                    failed_items.append(f"#{item.position} (HTTP {status_code}: {exc})")
-                    continue
-
-            except Exception as exc:
-                log.error(
-                    "Unexpected error during channel send for item #%s: %s",
-                    item.position,
-                    exc,
-                )
-                with transaction.atomic():
-                    DigestItem.objects.filter(id=item.id).update(
-                        channel_delivery_state=DeliveryState.UNKNOWN,
-                        channel_delivery_error=f"Unexpected error: {exc}"[:512],
-                    )
-                failed_items.append(f"#{item.position} (unexpected error: {exc})")
-                continue
-
-            ch_msg_id = res_post.get("result", {}).get("message_id") if res_post else None
-
-            if not ch_msg_id and not (res_post and res_post.get("suppressed")):
-                log.error("Channel post failed for item #%s: %s", item.position, res_post)
-                with transaction.atomic():
-                    DigestItem.objects.filter(id=item.id).update(
-                        channel_delivery_state=DeliveryState.FAILED,
-                        channel_delivery_error=f"No message ID returned: {res_post}"[:512],
-                    )
-                failed_items.append(f"#{item.position} (publish failed: no message_id)")
-                continue
-
-            if ch_msg_id:
-                with transaction.atomic():
-                    DigestItem.objects.filter(id=item.id).update(
-                        channel_message_id=ch_msg_id,
-                        sent_as_photo=sent_as_photo,
-                        channel_delivery_state=DeliveryState.SENT,
-                        channel_delivery_error="",
-                    )
-                item.refresh_from_db()
+            res_item = publish_digest_item(item, client=client, republish=republish)
+            if res_item["status"] == "sent":
                 sent_count += 1
-            elif res_post and res_post.get("suppressed"):
-                with transaction.atomic():
-                    DigestItem.objects.filter(id=item.id).update(
-                        channel_delivery_state=DeliveryState.PENDING,
-                        channel_delivery_error="Suppressed by kill switch",
-                    )
-                item.refresh_from_db()
+            elif res_item["status"] == "skipped":
+                skipped_count += 1
+                if res_item.get("error"):
+                    failed_items.append(f"#{item.position} ({res_item['error']})")
+            elif res_item["status"] == "failed":
+                failed_items.append(f"#{item.position} ({res_item.get('error', 'failed')})")
+            elif res_item["status"] == "suppressed":
+                pass
 
-            # --- Group appendix ---
-            if group_id:
-                if send_delay > 0:
-                    time.sleep(min(send_delay / 2, 1.5))
-                fwd_id = find_group_forward_message_id(ch_msg_id)
-                if fwd_id:
-                    try:
-                        appendix_html = ranking.render_item_appendix(item)
-                    except ValueError as exc:
-                        log.error("Appendix render failed for item #%s: %s", item.position, exc)
-                        appendix_failures.append(f"#{item.position} (appendix render: {exc})")
-                        continue
-
-                    res_comment = send_message(
-                        chat_id=group_id,
-                        text=appendix_html,
-                        reply_to_message_id=fwd_id,
-                        client=client,
-                    )
-                    grp_msg_id = res_comment.get("result", {}).get("message_id")
-                    if grp_msg_id:
-                        item.group_message_id = grp_msg_id
-                        item.save(update_fields=["group_message_id"])
-                else:
-                    log.warning(
-                        "Auto-forward not found for item #%s (channel_msg %s)",
-                        item.position,
-                        ch_msg_id,
-                    )
-                    appendix_failures.append(
-                        f"#{item.position} (forward not found for msg {ch_msg_id})"
-                    )
+            if res_item.get("appendix_error"):
+                appendix_failures.append(f"#{item.position} ({res_item['appendix_error']})")
 
     finally:
         if close_client:

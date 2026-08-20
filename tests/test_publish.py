@@ -172,7 +172,6 @@ def test_a_publish_never_writes_the_bot_token_to_the_log(db, digest_1, settings,
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
 
 
-
 @respx.mock
 def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, settings):
     """T1.14 acceptance: 15 items produce 15 distinct channel_message_id values."""

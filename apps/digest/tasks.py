@@ -397,9 +397,7 @@ def compose_and_publish(
 
     except Exception as exc:
         log.error("Failed in compose_and_publish for %s (%s): %s", target_date, edition, exc)
-        publish.send_admin_alert(
-            f"Failed compose_and_publish for {target_date} ({edition}): {exc}"
-        )
+        publish.send_admin_alert(f"Failed compose_and_publish for {target_date} ({edition}): {exc}")
         return {"error": str(exc), "digest_date": str(target_date), "edition": edition}
 
 

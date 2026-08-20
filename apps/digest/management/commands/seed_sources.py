@@ -79,9 +79,10 @@ SOURCES = [
     {
         "name": "nvidia_robotics",
         "connector": "rss",
-        "priority": 50,
+        "priority": 70,
         "url": "https://developer.nvidia.com/blog/category/robotics/feed/",
         "stream": Topic.ROBOTICS,
+        "enabled": True,
     },
     {
         "name": "arxiv_cs_cr",
@@ -89,6 +90,7 @@ SOURCES = [
         "priority": 50,
         "url": "https://rss.arxiv.org/rss/cs.CR",
         "stream": Topic.SAFETY_SECURITY,
+        "enabled": False,
     },
     {
         "name": "hn",
@@ -97,15 +99,17 @@ SOURCES = [
         "url": "https://hn.algolia.com/",
         "stream": "",
         "config": {"min_points": 50},
+        "enabled": True,
     },
     # --- Added 2026-08-18. Feeds verified live the same day. -------------------
-    # govtech had no source at all before this; these five are its whole supply.
+    # GovTech feeds: Disabled due to high noise / non-AI bureaucratic content
     {
         "name": "nextgov",
         "connector": "rss",
         "priority": 50,
         "url": "https://www.nextgov.com/rss/all/",
         "stream": Topic.GOVTECH,
+        "enabled": False,
     },
     {
         "name": "fedscoop",
@@ -113,6 +117,7 @@ SOURCES = [
         "priority": 50,
         "url": "https://fedscoop.com/feed/",
         "stream": Topic.GOVTECH,
+        "enabled": False,
     },
     {
         "name": "statescoop",
@@ -120,6 +125,7 @@ SOURCES = [
         "priority": 60,
         "url": "https://statescoop.com/feed/",
         "stream": Topic.GOVTECH,
+        "enabled": False,
     },
     {
         "name": "ec_digital",
@@ -127,6 +133,7 @@ SOURCES = [
         "priority": 50,
         "url": "https://digital-strategy.ec.europa.eu/en/rss.xml",
         "stream": Topic.GOVTECH,
+        "enabled": False,
     },
     {
         "name": "gds_uk",
@@ -134,6 +141,7 @@ SOURCES = [
         "priority": 60,
         "url": "https://gds.blog.gov.uk/feed/",
         "stream": Topic.GOVTECH,
+        "enabled": False,
     },
     # speech_voice: the three large vendors publish no feed, so release feeds are the supply.
     {
@@ -143,6 +151,7 @@ SOURCES = [
         "url": "https://github.com/k2-fsa/sherpa-onnx",
         "stream": Topic.SPEECH_VOICE,
         "config": {"repo": "k2-fsa/sherpa-onnx"},
+        "enabled": True,
     },
     {
         "name": "gh_pyannote",
@@ -151,6 +160,7 @@ SOURCES = [
         "url": "https://github.com/pyannote/pyannote-audio",
         "stream": Topic.SPEECH_VOICE,
         "config": {"repo": "pyannote/pyannote-audio"},
+        "enabled": True,
     },
     {
         "name": "gh_whisperx",
@@ -159,14 +169,16 @@ SOURCES = [
         "url": "https://github.com/m-bain/whisperX",
         "stream": Topic.SPEECH_VOICE,
         "config": {"repo": "m-bain/whisperX"},
+        "enabled": True,
     },
     # startups
     {
         "name": "techcrunch_ai",
         "connector": "rss",
-        "priority": 50,
+        "priority": 60,
         "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
         "stream": Topic.STARTUPS,
+        "enabled": True,
     },
     {
         "name": "crunchbase_news",
@@ -174,6 +186,7 @@ SOURCES = [
         "priority": 60,
         "url": "https://news.crunchbase.com/feed/",
         "stream": Topic.STARTUPS,
+        "enabled": False,
     },
     {
         "name": "sifted",
@@ -181,6 +194,7 @@ SOURCES = [
         "priority": 60,
         "url": "https://sifted.eu/feed",
         "stream": Topic.STARTUPS,
+        "enabled": False,
     },
 ]
 

@@ -233,3 +233,21 @@ def test_render_item_post_v2_end_to_end():
     assert "#robototexnika" in rendered
     assert rendered.endswith("#robototexnika")
     assert post_format.visible_length(rendered) <= 900
+
+
+def test_render_item_post_v2_ultra_concise_under_30_words():
+    """render_item_post_v2 renders ultra-concise post with <= 30 words."""
+    item_data = {
+        "url": "https://t.me/customs_rf/12219",
+        "lead_uz": (
+            "Rossiya va Gruziya chegarasida yangi rekord qayd etildi: "
+            "18-avgust kuni 20 ming kishi o'tdi."
+        ),
+        "link_anchor_uz": "etildi",
+        "body_1_uz": "Yo'lovchilar oqimi keskin oshgan — bu o'tgan yillarga nisbatan ancha ko'p.",
+        "topic": Topic.FINTECH,
+    }
+    rendered = post_format.render_item_post_v2(item_data, max_words=30)
+    assert '<a href="https://t.me/customs_rf/12219">etildi</a>' in rendered
+    assert "#fintex" in rendered
+    assert post_format.count_words(rendered) <= 30

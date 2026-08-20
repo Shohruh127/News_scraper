@@ -597,6 +597,14 @@ def visible_length(html_text: str) -> int:
     return len(html_unescape(plain))
 
 
+def count_words(html_text: str) -> int:
+    """Calculate word count of visible text (tags stripped, entities unescaped)."""
+    plain = _TAG_STRIP_RE.sub("", html_text)
+    unescaped = html_unescape(plain)
+    words = [w for w in unescaped.split() if not w.startswith("#")]
+    return len(words)
+
+
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZА-ЯЁO‘OʻG‘Gʻ\d\W])")
 
 
@@ -616,7 +624,8 @@ def _assemble_candidate(lead_html: str, body_1: str, body_2: str, kicker: str, t
         parts.append(html_escape(body_2.strip()))
     if kicker.strip():
         parts.append(html_escape(kicker.strip()))
-    parts.append(tag.strip())
+    if tag.strip():
+        parts.append(tag.strip())
     return "\n\n".join(parts)
 
 
@@ -627,59 +636,54 @@ def trim_post_fields(
     kicker: str,
     tag: str,
     max_chars: int = 900,
+    max_words: int = 35,
 ) -> tuple[str, str, str]:
-    """Progressively trim body_2, body_1, then kicker until visible length <= max_chars."""
-    if visible_length(_assemble_candidate(lead_html, body_1, body_2, kicker, tag)) <= max_chars:
+    """Progressively trim fields until visible length <= max_chars and words <= max_words."""
+    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
+    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
         return body_1, body_2, kicker
 
     # Step 1: Drop trailing sentences from body_2
     b2_sentences = split_sentences(body_2)
-    while (
-        b2_sentences
-        and visible_length(
-            _assemble_candidate(lead_html, body_1, " ".join(b2_sentences), kicker, tag)
-        )
-        > max_chars
-    ):
+    while b2_sentences:
+        candidate = _assemble_candidate(lead_html, body_1, " ".join(b2_sentences), kicker, tag)
+        if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
+            return body_1, " ".join(b2_sentences), kicker
         b2_sentences.pop()
-    body_2 = " ".join(b2_sentences)
-
-    if visible_length(_assemble_candidate(lead_html, body_1, body_2, kicker, tag)) <= max_chars:
-        return body_1, body_2, kicker
-
-    # Step 2: Drop trailing sentences from body_1 (down to 1 sentence)
-    b1_sentences = split_sentences(body_1)
-    while (
-        len(b1_sentences) > 1
-        and visible_length(
-            _assemble_candidate(lead_html, " ".join(b1_sentences), body_2, kicker, tag)
-        )
-        > max_chars
-    ):
-        b1_sentences.pop()
-    body_1 = " ".join(b1_sentences)
-
-    if visible_length(_assemble_candidate(lead_html, body_1, body_2, kicker, tag)) <= max_chars:
-        return body_1, body_2, kicker
-
-    # Step 3: Drop kicker if still over budget
-    kicker = ""
-    if visible_length(_assemble_candidate(lead_html, body_1, body_2, kicker, tag)) <= max_chars:
-        return body_1, body_2, kicker
-
-    # Step 4: Drop remaining body_1 sentences if still over budget
-    while (
-        b1_sentences
-        and visible_length(
-            _assemble_candidate(lead_html, " ".join(b1_sentences), body_2, kicker, tag)
-        )
-        > max_chars
-    ):
-        b1_sentences.pop()
-    body_1 = " ".join(b1_sentences)
+    body_2 = ""
 
     candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
-    vis = visible_length(candidate)
+    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
+        return body_1, body_2, kicker
+
+    # Step 2: Drop kicker if still over budget
+    kicker = ""
+    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
+    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
+        return body_1, body_2, kicker
+
+    # Step 3: Drop trailing sentences from body_1 (down to 1 sentence)
+    b1_sentences = split_sentences(body_1)
+    while len(b1_sentences) > 1:
+        b1_sentences.pop()
+        candidate = _assemble_candidate(lead_html, " ".join(b1_sentences), body_2, kicker, tag)
+        if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
+            return " ".join(b1_sentences), body_2, kicker
+
+    body_1 = " ".join(b1_sentences)
+    candidate = _assemble_candidate(lead_html, body_1, body_2, kicker, tag)
+    if visible_length(candidate) <= max_chars and count_words(candidate) <= max_words:
+        return body_1, body_2, kicker
+
+    # Step 4: Drop body_1 completely if lead alone still fits
+    candidate_lead_only = _assemble_candidate(lead_html, "", "", "", tag)
+    if (
+        visible_length(candidate_lead_only) <= max_chars
+        and count_words(candidate_lead_only) <= max_words
+    ):
+        return "", "", ""
+
+    vis = visible_length(candidate_lead_only)
     if vis > max_chars:
         raise ValueError(f"Lead and tag alone exceed max_chars budget ({vis} > {max_chars})")
 
@@ -740,8 +744,8 @@ def validate_rendered_post(rendered_html: str, max_chars: int = 900) -> list[str
     return violations
 
 
-def render_item_post_v2(item_data: dict, max_chars: int = 900) -> str:
-    """Render a clean v2 post conforming to the approved spec."""
+def render_item_post_v2(item_data: dict, max_chars: int = 900, max_words: int = 35) -> str:
+    """Render a clean v2 post conforming to the ultra-concise approved spec."""
     url = item_data.get("url", "")
     lead = strip_markdown_formatting(item_data.get("lead_uz") or item_data.get("summary_uz") or "")
     if not lead.strip():
@@ -766,6 +770,7 @@ def render_item_post_v2(item_data: dict, max_chars: int = 900) -> str:
         kicker=kicker,
         tag=tag,
         max_chars=max_chars,
+        max_words=max_words,
     )
 
     rendered = _assemble_candidate(lead_html, b1_trimmed, b2_trimmed, k_trimmed, tag)
