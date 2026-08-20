@@ -207,8 +207,7 @@ class Translation(BaseModel):
 
 
 # --- Editorial: English analysis ---------------------------------------------
-# Separated from translation (ADR-005). English is verified on its own so that a poor
-# post can be attributed to comprehension or to translation, never to both at once.
+# --- Editorial: English analysis (Stage 1: Fact Extraction) ------------------
 
 EDITORIAL_EN_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -220,71 +219,17 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
         "link_anchor_en": {"type": "string"},
         "why_it_matters_en": {"type": "string"},
         "uzbekistan_application_en": {"type": "string"},
-        "technical": {
-            "type": "object",
-            "properties": {
-                "what_was_built": {"type": "string"},
-                "architecture": {"type": "string"},
-                "license": {"type": "string"},
-                "repo_url": {"type": "string"},
-                "api_url": {"type": "string"},
-                "hardware": {"type": "string"},
-                "install": {"type": "string"},
-                "benchmarks": {"type": "string"},
-                "limitations": {"type": "string"},
-                "local_deployable": {"type": "boolean"},
-            },
-            "required": ["what_was_built", "limitations", "local_deployable"],
-        },
+        "archetype": {"type": "string", "enum": list(ARCHETYPES)},
         "evidence_level": {
             "type": "string",
             "enum": ["vendor_claim_only", "multiple_evidence"],
         },
-        "archetype": {"type": "string", "enum": list(ARCHETYPES)},
-        "release_details": {
+        "technical": {
             "type": "object",
             "properties": {
-                "what_changed_en": {"type": "string"},
-                "benchmarks_en": {"type": "string"},
-                "availability_en": {"type": "string"},
-            },
-        },
-        "agent_protocol_details": {
-            "type": "object",
-            "properties": {
-                "connects_en": {"type": "string"},
-                "deployment_en": {"type": "string"},
-            },
-        },
-        "risk_hardening_details": {
-            "type": "object",
-            "properties": {
-                "risk_en": {"type": "string"},
-                "mitigation_en": {"type": "string"},
-                "residual_en": {"type": "string"},
-            },
-        },
-        "policy_details": {
-            "type": "object",
-            "properties": {
-                "who_issued_en": {"type": "string"},
-                "who_must_comply_en": {"type": "string"},
-                "deadline_en": {"type": "string"},
-            },
-        },
-        "research_details": {
-            "type": "object",
-            "properties": {
-                "claim_en": {"type": "string"},
-                "evidence_strength_en": {"type": "string"},
-                "reproducible_en": {"type": "string"},
-            },
-        },
-        "company_product_details": {
-            "type": "object",
-            "properties": {
-                "what_they_do_en": {"type": "string"},
-                "availability_en": {"type": "string"},
+                "what_was_built": {"type": "string"},
+                "limitations": {"type": "string"},
+                "local_deployable": {"type": "boolean"},
             },
         },
     },
@@ -293,86 +238,46 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
         "body_1_en",
         "link_anchor_en",
         "why_it_matters_en",
-        "uzbekistan_application_en",
-        "technical",
-        "evidence_level",
-        "archetype",
     ],
 }
 
-#: Quoted verbatim from CONTENT_SCHEMA.md §5. Measured: 0/6 without, 5/6 with.
-ARCHETYPE_DEFINITIONS = (
-    "## Choose exactly one archetype\n"
-    "release          A named product or model shipped a new version. A changelog, a release\n"
-    "                 note, a version number. This is the default for any version bump.\n"
-    "agent_protocol   A protocol or framework for connecting tools to models, where the news\n"
-    "                 IS the connection mechanism. Not a runtime that happens to run agents.\n"
-    "risk_hardening   A risk, a weakness, or work done to reduce one. There must be something\n"
-    "                 that can go wrong and someone acting on it.\n"
-    "policy           A rule issued by a government or standards body, with someone obliged to\n"
-    "                 comply. Pricing is not policy.\n"
-    "research         A method or a finding with a claim and evidence, not a shipped artifact.\n"
-    "company_product  A company entering a market or making a commercial launch, where the\n"
-    "                 company is the news rather than the version.\n\n"
-    "Fill ONLY the detail block for the archetype you chose. Leave every other block absent.\n"
-    "Omit any field whose value is not stated in the article. Never infer a severity.\n\n"
-)
-
 EDITORIAL_EN_PROMPT = (
-    "You are a senior editor for a daily AI-engineering digest read by engineering "
-    "leaders and AI engineers in Uzbekistan.\n\n"
-    "Write the English analysis of the article below in ULTRA-CONCISE Telegram channel "
-    "news format (maximum 30 words total for the post content: exactly 1 short lead "
-    "sentence + 1 short context sentence). Return JSON only.\n\n"
-    + ARCHETYPE_DEFINITIONS
-    + "## Post Structure & Strict Field Rules\n"
-    "- headline_en: exactly 1 short punchy title (3-6 words)\n"
-    "- summary_en: 1-2 concise sentences\n"
-    "- lead_en: exactly 1 short sentence (10-15 words max). State the core news clearly "
-    "and end with a single-word action verb as the link anchor (e.g. 'released', 'launched', "
-    "'open-sourced'). Do NOT include markdown, bolding, bullet points, headlines, or URLs.\n"
-    "- link_anchor_en: the exact single-word action verb from lead_en to attach the "
-    "source link to. Must appear verbatim in lead_en.\n"
-    "- body_1_en: exactly 1 short sentence (10-15 words max) carrying the most critical "
-    "concrete fact/metric/benchmark/number. No bullet points.\n"
-    '- body_2_en: "" (always leave empty string)\n'
-    '- kicker_en: "" (always leave empty string)\n'
-    "- why_it_matters_en: exactly 1 short sentence\n"
-    "- uzbekistan_application_en: exactly 1 sentence, or empty if none\n\n"
-    "## Style Constraints (HIGH INFORMATION DENSITY)\n"
-    "1. NO FLUFF / NO HYPE: Never use words like 'revolutionary', 'game-changer', "
-    "'groundbreaking', 'powerful', 'game-changing', 'excited to announce'.\n"
-    "2. MANDATORY NUMBER OR CONCRETE FACT: body_1_en must contain specific metrics "
-    "(parameters, benchmark score, speedup, cost, license, context window).\n"
+    "Extract core high-signal facts from the AI engineering article below for an "
+    "ultra-concise Telegram channel news post (max 30 words total). Return JSON only.\n\n"
+    "## Output Fields:\n"
+    "- lead_en: exactly 1 short sentence (10-15 words). Who did what, ending with a "
+    "single-word action verb as the link anchor (e.g. 'released', 'launched', 'open-sourced'). "
+    "No markdown or headlines.\n"
+    "- link_anchor_en: the exact single-word action verb from lead_en (e.g. 'released').\n"
+    "- body_1_en: exactly 1 short sentence (10-15 words) with key metrics, numbers, "
+    "benchmarks, or technical specs. No fluff.\n"
+    '- body_2_en: ""\n'
+    '- kicker_en: ""\n'
+    "- why_it_matters_en: 1 short sentence on developer/engineering impact.\n"
+    "- uzbekistan_application_en: 1 short sentence or empty string.\n"
+    "- archetype: 'release', 'company_product', 'research', 'agent_protocol', "
+    "'risk_hardening', or 'policy'\n"
+    "- evidence_level: 'vendor_claim_only' or 'multiple_evidence'\n\n"
+    "## Style Rules:\n"
+    "1. NO FLUFF / NO HYPE: Never use words like 'revolutionary', 'game-changer', 'powerful'.\n"
+    "2. MANDATORY NUMBERS / METRICS: body_1_en must carry concrete numbers.\n"
     "3. STRICT LENGTH: lead_en + body_1_en combined must NOT exceed 30 words!\n\n"
-    "## Few-Shot Example (English):\n"
-    'Input Article: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context '
-    'window, achieving 84.0% on MMLU."\n'
+    "## Few-Shot Example:\n"
+    'Input: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context, '
+    'scoring 84% on MMLU."\n'
     "Output JSON:\n"
     "{{\n"
-    '  "headline_en": "Mistral Releases Mistral-Large-2",\n'
-    '  "summary_en": "Mistral-Large-2 is a 123B parameter frontier model with 128k context.",\n'
     '  "lead_en": "Mistral released Mistral-Large-2 with 123B parameters for frontier '
     'reasoning.",\n'
     '  "link_anchor_en": "released",\n'
     '  "body_1_en": "The model features a 128k context window and scores 84% on MMLU.",\n'
     '  "body_2_en": "",\n'
     '  "kicker_en": "",\n'
-    '  "why_it_matters_en": "Provides a competitive open-weight alternative to proprietary '
-    'LLMs.",\n'
-    '  "uzbekistan_application_en": "Can be self-hosted for enterprise multilingual '
-    'applications.",\n'
+    '  "why_it_matters_en": "Provides an open-weight alternative to proprietary LLMs.",\n'
+    '  "uzbekistan_application_en": "Can be self-hosted for local multilingual applications.",\n'
     '  "archetype": "release",\n'
-    '  "release_details": {{\n'
-    '    "what_changed_en": "Released 123B weights and 128k context support."\n'
-    "  }}\n"
+    '  "evidence_level": "vendor_claim_only"\n'
     "}}\n\n"
-    "## Grounding\n"
-    "Every claim must come from the article text. If a detail is absent — license, "
-    'benchmark number, repo URL, hardware requirement — leave that field as "". Never '
-    "infer, never fill from background knowledge.\n"
-    "- local_deployable: true only if weights or code can actually be self-hosted\n"
-    '- evidence_level: "vendor_claim_only" unless the article cites independent validation\n\n'
     "ARTICLE\n"
     "Title: {title}\n"
     "Source: {source}\n"
@@ -380,7 +285,7 @@ EDITORIAL_EN_PROMPT = (
     "{text}\n"
 )
 
-# --- Editorial: Uzbek translation --------------------------------------------
+# --- Editorial: Uzbek translation (Stage 2: Copywriter) ----------------------
 
 TRANSLATION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -398,32 +303,21 @@ TRANSLATION_SCHEMA: dict[str, Any] = {
         "body_1_uz",
         "link_anchor_uz",
         "why_it_matters_uz",
-        "uzbekistan_application_uz",
     ],
 }
 
 #: Fields translated for every post regardless of archetype.
 COMMON_TRANSLATED_FIELDS = (
-    "headline_en",
-    "summary_en",
     "lead_en",
     "body_1_en",
     "body_2_en",
     "kicker_en",
     "link_anchor_en",
     "why_it_matters_en",
-    "leadership_en",
     "uzbekistan_application_en",
 )
 
-#: Technical fields that are prose and therefore translated. Measured 2026-08-18 over 37
-#: stored rows: what_was_built 37 values averaging 14 words, limitations 29 at 20 words,
-#: architecture 15 at 24, benchmarks 15 at 23, hardware 5 at 11 — all full sentences.
-#:
-#: repo_url and api_url are single URLs. license was empty in every row. `install` is
-#: excluded because it is mixed: two of its five values were prose and one was the bare
-#: command `ollama run muse-glimmer`, which the appendix renders inside <code>. Translating a
-#: command is worse than leaving a phrase in English, because someone may run the result.
+#: Technical fields that are prose and therefore translated.
 TECHNICAL_PROSE_FIELDS = (
     "what_was_built",
     "architecture",
@@ -434,11 +328,7 @@ TECHNICAL_PROSE_FIELDS = (
 
 
 def technical_fields(payload: dict) -> dict[str, str]:
-    """The technical block's prose, suffixed `_en` so the dynamic schema yields `_uz`.
-
-    The suffix exists only inside the translation call. The stored payload keeps its plain
-    names, so nothing needs migrating and old digests keep rendering.
-    """
+    """The technical block's prose, suffixed `_en` so the dynamic schema yields `_uz`."""
     block = payload.get("technical") or {}
     return {
         f"{name}_en": block[name]
@@ -448,47 +338,38 @@ def technical_fields(payload: dict) -> dict[str, str]:
 
 
 def archetype_fields(payload: dict) -> dict[str, str]:
-    """The chosen archetype's detail block, flattened to top-level keys.
-
-    Flat rather than nested because `translation_gates.validate_translation` joins the values
-    of both dicts, and a nested dict stringifies into its own repr. The gates were built
-    generic over field names; only the schema was not.
-    """
+    """The chosen archetype's detail block, flattened to top-level keys."""
     block = payload.get(f"{payload.get('archetype', '')}_details") or {}
     return {k: v for k, v in block.items() if isinstance(v, str) and v.strip()}
 
 
 def translation_schema_for(fields: dict) -> dict:
-    """A translation schema carrying exactly the fields the English stage produced.
-
-    Deriving it rather than fixing it removes the opportunity to fill an irrelevant block
-    instead of instructing against it.
-    """
+    """A translation schema carrying exactly the fields the English stage produced."""
     props = {(k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields}
     return {"type": "object", "properties": props, "required": list(props)}
 
 
 TRANSLATION_PROMPT = (
-    "Translate the fields below into Uzbek (Latin script). Return JSON only.\n\n"
-    "## Ultra-concise Post Length & Quality Rules (QAT'IY TALABLAR)\n"
-    "1. Post matni (lead_uz + body_1_uz) JAMI 30 TA SO'ZDAN OSHMASLIGI SHART "
-    "(max 30 words total).\n"
-    "2. lead_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy yangilikni bildiradi va link_anchor_uz "
+    "Quyidagi faktlar asosida O'zbekistondagi AI muhandislari uchun 2 ta qisqa gapdan iborat "
+    "ravon va ixcham Telegram posti yoz (Latin script). Faqat JSON qaytar.\n\n"
+    "## Qat'iy qoidalar:\n"
+    "1. Post matni (lead_uz + body_1_uz) JAMI 30 TA SO'ZDAN OSHMASIN (max 30 words total).\n"
+    "2. lead_uz: Aniq 1 ta qisqa gap (10-15 so'z). Kim nima qilganini bildiradi va link_anchor_uz "
     "fe'lini o'z ichiga oladi.\n"
-    "3. body_1_uz: Aniq 1 ta qisqa gap (10-15 so'z), asosiy raqam, mezon yoki texnik faktni "
+    "3. body_1_uz: Aniq 1 ta qisqa gap (10-15 so'z). Asosiy raqam, mezon yoki texnik faktni "
     "ifodalaydi.\n"
-    '4. body_2_uz: "" (har doim bo\'sh qoldiring).\n'
-    '5. kicker_uz: "" (har doim bo\'sh qoldiring).\n'
-    "6. RAQAM VA VERSIYALAR: Barcha raqamlar, versiyalar (masalan, v0.32.12, 3.8, 27B) "
-    "tarjimada to'liq saqlanishi shart.\n"
-    "7. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli', "
-    "'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.\n\n"
-    "## Few-Shot Namuna (O'zbek tili):\n"
+    "4. link_anchor_uz: lead_uz ichidagi aynan 1 ta so'zdan iborat harakat fe'li "
+    "(masalan: 'chiqardi', 'tushirdi', 'almashtirdi', 'qo'shdi', 'etdi').\n"
+    "5. Barcha raqamlar, versiyalar (masalan, v0.32.12, $12K, 95.3%) tarjimada aniq saqlansin.\n"
+    "6. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',\n"
+    "   'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.\n"
+    '7. body_2_uz: "" va kicker_uz: "" bo\'lsin.\n\n'
+    "## Few-Shot Namunalar:\n"
     "Misol 1 (Model relizi):\n"
-    'English input: {{"lead_en": "Mistral released Mistral-Large-2 with 123B parameters.", '
+    'Kiruvchi faktlar: {{"lead_en": "Mistral released Mistral-Large-2 with 123B parameters.", '
     '"link_anchor_en": "released", "body_1_en": "The model features 128k context and 84% score '
     'on MMLU."}}\n'
-    "Uzbek output JSON:\n"
+    "Chiquvchi JSON:\n"
     "{{\n"
     '  "lead_uz": "Mistral jamoasi 123B parametrli yangi Mistral-Large-2 modelini ochiq taqdim '
     'etdi.",\n'
@@ -497,26 +378,27 @@ TRANSLATION_PROMPT = (
     '  "body_2_uz": "",\n'
     '  "kicker_uz": ""\n'
     "}}\n\n"
-    "Misol 2 (Dasturiy vosita / Versiya relizi):\n"
-    'English input: {{"lead_en": "Ollama v0.32.12 released with support for Qwen 3.8 27B.", '
-    '"link_anchor_en": "released", "body_1_en": "The 27B model runs locally on Apple Silicon '
-    'with low latency."}}\n'
-    "Uzbek output JSON:\n"
+    "Misol 2 (Dasturiy vosita / Keys):\n"
+    'Kiruvchi faktlar: {{"lead_en": "Asana replaced outdated testing system in 2 weeks for $12K '
+    'with OpenAI Codex.", "link_anchor_en": "replaced", "body_1_en": "The project finished in two '
+    'weeks instead of estimated 5 years and $6M."}}\n'
+    "Chiquvchi JSON:\n"
     "{{\n"
-    '  "lead_uz": "Ollama jamoasi Qwen 3.8 27B modelini qo\'llab-quvvatlovchi v0.32.12 '
-    'versiyasini chiqardi.",\n'
-    '  "link_anchor_uz": "chiqardi",\n'
-    '  "body_1_uz": "Yangi 27B model Apple Silicon chiplarida past kechikish bilan mahalliy '
-    'ishlaydi.",\n'
+    '  "lead_uz": "Asana jamoasi OpenAI Codex yordamida eskirgan sinov tizimini ikki haftada '
+    '$12K ga almashtirdi.",\n'
+    '  "link_anchor_uz": "almashtirdi",\n'
+    '  "body_1_uz": "Avval 5 yil va $6M deb taxmin qilingan loyiha parallel kodlovchi agentlar '
+    'bilan yakunlandi.",\n'
     '  "body_2_uz": "",\n'
     '  "kicker_uz": ""\n'
     "}}\n\n"
     "## Link Anchor Translation\n"
     "link_anchor_uz MUST be EXACTLY ONE WORD token (a single word verb like 'chiqardi', "
-    "'tushirdi', 'etdi', 'e'lon qildi') and MUST appear verbatim in lead_uz.\n\n"
+    "'tushirdi', 'etdi', 'almashtirdi', 'qo'shdi') and MUST appear verbatim in lead_uz.\n\n"
     "## Keep in English\n"
     "Model names, product names, company names, metric names, and terms: model, API, agent, "
-    "framework, benchmark, context, token, inference, latency, prompt, repo, open-source.\n\n"
+    "framework, benchmark, context, token, inference, latency, prompt, repo, open-source, "
+    "weights, open-weight.\n\n"
     "## Plain text formatting\n"
     "Do NOT use markdown bolding (like **word**), asterisks, backticks, or bullet points in any "
     "field. Output clean plain text.\n\n"
@@ -1389,24 +1271,24 @@ def _editorial_call(
         )
         model_cls.model_validate(payload)
 
-    # Post-check for empty technical.what_was_built (T1.17)
-    tech_built = payload.get("technical", {}).get("what_was_built", "").strip()
-    if model_cls is EditorialEn and not tech_built:
-        log.warning("Empty what_was_built in English editorial, retrying once.")
+    # Post-check for empty lead_en in English editorial
+    lead_en = payload.get("lead_en", "").strip()
+    if model_cls is EditorialEn and not lead_en:
+        log.warning("Empty lead_en in English editorial, retrying once.")
         recovery = (
-            f"{prompt}\n\nIMPORTANT: The 'what_was_built' field in 'technical' was empty. "
-            "You must provide a non-empty description of what was built or released."
+            f"{prompt}\n\nIMPORTANT: The 'lead_en' field was empty. "
+            "You must provide a non-empty 1-sentence lead with action verb link anchor."
         )
         try:
             retry_payload, retry_ms, retry_model = editorial_chat(
                 recovery, schema, max(num_predict, 2000), client, provider, ollama_model
             )
             model_cls.model_validate(retry_payload)
-            if retry_payload.get("technical", {}).get("what_was_built", "").strip():
+            if retry_payload.get("lead_en", "").strip():
                 payload = retry_payload
                 ms += retry_ms
                 model_tag = retry_model
         except Exception as exc:
-            log.debug("what_was_built recovery attempt failed: %s", exc)
+            log.debug("lead_en recovery attempt failed: %s", exc)
 
     return payload, ms, model_tag
