@@ -19,7 +19,6 @@ fi
 compose build
 "$(dirname "$0")/preflight.sh"
 compose up -d postgres redis
-compose run --rm web python manage.py migrate --noinput
 compose up -d
 
 attempt=1

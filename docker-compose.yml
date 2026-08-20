@@ -20,6 +20,8 @@ x-app-service: &app-service
       condition: service_healthy
     redis:
       condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
   security_opt:
     - no-new-privileges:true
   cap_drop:
@@ -70,6 +72,23 @@ services:
           memory: 256M
     logging: *default-logging
     restart: unless-stopped
+
+  migrate:
+    <<: *app-service
+    command: python manage.py migrate --noinput
+    # Overrides the anchor, which now points every app service at this one. Without
+    # this block migrate would wait for itself and the stack would deadlock.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Overrides the anchor's unless-stopped: a one-shot container that exits cleanly
+    # would otherwise be restarted forever.
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   worker-fetch:
     <<: *app-service
