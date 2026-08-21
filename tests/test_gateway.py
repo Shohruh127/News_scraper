@@ -32,6 +32,70 @@ def _ok(payload=None):
     return httpx.Response(200, json={"choices": [{"message": {"content": body}}]})
 
 
+def _fenced(payload, language="json"):
+    """Reply wrapped in a markdown code fence, the way the live gateway answers."""
+    body = "```" + language + "\n" + json.dumps(payload) + "\n```"
+    return httpx.Response(200, json={"choices": [{"message": {"content": body}}]})
+
+
+@respx.mock
+def test_gateway_chat_parses_a_markdown_fenced_reply(gateway):
+    """The gateway does not enforce json_schema strictly; it fences the JSON.
+
+    Measured 2026-08-21 against the live gateway: every reply came back inside a json
+    fence whatever max_tokens was. json.loads on that raises "Expecting value: line 1
+    column 1", which cost a doubled call in the stages that retry and dropped the article
+    outright in the stages that do not.
+    """
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=[_fenced({"ok": True})])
+
+    payload, _ = llm.gateway_chat(model="fast", prompt="hi", schema=SCHEMA)
+
+    assert payload == {"ok": True}
+
+
+@respx.mock
+def test_gateway_chat_parses_a_fence_with_no_language(gateway):
+    respx.post("http://gw.test/v1/chat/completions").mock(
+        side_effect=[_fenced({"ok": False}, language="")]
+    )
+
+    payload, _ = llm.gateway_chat(model="fast", prompt="hi", schema=SCHEMA)
+
+    assert payload == {"ok": False}
+
+
+@respx.mock
+def test_an_empty_reply_names_the_token_budget(gateway):
+    """`smart` is a reasoning model and its reasoning is charged to max_tokens.
+
+    Measured 2026-08-21: at max_tokens=50 it returned finish_reason "length" with empty
+    content, having spent the whole budget on its `reasoning` field. Parsing that raised
+    JSONDecodeError, which points at neither the cause nor the fix.
+    """
+    respx.post("http://gw.test/v1/chat/completions").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+            )
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="finish_reason"):
+        llm.gateway_chat(model="smart", prompt="hi", schema=SCHEMA, max_tokens=50)
+
+
+@respx.mock
+def test_gateway_chat_still_parses_an_unfenced_reply(gateway):
+    """Stripping the fence must not break the providers that answer with bare JSON."""
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=[_ok({"ok": True})])
+
+    payload, _ = llm.gateway_chat(model="fast", prompt="hi", schema=SCHEMA)
+
+    assert payload == {"ok": True}
+
+
 @respx.mock
 def test_gateway_chat_sends_bearer_token_and_alias(gateway):
     route = respx.post("http://gw.test/v1/chat/completions").mock(side_effect=[_ok()])

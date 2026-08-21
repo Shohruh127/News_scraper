@@ -615,6 +615,29 @@ def ollama_chat(
             client.close()
 
 
+def _strip_code_fence(text: str) -> str:
+    """Return the JSON inside a markdown fence, or the text unchanged.
+
+    The internal gateway accepts `json_schema` with `strict: true` and then wraps its
+    answer in a ```json fence anyway. Measured 2026-08-21 against the live gateway: every
+    reply was fenced, at max_tokens 50, 300 and 1000 alike. json.loads fails on that before
+    any schema validation runs, which cost a doubled call in the stages that retry and
+    dropped the article outright in the stages that do not.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return text
+
+    body = stripped[3:]
+    first_newline = body.find("\n")
+    if first_newline != -1:
+        # Drop the language hint on the opening line, if any.
+        body = body[first_newline + 1 :]
+    if body.rstrip().endswith("```"):
+        body = body.rstrip()[:-3]
+    return body
+
+
 def _openai_chat(
     base_url: str,
     api_key: str,
@@ -670,8 +693,18 @@ def _openai_chat(
             },
         )
         latency_ms = int((time.perf_counter() - t0) * 1000)
-        content = r.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(content) if schema else {"raw": content}
+        choice = r.json()["choices"][0]
+        content = choice["message"]["content"]
+        if schema and not (content or "").strip():
+            # A reasoning model bills its reasoning to max_tokens before it writes any
+            # answer, so too small a budget yields finish_reason "length" and no content.
+            # Parsing that raises JSONDecodeError, which names neither cause nor fix.
+            raise RuntimeError(
+                f"{base_url} returned an empty message for model {model!r} "
+                f"(finish_reason={choice.get('finish_reason')!r}). If this is a reasoning "
+                "model, max_tokens has to cover its reasoning as well as the answer."
+            )
+        parsed = json.loads(_strip_code_fence(content)) if schema else {"raw": content}
         return parsed, latency_ms
     finally:
         if close_client:

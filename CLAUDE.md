@@ -103,6 +103,18 @@ Four stages route independently, each accepting `ollama | gateway | mimo`:
 - `Analysis.model_tag` records the model that actually served the call, not the one requested.
   `model_digest` is only meaningful for Ollama, which is the only provider exposing `/api/tags`.
 
+Two behaviours measured against the live gateway on 2026-08-21, neither documented in its API
+guide:
+
+- It accepts `json_schema` with `strict: true` and then wraps the answer in a markdown fence
+  anyway. `_strip_code_fence` in `_openai_chat` handles that. Without it the stages that retry
+  burned two calls per article and the stages that do not dropped the article outright.
+- The `smart` alias is a reasoning model, and its reasoning is charged to `max_tokens` before it
+  writes any answer. Too small a budget returns `finish_reason: "length"` with empty content.
+  The production budgets are sufficient — triage 1000 and classification 2000 both verified
+  live — but `_openai_chat` now raises a message naming the cause rather than letting an empty
+  string reach `json.loads`.
+
 ## Ops scripts
 
 `ops/linux/common.sh` derives the project root from the script's own location. Never hardcode a
