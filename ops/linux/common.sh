@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-PROJECT_DIR=${NEWS_RADAR_PROJECT_DIR:-/opt/news-radar}
+# Default to the checkout this script lives in. A fixed path is wrong on any host that
+# put the project somewhere else, and it fails every ops script at once when it is.
+PROJECT_DIR=${NEWS_RADAR_PROJECT_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 BACKUP_DIR=${NEWS_RADAR_BACKUP_DIR:-/var/backups/news-radar/db}
 
 fail() {
