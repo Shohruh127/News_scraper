@@ -110,10 +110,22 @@ guide:
   anyway. `_strip_code_fence` in `_openai_chat` handles that. Without it the stages that retry
   burned two calls per article and the stages that do not dropped the article outright.
 - The `smart` alias is a reasoning model, and its reasoning is charged to `max_tokens` before it
-  writes any answer. Too small a budget returns `finish_reason: "length"` with empty content.
-  The production budgets are sufficient — triage 1000 and classification 2000 both verified
-  live — but `_openai_chat` now raises a message naming the cause rather than letting an empty
-  string reach `json.loads`.
+  writes any answer. Too small a budget returns `finish_reason: "length"` with empty content,
+  and `_openai_chat` raises a message naming the cause rather than letting an empty string reach
+  `json.loads`.
+
+Token budgets, all verified live against the gateway on 2026-08-21 with the real prompts:
+
+| Stage | Budget | Tier | Verified |
+|---|---|---|---|
+| Triage | 1000 | fast | passes |
+| Classification | 2000 | smart | passes, ~15-18s |
+| Editorial EN | `EDITORIAL_NUM_PREDICT`, default 4000 | smart | **1500 fails**, 3000 passes, ~50-70s |
+| Translation | `TRANSLATION_NUM_PREDICT`, default 2500 | fast | passes, ~25s |
+
+The editorial budget was a hardcoded 1500, which is enough on Ollama and MiMo and empties every
+article on the gateway. An unused cap costs nothing because the model stops when it is done, so
+these defaults deliberately take the generous side.
 
 ## Ops scripts
 

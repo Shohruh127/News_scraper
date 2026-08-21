@@ -1292,7 +1292,7 @@ def analyse_for_digest_logic(
                 ),
                 schema=EDITORIAL_EN_SCHEMA,
                 model_cls=EditorialEn,
-                num_predict=1500,
+                num_predict=settings.EDITORIAL_NUM_PREDICT,
                 client=client,
                 provider=settings.EDITORIAL_EN_PROVIDER,
             )

@@ -76,6 +76,19 @@ def test_celery_beat_schedule_configured():
     assert not [k for k in sched if k.startswith("compose-and-publish")]
 
 
+def test_editorial_budget_clears_the_reasoning_floor():
+    """The gateway's `smart` tier charges its own reasoning to the same token budget.
+
+    Measured 2026-08-21 against the live gateway with the real editorial prompt: 1500
+    returned finish_reason "length" and an empty message, 3000 completed. Any value near
+    the observed failure point drops every article in the editorial stage, which surfaces
+    as an empty digest rather than as an error.
+    """
+    from django.conf import settings
+
+    assert settings.EDITORIAL_NUM_PREDICT >= 3000
+
+
 def test_link_preview_defaults_to_on_when_unset(monkeypatch):
     """Link preview is the approved image delivery mechanism (Option A, 2026-08-18).
 

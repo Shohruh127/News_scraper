@@ -134,6 +134,13 @@ TRANSLATION_PROVIDER = env("TRANSLATION_PROVIDER", default="ollama")
 #: Uzbek tokenises poorly, so a 1200-token cap truncated the JSON mid-object and the
 #: whole translation was lost. Measured: 2500 gives 7/7 twice, 1200 gave 2/7.
 TRANSLATION_NUM_PREDICT = env.int("TRANSLATION_NUM_PREDICT", default=2500)
+#: The English editorial budget. Was a hardcoded 1500, which is enough on Ollama and MiMo but
+#: not on the gateway: its `smart` tier is a reasoning model and charges its reasoning to the
+#: same budget. Measured 2026-08-21 on the live gateway with the real editorial prompt — 1500
+#: returned finish_reason "length" and an empty message, 3000 completed. An unused cap costs
+#: nothing (the model stops when it is done), a cap that is too small drops the article, so the
+#: default takes the generous side of that asymmetry.
+EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=4000)
 MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")
