@@ -18,14 +18,12 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=7, minute=30),
         "options": {"expires": 3600},
     },
+    # Publishing is not scheduled. triage_and_classify chains into compose_and_publish
+    # when it actually finishes; a fixed publish time raced the LLM stage, published an
+    # empty digest and locked the slot for the day — measured 2026-08-21.
     "triage-morning": {
         "task": "digest.triage_and_classify",
         "schedule": crontab(hour=8, minute=30),
-        "options": {"expires": 3600},
-    },
-    "compose-and-publish-morning": {
-        "task": "digest.compose_and_publish",
-        "schedule": crontab(hour=9, minute=0),
         "kwargs": {"edition": "morning"},
         "options": {"expires": 3600},
     },
@@ -38,11 +36,6 @@ app.conf.beat_schedule = {
     "triage-evening": {
         "task": "digest.triage_and_classify",
         "schedule": crontab(hour=18, minute=0),
-        "options": {"expires": 3600},
-    },
-    "compose-and-publish-evening": {
-        "task": "digest.compose_and_publish",
-        "schedule": crontab(hour=19, minute=0),
         "kwargs": {"edition": "evening"},
         "options": {"expires": 3600},
     },

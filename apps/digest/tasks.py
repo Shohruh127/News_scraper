@@ -211,11 +211,15 @@ def analyse_for_digest(article_ids: list[int]) -> dict:
 
 
 @shared_task(name="digest.triage_and_classify")
-def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
+def triage_and_classify(trigger_publish_chain: bool = True, edition: str | None = None) -> dict:
     """Run all triage first, then all classification to pay the model swap cost once.
 
     Acquires an overlap lock so two evening runs cannot overlap.
     Triggers compose_and_publish at the end of the chain.
+
+    `edition` is carried through to that chained call. Without it compose_and_publish
+    derives the edition from the clock at the moment it runs, so a morning cycle whose
+    LLM stage ran past 14:00 would publish into the evening slot.
     """
     from . import llm
 
@@ -300,7 +304,7 @@ def triage_and_classify(trigger_publish_chain: bool = True) -> dict:
         # Causal evening chain: trigger compose_and_publish
         if trigger_publish_chain:
             log.info("Triggering compose_and_publish task in evening chain")
-            compose_and_publish.delay()
+            compose_and_publish.delay(edition=edition)
 
         return {
             "triaged": triaged_count,

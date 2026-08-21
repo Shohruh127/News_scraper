@@ -61,14 +61,14 @@ def test_celery_beat_schedule_configured():
     sched = celery_app.conf.beat_schedule
     assert "fetch-morning" in sched
     assert "triage-morning" in sched
-    assert "compose-and-publish-morning" in sched
     assert "fetch-evening" in sched
     assert "triage-evening" in sched
-    assert "compose-and-publish-evening" in sched
     assert sched["fetch-morning"]["task"] == "digest.fetch_all_sources"
     assert sched["triage-morning"]["task"] == "digest.triage_and_classify"
-    assert sched["compose-and-publish-morning"]["task"] == "digest.compose_and_publish"
-    assert sched["compose-and-publish-evening"]["task"] == "digest.compose_and_publish"
+    assert sched["triage-morning"]["kwargs"] == {"edition": "morning"}
+    assert sched["triage-evening"]["kwargs"] == {"edition": "evening"}
+    # Publishing is chained off triage_and_classify, not scheduled on its own clock.
+    assert not [k for k in sched if k.startswith("compose-and-publish")]
 
 
 def test_link_preview_defaults_to_on_when_unset(monkeypatch):
