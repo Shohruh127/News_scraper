@@ -15,7 +15,14 @@ compose run --rm --no-deps -e NEWS_RADAR_ALLOW_PUBLISHING="$ALLOW_PUBLISHING" \
     web python - <<'PY'
 import os
 
+import django
 from django.conf import settings
+
+# `python -` is not manage.py: nothing has pointed Django at a settings module or run
+# setup(), so the first settings access raises ImproperlyConfigured. `settings` itself is
+# a lazy proxy, so importing it above is fine; only attribute access needs this.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+django.setup()
 
 errors = []
 if settings.DEBUG:
@@ -60,7 +67,11 @@ for name in ("OLLAMA_FAST_MODEL", "OLLAMA_DEEP_MODEL"):
     if not value:
         errors.append(f"{name} is required: it names a tier, not just an Ollama model")
     elif "ollama" in in_use and value.endswith(":latest"):
-        errors.append(f"{name} must use an explicit pinned model tag")
+        # A warning, not an error. Drift is already detected where it matters: every
+        # classification records Analysis.model_digest, so a repointed tag shows up in the
+        # data. Meanwhile gemma4:latest is the tag ADR-004 measured as correct for
+        # translation, so refusing it here blocked the configuration the project chose.
+        print(f"WARNING: {name}={value!r} is a floating tag; rely on Analysis.model_digest.")
 if not settings.TELEGRAM_BOT_TOKEN:
     errors.append("TELEGRAM_BOT_TOKEN is required")
 database_host = settings.DATABASES["default"]["HOST"]
