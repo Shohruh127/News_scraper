@@ -67,6 +67,11 @@ def test_celery_beat_schedule_configured():
     assert sched["triage-morning"]["task"] == "digest.triage_and_classify"
     assert sched["triage-morning"]["kwargs"] == {"edition": "morning"}
     assert sched["triage-evening"]["kwargs"] == {"edition": "evening"}
+    # The whole edition now hangs off the triage message, because publishing is chained
+    # to it. An expiry would discard that message while the llm worker is busy and
+    # nothing would publish at all that cycle.
+    assert "expires" not in sched["triage-morning"].get("options", {})
+    assert "expires" not in sched["triage-evening"].get("options", {})
     # Publishing is chained off triage_and_classify, not scheduled on its own clock.
     assert not [k for k in sched if k.startswith("compose-and-publish")]
 

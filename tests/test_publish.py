@@ -135,6 +135,27 @@ def digest_1(db):
     return ranking.compose_digest(timezone.localdate())
 
 
+def test_an_empty_digest_is_not_marked_published(db, settings):
+    """A digest with nothing in it must leave its slot free for a later run.
+
+    Marking it published burns the (digest_date, edition) uniqueness for that slot: the
+    pipeline's own later call is refused and no post ever goes out. Measured 2026-08-21,
+    when the LLM stage was still classifying at publish time.
+    """
+    settings.PUBLISHING_ENABLED = True
+    digest = Digest.objects.create(
+        digest_date=timezone.localdate(),
+        edition=Digest.Edition.MORNING,
+        status=Digest.Status.COMPOSED,
+    )
+
+    result = publish.publish_digest(digest)
+
+    digest.refresh_from_db()
+    assert result["items_sent"] == 0
+    assert digest.status == Digest.Status.COMPOSED, "an empty digest must not claim its slot"
+
+
 def test_publish_kill_switch_suppresses_network(db, digest_1, settings):
     """When PUBLISHING_ENABLED is False, publication is suppressed and status remains composed."""
     settings.PUBLISHING_ENABLED = False

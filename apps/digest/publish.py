@@ -885,6 +885,16 @@ def publish_digest(
         )
         send_admin_alert(alert_msg)
         log.error(alert_msg)
+    elif not items:
+        # An empty digest must not claim its slot. (digest_date, edition) is unique, so
+        # marking this published refuses every later attempt at the slot — including the
+        # pipeline's own, once the LLM stage finally finishes. Measured 2026-08-21: the
+        # clock published an empty morning digest and the day produced no post at all.
+        log.warning(
+            "Digest %s (%s) has no items; leaving it unpublished so the slot stays open.",
+            digest.digest_date,
+            digest.edition,
+        )
     else:
         digest.status = Digest.Status.PUBLISHED
         digest.published_at = timezone.now()

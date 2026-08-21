@@ -18,6 +18,8 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=7, minute=30),
         "options": {"expires": 3600},
     },
+    # These two carry no `expires`: publishing hangs off this message now, so dropping it
+    # because the llm worker was busy would mean nothing publishes at all that cycle.
     # Publishing is not scheduled. triage_and_classify chains into compose_and_publish
     # when it actually finishes; a fixed publish time raced the LLM stage, published an
     # empty digest and locked the slot for the day — measured 2026-08-21.
@@ -25,7 +27,6 @@ app.conf.beat_schedule = {
         "task": "digest.triage_and_classify",
         "schedule": crontab(hour=8, minute=30),
         "kwargs": {"edition": "morning"},
-        "options": {"expires": 3600},
     },
     # --- Evening Cycle (Asia/Tashkent) ---
     "fetch-evening": {
@@ -37,7 +38,6 @@ app.conf.beat_schedule = {
         "task": "digest.triage_and_classify",
         "schedule": crontab(hour=18, minute=0),
         "kwargs": {"edition": "evening"},
-        "options": {"expires": 3600},
     },
     # --- Heartbeats ---
     "dispatch-worker-heartbeats": {
