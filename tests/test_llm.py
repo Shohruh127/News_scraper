@@ -139,7 +139,7 @@ def test_classify_text_recovery_on_validation_error():
         )
     )
 
-    classification, raw, latency, digest = llm.classify_text(
+    classification, raw, latency, digest, model_tag = llm.classify_text(
         title="Test Article",
         source_name="test_source",
         text="Valid article text " * 30,

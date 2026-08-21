@@ -615,7 +615,9 @@ def ollama_chat(
             client.close()
 
 
-def mimo_chat(
+def _openai_chat(
+    base_url: str,
+    api_key: str,
     model: str,
     prompt: str,
     schema: dict | None = None,
@@ -623,7 +625,7 @@ def mimo_chat(
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
 ) -> tuple[dict, int]:
-    """OpenAI-compatible chat completion against MiMo. Returns (parsed_payload, latency_ms).
+    """Chat completion against any OpenAI-compatible endpoint. Returns (payload, latency_ms).
 
     Uses `json_schema` strict mode, not `json_object`. Measured 2026-08-17 on the
     editorial schema:
@@ -638,7 +640,7 @@ def mimo_chat(
     name the fields. That assumption does not carry to an OpenAI-compatible endpoint
     unless strict mode is requested explicitly.
     """
-    url = f"{settings.MIMO_BASE_URL}/chat/completions"
+    url = f"{base_url}/chat/completions"
     payload: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -663,7 +665,7 @@ def mimo_chat(
             url,
             payload,
             headers={
-                "Authorization": f"Bearer {settings.MIMO_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
         )
@@ -676,6 +678,125 @@ def mimo_chat(
             client.close()
 
 
+def mimo_chat(
+    model: str,
+    prompt: str,
+    schema: dict | None = None,
+    timeout: int = 120,
+    max_tokens: int = 1500,
+    client: httpx.Client | None = None,
+) -> tuple[dict, int]:
+    """OpenAI-compatible chat completion against MiMo. Returns (parsed_payload, latency_ms)."""
+    return _openai_chat(
+        base_url=settings.MIMO_BASE_URL,
+        api_key=settings.MIMO_API_KEY,
+        model=model,
+        prompt=prompt,
+        schema=schema,
+        timeout=timeout,
+        max_tokens=max_tokens,
+        client=client,
+    )
+
+
+def gateway_chat(
+    model: str,
+    prompt: str,
+    schema: dict | None = None,
+    timeout: int | None = None,
+    max_tokens: int = 1500,
+    client: httpx.Client | None = None,
+) -> tuple[dict, int]:
+    """Chat completion against the internal LLM gateway. Returns (payload, latency_ms).
+
+    `model` must be a tier alias (`fast`/`smart`), never a real model name — the gateway
+    answers 404 model_not_found for real names on purpose, because the alias is what lets
+    it repoint a tier at a different model without any caller changing.
+    """
+    if not settings.GATEWAY_BASE_URL or not settings.GATEWAY_TOKEN:
+        raise RuntimeError("GATEWAY_BASE_URL and GATEWAY_TOKEN must be set to use the gateway")
+    return _openai_chat(
+        base_url=settings.GATEWAY_BASE_URL,
+        api_key=settings.GATEWAY_TOKEN,
+        model=model,
+        prompt=prompt,
+        schema=schema,
+        timeout=timeout or settings.GATEWAY_TIMEOUT,
+        max_tokens=max_tokens,
+        client=client,
+    )
+
+
+def _gateway_alias(ollama_model: str | None) -> str:
+    """Map an Ollama tag onto a gateway tier alias.
+
+    The fast/deep distinction already travels through this module as an Ollama tag, so the
+    gateway branch reads that rather than introducing a second way to say the same thing.
+    Anything that is not explicitly the fast model gets the smart tier.
+    """
+    if ollama_model and ollama_model == settings.OLLAMA_FAST_MODEL:
+        return settings.GATEWAY_FAST_MODEL
+    return settings.GATEWAY_SMART_MODEL
+
+
+def _mimo_model_for(ollama_model: str | None) -> str:
+    """Pick the MiMo model matching the tier the caller asked for."""
+    if ollama_model and ollama_model == settings.OLLAMA_FAST_MODEL:
+        return settings.MIMO_FAST_MODEL
+    return settings.MIMO_DEEP_MODEL
+
+
+def classifier_chat(
+    model: str,
+    prompt: str,
+    schema: dict,
+    timeout: int,
+    num_predict: int,
+    client: httpx.Client | None = None,
+) -> tuple[dict, int, str]:
+    """Dispatch a triage or classification call. Returns (payload, latency_ms, model_tag).
+
+    `model` is always an Ollama tag: it is what the caller knows, and it also encodes the
+    fast/deep tier the other providers need. The returned tag is the one that actually ran,
+    so provenance stays truthful when the call did not go to Ollama.
+
+    CLASSIFIER_PROVIDER covers both stages together because they share a backend; there is
+    no measurement saying triage and classification want different providers.
+    """
+    provider = settings.CLASSIFIER_PROVIDER
+    if provider == "gateway":
+        alias = _gateway_alias(model)
+        payload, ms = gateway_chat(
+            model=alias,
+            prompt=prompt,
+            schema=schema,
+            max_tokens=num_predict,
+            client=client,
+        )
+        return payload, ms, alias
+    if provider == "mimo":
+        mimo_model = _mimo_model_for(model)
+        payload, ms = mimo_chat(
+            model=mimo_model,
+            prompt=prompt,
+            schema=schema,
+            timeout=settings.MIMO_TIMEOUT,
+            max_tokens=num_predict,
+            client=client,
+        )
+        return payload, ms, mimo_model
+
+    payload, ms = ollama_chat(
+        model=model,
+        prompt=prompt,
+        schema=schema,
+        timeout=timeout,
+        num_predict=num_predict,
+        client=client,
+    )
+    return payload, ms, model
+
+
 def editorial_chat(
     prompt: str,
     schema: dict,
@@ -686,9 +807,9 @@ def editorial_chat(
 ) -> tuple[dict, int, str]:
     """Dispatch an editorial call to a provider.
 
-    Returns (payload, latency_ms, model_tag). Triage and classification always run on
-    local Ollama; only the two editorial stages are routed, and they are routed
-    independently — see EDITORIAL_EN_PROVIDER and TRANSLATION_PROVIDER.
+    Returns (payload, latency_ms, model_tag). The two editorial stages are routed
+    independently — see EDITORIAL_EN_PROVIDER and TRANSLATION_PROVIDER. Triage and
+    classification have their own switch, CLASSIFIER_PROVIDER, via classifier_chat.
 
     `ollama_model` matters: translation belongs on the fast model. gemma4:latest lost
     0/7 numbers in measurement, while gemma4:31b is the model that garbled Uzbek in the
@@ -697,6 +818,16 @@ def editorial_chat(
     """
     if provider is None:
         provider = settings.LLM_PROVIDER
+    if provider == "gateway":
+        alias = _gateway_alias(ollama_model)
+        payload, ms = gateway_chat(
+            model=alias,
+            prompt=prompt,
+            schema=schema,
+            max_tokens=num_predict,
+            client=client,
+        )
+        return payload, ms, alias
     if provider == "mimo":
         if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
             raise RuntimeError("LLM_PROVIDER=mimo but MIMO_API_KEY/MIMO_BASE_URL are unset")
@@ -874,10 +1005,12 @@ def classify_text(
     num_predict: int = 400,
     client: httpx.Client | None = None,
     prompt_template: str = CLASSIFICATION_PROMPT_TEMPLATE,
-) -> tuple[Classification, dict, int, str]:
+) -> tuple[Classification, dict, int, str, str]:
     """Classify article text with Pydantic validation and 1-attempt recovery.
 
-    Returns (classification_obj, raw_payload, latency_ms, digest).
+    Returns (classification_obj, raw_payload, latency_ms, digest, model_tag). `model_tag`
+    is what actually served the call, which is not `model` unless CLASSIFIER_PROVIDER is
+    ollama; the caller records it, so provenance must not assume the requested tag.
     """
     truncated_text = text[:8000]
     prompt = prompt_template.format(
@@ -886,11 +1019,14 @@ def classify_text(
         text=truncated_text,
     )
 
-    digest = fetch_model_digest(model, client=client)
+    # Only Ollama exposes /api/tags, and only an Ollama tag can be repointed silently, so
+    # the drift-detection digest is meaningless for the other providers.
+    on_ollama = settings.CLASSIFIER_PROVIDER == "ollama"
+    digest = fetch_model_digest(model, client=client) if on_ollama else ""
     latency_ms = 0
 
     try:
-        raw_payload, latency_ms = ollama_chat(
+        raw_payload, latency_ms, model_tag = classifier_chat(
             model=model,
             prompt=prompt,
             schema=CLASSIFICATION_SCHEMA,
@@ -899,7 +1035,7 @@ def classify_text(
             client=client,
         )
         classification = Classification.model_validate(raw_payload)
-        return classification, raw_payload, latency_ms, digest
+        return classification, raw_payload, latency_ms, digest, model_tag
     except (ValidationError, json.JSONDecodeError) as exc:
         log.warning(
             "Validation error on first attempt for '%s': %s. Retrying once with error.",
@@ -911,7 +1047,7 @@ def classify_text(
             f"IMPORTANT: Your previous output failed schema validation with error:\n{exc}\n"
             "Please fix the error and return valid JSON conforming strictly to the schema."
         )
-        raw_payload, latency_retry_ms = ollama_chat(
+        raw_payload, latency_retry_ms, model_tag = classifier_chat(
             model=model,
             prompt=recovery_prompt,
             schema=CLASSIFICATION_SCHEMA,
@@ -920,7 +1056,7 @@ def classify_text(
             client=client,
         )
         classification = Classification.model_validate(raw_payload)
-        return classification, raw_payload, latency_ms + latency_retry_ms, digest
+        return classification, raw_payload, latency_ms + latency_retry_ms, digest, model_tag
 
 
 def triage_article_logic(article: Article, client: httpx.Client | None = None) -> bool:
@@ -936,7 +1072,7 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
     timeout = getattr(settings, "OLLAMA_FAST_TIMEOUT", 60)
 
     try:
-        classification, raw_payload, latency_ms, digest = classify_text(
+        classification, raw_payload, latency_ms, digest, model_tag = classify_text(
             title=article.title,
             source_name=article.source.name if article.source else "",
             text=article.extracted_text,
@@ -984,7 +1120,7 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
     Analysis.objects.create(
         article=article,
         stage=Analysis.Stage.TRIAGE,
-        model_tag=model,
+        model_tag=model_tag,
         model_digest=digest,
         payload=raw_payload,
         latency_ms=latency_ms,
@@ -1014,7 +1150,7 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
     timeout = getattr(settings, "OLLAMA_DEEP_TIMEOUT", 300)
 
     try:
-        classification, raw_payload, latency_ms, digest = classify_text(
+        classification, raw_payload, latency_ms, digest, model_tag = classify_text(
             title=article.title,
             source_name=article.source.name if article.source else "",
             text=article.extracted_text,
@@ -1062,7 +1198,7 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
     Analysis.objects.create(
         article=article,
         stage=Analysis.Stage.CLASSIFICATION,
-        model_tag=model,
+        model_tag=model_tag,
         model_digest=digest,
         payload=raw_payload,
         latency_ms=latency_ms,

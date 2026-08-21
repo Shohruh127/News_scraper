@@ -72,7 +72,7 @@ class Command(BaseCommand):
 
             num_predict = 2000 if "31b" in model else 1200
             try:
-                classification, raw_payload, latency_ms, digest = llm.classify_text(
+                classification, raw_payload, latency_ms, digest, _tag = llm.classify_text(
                     title=title,
                     source_name=source,
                     text=text,

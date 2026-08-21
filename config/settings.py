@@ -142,6 +142,24 @@ MIMO_DEEP_MODEL = env("MIMO_DEEP_MODEL", default="mimo-v2.5-pro")
 MIMO_EDITORIAL_MODEL = env("MIMO_EDITORIAL_MODEL", default="mimo-v2.5")
 MIMO_TIMEOUT = env.int("MIMO_TIMEOUT", default=120)
 
+# --- Internal LLM gateway ----------------------------------------------------
+# OpenAI-compatible front door to the same local GPU models. Callers name a tier alias
+# (`fast`/`smart`) rather than a model, so a tier can be repointed without a redeploy;
+# sending a real model name is a 404. This runs alongside the direct Ollama path for the
+# whole migration — the direct path goes away only once every stage has moved.
+GATEWAY_BASE_URL = env("GATEWAY_BASE_URL", default="").rstrip("/")
+GATEWAY_TOKEN = env("GATEWAY_TOKEN", default="")
+GATEWAY_FAST_MODEL = env("GATEWAY_FAST_MODEL", default="fast")
+GATEWAY_SMART_MODEL = env("GATEWAY_SMART_MODEL", default="smart")
+#: The gateway's own upstream read timeout is 300s, and a request also waits in its queue
+#: for up to 30s. A shorter client timeout abandons a generation the gateway still runs.
+GATEWAY_TIMEOUT = env.int("GATEWAY_TIMEOUT", default=300)
+
+#: Triage and classification. Defaults to "ollama", not LLM_PROVIDER: these two stages
+#: were hardwired to local Ollama, and inheriting the global default would silently move
+#: several hundred calls a day onto whatever the editorial stage happens to use.
+CLASSIFIER_PROVIDER = env("CLASSIFIER_PROVIDER", default="ollama")
+
 # --- Telegram ---------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHANNEL_ID = env("TELEGRAM_CHANNEL_ID", default="")
