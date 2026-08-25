@@ -34,9 +34,20 @@ your own changes, never a step to hand to the operator. Deploy sequence:
 ```bash
 git pull --ff-only
 sh ops/linux/deploy.sh --allow-publishing
-docker compose exec -T web python manage.py shell -c "from django_celery_beat.models import PeriodicTask; print(PeriodicTask.objects.filter(task='digest.compose_and_publish').delete())"
+docker compose exec -T web python manage.py shell -c "from django_celery_beat.models import PeriodicTask; print(PeriodicTask.objects.exclude(task__in=['digest.fetch_all_sources','digest.triage_and_classify','digest.publish_next_item','digest.dispatch_worker_heartbeats']).delete())"
 docker compose restart beat
 sh ops/linux/health-check.sh
+```
+
+That delete is not housekeeping. `DatabaseScheduler` adds and updates rows from the dict in
+`config/celery.py` and **never removes one for an entry deleted from the code**, so anything
+the schedule used to contain keeps firing from the database. Excluding the four task names
+that should be live deletes whatever else has accumulated — the old
+`digest.compose_and_publish` crontab that published an empty digest on 2026-08-21, and any
+renamed drip entry. Verify the survivors afterwards:
+
+```bash
+docker compose exec -T web python manage.py shell -c "from django_celery_beat.models import PeriodicTask; [print(t.name, t.task, t.crontab) for t in PeriodicTask.objects.all()]"
 ```
 
 `deploy.sh` runs: clean-checkout check → compose config → DB backup → build → preflight →
@@ -64,8 +75,79 @@ Consequences that follow from this and are easy to undo by accident:
   message; discarding it because the worker was busy means nothing publishes that cycle.
 - `edition` travels in the beat entry's `kwargs` and through the chain. Never re-derive it from
   the clock — a morning cycle finishing after 14:00 would publish into the evening slot.
-- `publish.publish_digest` leaves a digest with zero items as `COMPOSED`. Marking it published
-  burns the slot for the day.
+- `publish.publish_digest` and `publish.refresh_digest_status` leave a digest with zero items
+  as `COMPOSED`. Marking it published burns the slot for the day.
+
+## Composition is causal, emission is on a clock
+
+Since 2026-08-24 the invariant above splits in two, and both halves matter.
+
+**Composition stays causal.** `triage_and_classify` chains into `compose_and_publish`, which
+selects, runs the editorial stage and writes six `DigestItem` rows — then stops. It does not
+send the block.
+
+**Emission is scheduled.** `digest.publish_next_item` runs every two hours and sends exactly
+one item: the lowest `position` still `PENDING` or `SENDING`, from the oldest digest by
+`composed_at`. A clock tick can only send an item that already exists, so the 2026-08-21
+failure cannot recur through it — an empty queue posts nothing and burns no slot.
+
+The drip entry runs on the **odd** hours, aligned to the triage entries at 08:30 and 18:00:
+the first tick a freshly composed block can use is 09:00 and 19:00. On even hours a block
+composed at 08:40 would wait until 10:00 with a wasted 08:00 tick behind it. Unlike triage,
+this entry does carry `expires` — a dropped tick delays one post by two hours, while a
+dropped triage message costs the whole edition.
+
+`compose_and_publish` also fires `publish_next_item.delay(digest.id)` once, so item #1 lands
+when the block is ready rather than waiting for the next tick.
+
+Two rules that are easy to break by accident:
+
+- **`FAILED` is terminal, not retryable.** `publish.TERMINAL_DELIVERY_STATES` and
+  `tasks.UNFINISHED_DELIVERY_STATES` are complements and must stay that way. Counting
+  `FAILED` as unfinished makes the drip re-send a permanently failed item at every tick
+  forever, and the block never completes, so its roundup never fires.
+- **`digest.publish_roundup` has no crontab entry and must not be given one.**
+  `publish_next_item` dispatches it when a digest has nothing left pending. A scheduled
+  roundup would index a block whose last post was still queued.
+
+Digest status is derived, never stamped: `refresh_digest_status(digest)` reads the items. All
+terminal with at least one `SENT` is `PUBLISHED`; all terminal with none sent is `FAILED`;
+anything else stays `COMPOSED`. A block that lands five of six is `PUBLISHED` — the failure is
+already visible on the item and in the admin alert, and failing the digest invites a re-run
+that reposts the five that worked.
+
+## The post
+
+```
+<b>headline_uz</b>      label, <= 8 words, not a sentence
+lead_uz                 1 sentence, exactly one <a> on the tail, <= 18 English words
+body_1_uz               1 sentence, the most specific verifiable fact, <= 20 English words
+kicker_uz               1 sentence, <= 8 words
+#tag                    one approved topic hashtag
+```
+
+`POST_MAX_SENTENCES` is 3 and counts only the three sentence fields; the headline and hashtag
+lines are labels. `POST_MAX_CHARS` is 500 and is a runaway guard only — structure bounds the
+length, and the binding limit is Telegram's 1024-character cap on a photo caption.
+
+**`body_2` was removed on 2026-08-24.** It was always the first thing trimmed, and the model
+could not tell it apart from `body_1` — in a live test its "cause or context" sentence turned up
+in `body_1` instead. Generating a field in order to discard it costs output tokens on two calls.
+
+**Length is capped in English words, never in characters against another channel.** The word
+caps sit on `lead_en` and `body_1_en`, where an English word count means something. Uzbek
+agglutinates — it folds prepositions into suffixes — so a character or word budget calibrated on
+the Russian reference channel measures nothing here. That mistake was made once and reversed.
+
+**Bold is positional.** The renderer wraps the headline line and nothing else; the model
+returns plain text for every field and `strip_markdown_formatting` removes any markup it emits
+anyway. Bold was removed once because the model applied it to the wrong words — the same
+failure the link anchor had, and the same fix: take the choice away from the model.
+
+The headline and the kicker are **never trimmed**, and `body_1` is the only trimmable field.
+They are the two elements the reference channel (`@naebnet`, measured 2026-08-24: a closing
+sentence in 100% of posts) always carries and this channel had lost. Take from that channel its
+*structure*, not its lengths.
 
 ## django_celery_beat does not prune
 
@@ -81,27 +163,43 @@ separate question, answered by `django_celery_results.TaskResult` (`CELERY_RESUL
 
 ## LLM providers
 
-Four stages route independently, each accepting `ollama | gateway | mimo`:
+Everything runs on the internal gateway. The direct Ollama path was **removed on 2026-08-25**:
+the gateway fronts the same local GPU models — `fast` is the 8B, `smart` the 31B — so the second
+client bought nothing, and its model tags had quietly become the tier vocabulary for providers
+that never spoke to it.
+
+Four stages route independently, each accepting `gateway | mimo`:
 
 | Setting | Stage | Default |
 |---|---|---|
-| `LLM_PROVIDER` | global fallback | `ollama` |
+| `LLM_PROVIDER` | global fallback | `gateway` |
 | `EDITORIAL_EN_PROVIDER` | English analysis | inherits `LLM_PROVIDER` |
-| `TRANSLATION_PROVIDER` | Uzbek translation | `ollama` |
-| `CLASSIFIER_PROVIDER` | triage + classification | `ollama` |
+| `TRANSLATION_PROVIDER` | Uzbek translation | inherits `LLM_PROVIDER` |
+| `CLASSIFIER_PROVIDER` | triage + classification | `gateway` |
 
+- **The tier is said out loud.** `llm.TIER_FAST` / `llm.TIER_DEEP` are the only way a caller
+  names a speed tier; `_model_for(provider, tier)` turns that into `fast`/`smart` for the gateway
+  and `MIMO_FAST_MODEL`/`MIMO_DEEP_MODEL` for MiMo. Before this, passing the string
+  `gemma4:latest` was how every provider was told "fast" — which is why the Ollama settings had
+  to stay set even when nothing used them.
 - `CLASSIFIER_PROVIDER` deliberately does **not** inherit `LLM_PROVIDER`. These two stages make
   several hundred calls a day; inheriting would move that volume silently when the editorial
   provider changes. Any new provider setting must default to preserving current behaviour.
-- Translation belongs on Ollama. Measured 2026-08-17: `mimo-v2.5` turned 2.4 trillion into
-  2 trillion and calqued terms; `gemma4:latest` lost 0/7 numbers. The reasoning lives next to the
-  settings in `config/settings.py` — read it before changing a provider.
-- The Ollama tag settings name the fast and deep **tiers** for every provider: the gateway branch
-  reads them to pick between its `fast`/`smart` aliases. They must stay set even when nothing
-  talks to Ollama.
+- **Translation asks for the fast tier.** Measured 2026-08-17: the fast model lost 0/7 numbers and
+  kept the glossary, while the deep one garbled Uzbek in the first digest. Translation is a
+  constrained task, and a stronger model spends its extra freedom changing things.
 - The gateway addresses models by tier alias only; sending a real model name is a 404.
-- `Analysis.model_tag` records the model that actually served the call, not the one requested.
-  `model_digest` is only meaningful for Ollama, which is the only provider exposing `/api/tags`.
+- **`Analysis.model_digest` is now always empty, and `model_tag` records the tier alias, not the
+  model.** Only Ollama exposed `/api/tags`. The gateway can repoint an alias silently — that is
+  its purpose — and nothing in the database will show it happened. Historical rows still carry
+  real digests.
+- **The gateway has a capacity ceiling.** Measured 2026-08-25: `smart` returned
+  `503 overloaded — "Model 'smart' is at capacity and the queue wait timed out"`, and the tenacity
+  retry burned ~128s over four attempts before giving up, losing the article's editorial. MiMo is
+  kept configured as a second provider precisely because it is a different machine; a stage can
+  be moved there by changing one setting when the gateway is saturated.
+- MiMo's Token Plan forbids automated/backend use, so it is not the default anywhere. See
+  ADR-004 §5.
 
 Two behaviours measured against the live gateway on 2026-08-21, neither documented in its API
 guide:
@@ -114,18 +212,89 @@ guide:
   and `_openai_chat` raises a message naming the cause rather than letting an empty string reach
   `json.loads`.
 
+## Triage reads the headline, not the article
+
+Changed 2026-08-25. Triage used to request the full `CLASSIFICATION_SCHEMA` — topic, maturity
+and three 1-10 scores — from 8000 characters of article body, then decide on
+`primary_topic == irrelevant or all three scores < 3`. It now sends the title and source only
+and asks one question, `TRIAGE_SCHEMA`: `{relevant: bool, reason: str}`.
+
+Measured on the 26-row gold set, both runs interleaved against the same gateway so load is
+not the variable:
+
+| | Old (8000 chars) | New (title only) |
+|---|---|---|
+| **Recall** | **1.00** | **1.00** |
+| Precision | 0.43 | 0.42 |
+| Rejected of 16 drops | 3 | 2 |
+| Input tokens per article | ~2 134 | ~200 |
+| Latency per article | 18 163 ms | **8 356 ms** |
+
+Recall is the number that governs here, and it did not move. **Triage is a recall-first
+gate**: a false positive costs one classification call, a false negative loses the article
+entirely. The prompt says so to the model in as many words, and it is why the instruction on
+an ambiguous headline is "answer relevant=true".
+
+Two things that follow:
+
+- The scores are gone from triage on purpose. Novelty, evidence and production_readiness
+  cannot be derived from a headline; asking for them produced numbers the old rule then acted
+  on. They are still computed at classification, over the full text.
+- `num_predict` for triage is **1000**, not the ~40 tokens the answer needs. Measured
+  2026-08-25: at 200 the `fast` alias returned `finish_reason: "length"` with empty content on
+  all 26 rows. It charges its own reasoning to `max_tokens` before writing anything, exactly
+  as `smart` does — the trap CLAUDE.md already documented for the editorial stage. The budget
+  is a cap, not a cost; the saving is entirely on the input side.
+
 Token budgets, all verified live against the gateway on 2026-08-21 with the real prompts:
 
 | Stage | Budget | Tier | Verified |
 |---|---|---|---|
-| Triage | 1000 | fast | passes |
+| Triage | 1000 | fast | passes; 200 fails — see the triage section above |
 | Classification | 2000 | smart | passes, ~15-18s |
 | Editorial EN | `EDITORIAL_NUM_PREDICT`, default 4000 | smart | **1500 fails**, 3000 passes, ~50-70s |
 | Translation | `TRANSLATION_NUM_PREDICT`, default 2500 | fast | passes, ~25s |
 
-The editorial budget was a hardcoded 1500, which is enough on Ollama and MiMo and empties every
+The editorial budget was a hardcoded 1500, which is enough on MiMo and empties every
 article on the gateway. An unused cap costs nothing because the model stops when it is done, so
 these defaults deliberately take the generous side.
+
+## Token accounting
+
+Added 2026-08-25. Until then nothing recorded what a call cost: `Analysis` stored
+`latency_ms` and the provider's `usage` block was read by nothing, so "what does a post
+cost" and "which stage spends the budget" were unanswerable.
+
+`Analysis.input_tokens` / `output_tokens` hold what the provider reported. Both are
+**nullable, not `default=0`** — NULL means the row predates the column or the provider sent
+no usage block, and zero-filling would make an unmeasured call look free and understate every
+total above it. `pipeline_stats` reports the unmeasured count and says its totals are a floor.
+
+Every chat call returns a `ChatResult` (payload, latency_ms, model_tag, input_tokens,
+output_tokens), and every `Analysis` row is written through `_record_analysis`, so a new stage
+cannot forget to record its cost. **Retries are folded in by `_combine`**: a stage that
+validated, failed, and retried made two calls, and recording only the second one hides the
+retry from the accounting entirely.
+
+Two commands read this:
+
+```bash
+docker compose exec -T web python manage.py pipeline_stats --days 7
+docker compose exec -T web python manage.py eval_triage_replay --days 30 --limit 200
+```
+
+`pipeline_stats` gives the funnel, spend per stage, tokens per published post, and per-source
+yield — the last of which answers which sources are spending triage calls and never reaching
+the channel. Disable those on `Source.enabled` rather than filtering them later.
+
+`eval_triage_replay` measures the triage gate against a stronger label than the 26-row gold
+set: every article that reached classification carries the deep tier's verdict, produced after
+reading the whole article. The replay runs today's triage on the title alone and compares.
+It costs one fast call per article, so bound it with `--limit`.
+
+Its one structural limit is printed in its own output and is worth repeating: articles the
+*old* triage dropped were never classified, carry no label, and cannot appear. The replay
+measures the gate on the population that reaches classification today.
 
 ## Ops scripts
 
