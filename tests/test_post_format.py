@@ -103,24 +103,37 @@ def test_trim_post_fields_within_budget():
         'EHang kompaniyasi uchar taksi xizmatini <a href="https://example.com">boshladi</a>.'
     )
     body_1 = "Parvoz 20 daqiqa davom etadi va 800 yuan turadi."
-    body_2 = "Sertifikatlar to'liq olingan."
     tag = "#robototexnika"
 
-    b1, b2 = post_format.trim_post_fields(lead_html, body_1, body_2, tag, max_chars=900)
+    b1 = post_format.trim_post_fields(
+        headline_html="",
+        lead_html=lead_html,
+        body_1=body_1,
+        kicker="",
+        tag=tag,
+        max_chars=900,
+    )
     assert b1 == body_1
-    assert b2 == body_2
 
 
-def test_trim_post_fields_drops_body_2_first_when_overbudget():
-    """When over budget, body_2 sentences are dropped first, then body_1."""
+def test_trim_drops_trailing_body_sentences_when_overbudget():
+    """Over budget, body_1 loses its trailing sentences from the end."""
     lead_html = 'EHang kompaniyasi <a href="https://example.com">boshladi</a>.'
     body_1 = "Birinchi muhim fakt. Ikkinchi fakt."
-    body_2 = "Ortiqcha uchinchi fakt. Ortiqcha to'rtinchi fakt."
     tag = "#robototexnika"
 
-    b1, b2 = post_format.trim_post_fields(lead_html, body_1, body_2, tag, max_chars=80)
-    assert b2 == ""
+    # 70, not 80: without body_2 the untrimmed post is exactly 80 visible characters, so an
+    # 80-char budget fits it and the test would assert nothing.
+    b1 = post_format.trim_post_fields(
+        headline_html="",
+        lead_html=lead_html,
+        body_1=body_1,
+        kicker="",
+        tag=tag,
+        max_chars=70,
+    )
     assert "Birinchi muhim fakt" in b1
+    assert "Ikkinchi fakt" not in b1
 
 
 def test_validate_rendered_post_accepts_clean_post():
@@ -138,7 +151,7 @@ def test_validate_rendered_post_accepts_clean_post():
 def test_validate_rendered_post_rejects_forbidden_tags_and_multiple_links():
     """validate_rendered_post catches <b>, <i>, bullets, duplicate links, or invalid tags."""
     bad_post = (
-        "<b>Sarlavha</b>\n\n"
+        "<i>Sarlavha</i>\n\n"
         'EHang <a href="https://example.com">boshladi</a> '
         'va <a href="https://second.com">davom</a> etdi.\n\n'
         "• Birinchi punkt\n\n"
@@ -277,22 +290,25 @@ def test_count_sentences_ignores_the_hashtag_line():
 V3_DATA = {
     "url": "https://example.com/a",
     "topic": "frontier_models",
+    "headline_uz": "Qwen ochiq indeksda yetakchi",
     "lead_uz": "Alibaba yangi Qwen modelini taqdim etdi.",
     "body_1_uz": "Model 52 ball to'pladi.",
-    "body_2_uz": "Litsenziya tijoriy foydalanishga ruxsat beradi.",
+    "kicker_uz": "Yopiq API endi majburiy emas.",
 }
 
 
-def test_render_drops_body_2_first_when_over_the_sentence_budget():
+def test_render_drops_the_body_first_when_over_the_sentence_budget():
+    """body_1 is the only trimmable sentence: the headline and kicker are never dropped."""
     out = post_format.render_item_post_v2(dict(V3_DATA), max_chars=450, max_sentences=2)
-    assert "Litsenziya" not in out
+    assert "52 ball" not in out
+    assert "Yopiq API endi majburiy emas." in out
     assert post_format.count_sentences(out) == 2
 
 
 def test_render_keeps_all_three_sentences_within_budget():
     out = post_format.render_item_post_v2(dict(V3_DATA), max_chars=450, max_sentences=3)
     assert post_format.count_sentences(out) == 3
-    assert "Litsenziya" in out
+    assert "52 ball" in out
     assert '<a href="https://example.com/a">taqdim etdi</a>' in out
 
 
@@ -316,3 +332,68 @@ def test_every_lead_shape_renders(lead_uz, body_1_uz):
     out = post_format.render_item_post_v2(data, max_chars=450, max_sentences=4)
     assert post_format.validate_rendered_post(out, max_chars=450) == []
     assert out.count("<a href=") == 1
+
+
+def test_render_bolds_the_headline_and_nothing_else():
+    data = {
+        "url": "https://example.com/qwen",
+        "headline_uz": "Qwen 3.8 27B ochiq indeksda yetakchi",
+        "lead_uz": "Alibaba yangi ochiq modelini taqdim etdi.",
+        "body_1_uz": "Model indeksda 52 ball to'plagan.",
+        "body_2_uz": "",
+        "kicker_uz": "Yopiq API endi majburiy emas.",
+        "topic": "frontier_models",
+    }
+    html = post_format.render_item_post_v2(data)
+    lines = [line for line in html.splitlines() if line.strip()]
+    assert lines[0] == "<b>Qwen 3.8 27B ochiq indeksda yetakchi</b>"
+    assert html.count("<b>") == 1
+    assert lines[-1] == "#modellar"
+    assert "Yopiq API endi majburiy emas." in html
+
+
+def test_headline_and_hashtag_lines_do_not_count_as_sentences():
+    html = (
+        "<b>Qwen 3.8 27B ochiq indeksda yetakchi</b>\n\n"
+        "Alibaba modelni taqdim etdi.\n\n"
+        "Model 52 ball to'plagan.\n\n"
+        "Yopiq API endi majburiy emas.\n\n"
+        "#modellar"
+    )
+    assert post_format.count_sentences(html) == 3
+
+
+def test_validate_rejects_bold_outside_the_headline_line():
+    html = (
+        "<b>Sarlavha</b>\n\n"
+        'Alibaba modelni <a href="https://e.com">taqdim etdi</a>.\n\n'
+        "<b>Model</b> 52 ball to'plagan.\n\n"
+        "#modellar"
+    )
+    violations = post_format.validate_rendered_post(html)
+    assert any("headline" in v.lower() for v in violations)
+
+
+def test_trim_never_drops_the_kicker():
+    """Only body_1 is trimmable. The headline and kicker carry the readability and stay."""
+    body_1 = post_format.trim_post_fields(
+        headline_html="<b>Sarlavha</b>",
+        lead_html='Alibaba <a href="https://e.com">taqdim etdi</a>.',
+        body_1="Birinchi fakt. Ikkinchi fakt.",
+        kicker="Qisqa yakun.",
+        tag="#modellar",
+        max_chars=500,
+        max_sentences=3,
+    )
+    assert body_1 == "Birinchi fakt."
+
+
+def test_link_check_finds_the_lead_below_the_headline():
+    """The <a> position check keyed on the first block; the headline is now that block."""
+    html = (
+        "<b>Sarlavha</b>\n\n"
+        'Alibaba modelni <a href="https://e.com">taqdim etdi</a>.\n\n'
+        "Model 52 ball to'plagan.\n\n"
+        "#modellar"
+    )
+    assert post_format.validate_rendered_post(html) == []

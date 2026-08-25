@@ -7,128 +7,8 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from apps.digest import ranking
-from apps.digest.models import Analysis, Article, Digest, DigestItem, Source
+from apps.digest.models import Analysis, Article, Digest, DigestItem
 from tests.helpers import make_editorial
-
-
-@pytest.fixture
-def source(db):
-    return Source.objects.create(
-        name="test_source",
-        connector=Source.Connector.RSS,
-        url="https://example.com/rss",
-        priority=80,
-    )
-
-
-@pytest.fixture
-def classified_articles(db, source):
-    """Create a set of classified articles with diverse topics and maturities."""
-    articles = []
-
-    # Art 1: frontier_models, reproducible_open_source (high score, +0.15 open bonus)
-    a1 = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/art1",
-        content_hash="h1",
-        title="Open Model 30B Released",
-        extracted_text="Text 1 " * 50,
-        status=Article.Status.CLASSIFIED,
-    )
-    Analysis.objects.create(
-        article=a1,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag="gemma4:31b",
-        payload={
-            "primary_topic": "frontier_models",
-            "maturity": "reproducible_open_source",
-            "novelty": 9,
-            "evidence": 9,
-            "production_readiness": 8,
-            "reason": "Open model",
-        },
-        latency_ms=12000,
-    )
-    make_editorial(a1, summary_uz="30B ochiq model taqdim etildi.")
-    articles.append(a1)
-
-    # Art 2: ai_agents, live_product
-    a2 = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/art2",
-        content_hash="h2",
-        title="Agent Framework V2",
-        extracted_text="Text 2 " * 50,
-        status=Article.Status.CLASSIFIED,
-    )
-    Analysis.objects.create(
-        article=a2,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag="gemma4:31b",
-        payload={
-            "primary_topic": "ai_agents",
-            "maturity": "live_product",
-            "novelty": 8,
-            "evidence": 8,
-            "production_readiness": 9,
-            "reason": "Agent update",
-        },
-        latency_ms=11000,
-    )
-    make_editorial(a2, summary_uz="MCP spetsifikatsiyasi yangilandi.")
-    articles.append(a2)
-
-    # Art 3: paper_only (hard excluded by ranking, NOT by triage)
-    a3 = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/art3",
-        content_hash="h3",
-        title="Theoretical Paper on LLMs",
-        extracted_text="Text 3 " * 50,
-        status=Article.Status.CLASSIFIED,
-    )
-    Analysis.objects.create(
-        article=a3,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag="gemma4:31b",
-        payload={
-            "primary_topic": "new_approaches",
-            "maturity": "paper_only",
-            "novelty": 10,
-            "evidence": 10,
-            "production_readiness": 1,
-            "reason": "Just a paper",
-        },
-        latency_ms=10000,
-    )
-    articles.append(a3)
-
-    # Art 4: announcement_only (hard excluded by ranking)
-    a4 = Article.objects.create(
-        source=source,
-        canonical_url="https://example.com/art4",
-        content_hash="h4",
-        title="Company Announces Future Product",
-        extracted_text="Text 4 " * 50,
-        status=Article.Status.CLASSIFIED,
-    )
-    Analysis.objects.create(
-        article=a4,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag="gemma4:31b",
-        payload={
-            "primary_topic": "frontier_models",
-            "maturity": "announcement_only",
-            "novelty": 7,
-            "evidence": 2,
-            "production_readiness": 1,
-            "reason": "Future announcement",
-        },
-        latency_ms=9000,
-    )
-    articles.append(a4)
-
-    return articles
 
 
 def test_calculate_score_bonuses_and_penalties(db, source):
@@ -302,16 +182,18 @@ def test_compose_digest_idempotency_constraint(db, classified_articles):
 def test_render_templates_snapshot(db, classified_articles):
     today = timezone.localdate()
     digest = ranking.compose_digest(today)
+    for idx, item in enumerate(digest.items.all(), start=1):
+        item.channel_delivery_state = "sent"
+        item.channel_message_id = 100 + idx
+        item.save()
 
-    post_html = ranking.render_channel_post(digest)
-    assert str(today) in post_html
-    assert "Open Model 30B Released" in post_html
-    assert "30B ochiq model taqdim etildi." in post_html
+    post_html = ranking.render_roundup_post(digest)
+    assert "dayjest" in post_html.lower()
     assert "<b>" in post_html and "</b>" in post_html
+    assert "#dayjest" in post_html
 
-    comment_html = ranking.render_group_comment(digest)
-    assert str(today) in comment_html
-    assert "Open Model 30B Released" in comment_html
+    appendix_html = ranking.render_item_appendix(digest.items.first())
+    assert "Open Model 30B Released" in appendix_html
 
 
 @pytest.mark.parametrize(
@@ -443,17 +325,19 @@ def test_same_subject_different_topic_both_survive(repetition_articles):
 
 def test_backfill_keeps_the_digest_at_its_cap(repetition_articles, settings):
     settings.DIGEST_MAX_ITEMS = 3
+    settings.DIGEST_SELECT_MARGIN = 0
 
     assert len(ranking.select_digest_candidates()) == 3
 
 
 def test_rule_is_silent_when_every_subject_is_distinct(db, source):
+    topics = ["ai_agents", "robotics", "frontier_models"]
     bodies = [
         "Alpha describes a storage engine rewrite with measured throughput gains. ",
         "Bravo reports on a scheduler that reorders work across many machines. ",
         "Charlie documents a compiler pass that removes redundant memory loads. ",
     ]
-    for index, body in enumerate(bodies):
+    for index, (topic, body) in enumerate(zip(topics, bodies, strict=False)):
         article = Article.objects.create(
             source=source,
             canonical_url=f"https://site{index}.example/post",
@@ -467,7 +351,7 @@ def test_rule_is_silent_when_every_subject_is_distinct(db, source):
             stage=Analysis.Stage.CLASSIFICATION,
             model_tag="gemma4:31b",
             payload={
-                "primary_topic": "ai_agents",
+                "primary_topic": topic,
                 "maturity": "live_product",
                 "novelty": 8,
                 "evidence": 8,
@@ -481,8 +365,8 @@ def test_rule_is_silent_when_every_subject_is_distinct(db, source):
     assert len(ranking.select_digest_candidates()) == 3
 
 
-def test_render_item_post_respects_v2_flag(db, source, settings):
-    """render_item_post switches between v1 HTML template and v2 post_format."""
+def test_render_item_post_renders_v2_format(db, source):
+    """render_item_post renders v2 post_format with bold headline and hashtag."""
     article = Article.objects.create(
         source=source,
         canonical_url="https://site.example/v2-flag-test",
@@ -507,6 +391,7 @@ def test_render_item_post_respects_v2_flag(db, source, settings):
     )
     make_editorial(
         article,
+        headline_uz="EHang yangi uchar taksi chiqardi",
         lead_uz="EHang uchar taksi xizmatini yo'lga qo'ydi.",
         body_1_uz="Parvoz 20 daqiqa davom etadi.",
     )
@@ -514,13 +399,68 @@ def test_render_item_post_respects_v2_flag(db, source, settings):
     digest = Digest.objects.create(digest_date=date(2026, 8, 23))
     item = DigestItem.objects.create(digest=digest, article=article, position=1, score=0.9)
 
-    # Flag off: renders v1 template (contains emoji header)
-    settings.POST_FORMAT_V2_ENABLED = False
-    v1_html = ranking.render_item_post(item)
-    assert "<b>" in v1_html
+    html = ranking.render_item_post(item)
+    assert "#robototexnika" in html
+    assert "<b>" in html
 
-    # Flag on: renders v2 prose (contains single inline link and final hashtag)
-    settings.POST_FORMAT_V2_ENABLED = True
-    v2_html = ranking.render_item_post(item)
-    assert "#robototexnika" in v2_html
-    assert "<b>" not in v2_html
+
+@pytest.mark.django_db
+def test_item_data_carries_the_kicker(digest_with_item):
+    from apps.digest import ranking
+
+    item = digest_with_item.items.first()
+    data = ranking._item_data(item)
+    assert data["kicker_uz"] == "Endi o'z serveringizda ishlatsa bo'ladi."
+    assert data["headline_uz"] == "Yangi model chiqdi"
+
+
+@pytest.mark.django_db
+def test_rendered_item_post_carries_headline_and_kicker(digest_with_item):
+    from apps.digest import ranking
+
+    html = ranking.render_item_post(digest_with_item.items.first())
+    assert html.splitlines()[0] == "<b>Yangi model chiqdi</b>"
+    assert "serveringizda ishlatsa" in html
+
+
+@pytest.mark.django_db
+def test_roundup_post_lists_all_sent_items(digest_with_two_items):
+    """The roundup carries one numbered line per item that landed,
+    pointing back to the channel post.
+    """
+    from apps.digest import ranking
+    from apps.digest.models import DeliveryState
+
+    first, second = digest_with_two_items.items.order_by("position")
+    first.channel_delivery_state = DeliveryState.SENT
+    first.channel_message_id = 101
+    first.save()
+    second.channel_delivery_state = DeliveryState.SENT
+    second.channel_message_id = 102
+    second.save()
+
+    html = ranking.render_roundup_post(digest_with_two_items)
+    assert "<b>" in html.splitlines()[0]
+    assert "1. " in html
+    assert "2. " in html
+    assert "t.me/" in html or f"/{101}" in html
+    assert "#dayjest" in html
+
+
+@pytest.mark.django_db
+def test_roundup_post_skips_items_that_failed_to_post(digest_with_two_items):
+    """A failed post must not be linked in the roundup: the link would 404 in Telegram."""
+    from apps.digest import ranking
+    from apps.digest.models import DeliveryState
+
+    first, second = digest_with_two_items.items.order_by("position")
+    first.channel_delivery_state = DeliveryState.SENT
+    first.channel_message_id = 101
+    first.save()
+    second.channel_delivery_state = DeliveryState.FAILED
+    second.channel_message_id = None
+    second.save()
+
+    html = ranking.render_roundup_post(digest_with_two_items)
+    assert "1. " in html
+    assert "2. " not in html

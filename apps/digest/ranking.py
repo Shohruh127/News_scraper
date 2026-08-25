@@ -101,7 +101,12 @@ def select_digest_candidates(
     end_of_day = timezone.make_aware(datetime.combine(target_date, dt_time.max))
     cutoff = end_of_day - timedelta(days=max_age_days)
 
-    max_items = getattr(settings, "DIGEST_MAX_ITEMS", 7)
+    max_items = getattr(settings, "DIGEST_MAX_ITEMS", 6)
+    margin = getattr(settings, "DIGEST_SELECT_MARGIN", 2)
+    # Select a margin above the block size. Rejecting a candidate whose translation failed
+    # is not enough on its own: at six items a block, one rejection leaves a five-item block
+    # and a hole in the roundup. The margin is what keeps the block full.
+    select_limit = max_items + margin
     max_per_topic = getattr(settings, "DIGEST_MAX_PER_TOPIC", 2)
     max_per_subject = getattr(settings, "DIGEST_MAX_PER_SUBJECT", 1)
 
@@ -157,7 +162,7 @@ def select_digest_candidates(
         selected.append((art, analysis, score, secondary_arts))
         topic_counts[topic] += 1
         subject_counts[subject] += 1
-        if len(selected) >= max_items:
+        if len(selected) >= select_limit:
             break
 
     return selected
@@ -196,169 +201,78 @@ def compose_digest(
     return digest
 
 
-def render_channel_post(digest: Digest) -> str:
-    """Render Telegram channel post HTML (leadership/overview format).
+def render_roundup_post(digest: Digest) -> str:
+    """Render the closing summary post for a completed drip block.
 
-    Requires an editorial analysis with non-empty summary_uz for every item.
-    Missing Uzbek is a strict error, never a fallback to English.
+    Links back to the channel messages of every item that landed in that block.
+    A failed item is skipped: Telegram links to missing messages 404.
     """
+    from .models import DeliveryState
+
+    channel_name = getattr(settings, "TELEGRAM_CHANNEL_USERNAME", "").lstrip("@")
+    # Private-channel link format: https://t.me/c/<channel_id_without_-100>/<message_id>
+    # Public-channel link format:  https://t.me/<username>/<message_id>
+    channel_id = str(getattr(settings, "TELEGRAM_CHANNEL_ID", ""))
+    c_prefix = channel_id.removeprefix("-100") if channel_id.startswith("-100") else ""
+
     items_data = []
     for item in (
-        digest.items.select_related("article", "article__source")
-        .prefetch_related("secondary_articles", "secondary_articles__source")
-        .all()
+        digest.items.select_related("article")
+        .prefetch_related("article__analyses")
+        .order_by("position")
     ):
-        # The reader-facing text comes from the translation stage only (ADR-005).
-        editorial = (
+        if item.channel_delivery_state != DeliveryState.SENT or not item.channel_message_id:
+            continue
+        if channel_name:
+            channel_url = f"https://t.me/{channel_name}/{item.channel_message_id}"
+        elif c_prefix:
+            channel_url = f"https://t.me/c/{c_prefix}/{item.channel_message_id}"
+        else:
+            channel_url = f"https://t.me/{item.channel_message_id}"
+
+        uz = (
             item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
             .order_by("-created_at")
             .first()
         )
-        payload = editorial.payload if editorial else {}
-        summary_uz = payload.get("summary_uz", "").strip()
-
-        if not summary_uz:
-            raise ValueError(
-                f"DigestItem #{item.position} (article ID {item.article_id}: "
-                f"'{item.article.title}') lacks an editorial_uz analysis with non-empty "
-                "'summary_uz'. English fallback is prohibited."
-            )
-
-        # Classification info for tags
-        cls_analysis = (
-            item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
-            .order_by("-created_at")
-            .first()
-            or editorial
-        )
-        topic = cls_analysis.topic if cls_analysis else "ai"
-        maturity = cls_analysis.maturity if cls_analysis else "product"
-
-        # Clustered secondary sources
-        secondary_sources = [
-            {
-                "title": sec.title,
-                "url": sec.canonical_url,
-                "source_name": sec.source.name if sec.source else "",
-            }
-            for sec in item.secondary_articles.all()
-        ]
-
-        src_name = item.article.source.name if item.article.source else ""
+        headline = (
+            uz.payload.get("headline_uz") if uz and uz.payload else ""
+        ) or item.article.title
         items_data.append(
             {
                 "position": item.position,
-                "title": item.article.title,
-                "url": item.article.canonical_url,
-                "source_name": src_name,
-                "topic": str(topic),
-                "maturity": str(maturity),
-                "summary_uz": summary_uz,
-                "score": item.score,
-                "secondary_sources": secondary_sources,
+                "headline": headline,
+                "channel_url": channel_url,
             }
         )
 
-    return render_to_string(
-        "digest/channel_post.html",
-        {
-            "digest_date": digest.digest_date,
-            "items": items_data,
-            "total_items": len(items_data),
-        },
-    ).strip()
-
-
-def render_group_comment(digest: Digest) -> str:
-    """Render Telegram linked group comment HTML (technical appendix format).
-
-    Requires an editorial analysis for every item.
-    """
-    items_data = []
-    for item in (
-        digest.items.select_related("article", "article__source")
-        .prefetch_related("secondary_articles", "secondary_articles__source")
-        .all()
-    ):
-        # The technical appendix reads the English stage: repo URLs, licences and install
-        # commands are English artefacts and are deliberately not translated (ADR-005).
-        editorial = (
-            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN)
-            .order_by("-created_at")
-            .first()
-        )
-        if not editorial:
-            raise ValueError(
-                f"DigestItem #{item.position} (article ID {item.article_id}: "
-                f"'{item.article.title}') lacks an editorial_en analysis for "
-                "technical appendix rendering."
-            )
-
-        payload = editorial.payload or {}
-        technical = payload.get("technical", {})
-
-        cls_analysis = (
-            item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
-            .order_by("-created_at")
-            .first()
-            or editorial
-        )
-
-        secondary_sources = [
-            {
-                "title": sec.title,
-                "url": sec.canonical_url,
-                "source_name": sec.source.name if sec.source else "",
-            }
-            for sec in item.secondary_articles.all()
-        ]
-
-        items_data.append(
-            {
-                "position": item.position,
-                "title": item.article.title,
-                "url": item.article.canonical_url,
-                "topic": str(cls_analysis.topic if cls_analysis else ""),
-                "maturity": str(cls_analysis.maturity if cls_analysis else ""),
-                "what_was_built": technical.get("what_was_built", ""),
-                "architecture": technical.get("architecture", ""),
-                "license": technical.get("license", ""),
-                "repo_url": technical.get("repo_url", ""),
-                "api_url": technical.get("api_url", ""),
-                "hardware": technical.get("hardware", ""),
-                "install": technical.get("install", ""),
-                "benchmarks": technical.get("benchmarks", ""),
-                "limitations": technical.get("limitations", ""),
-                "local_deployable": technical.get("local_deployable", False),
-                "uzbekistan_application_uz": payload.get("uzbekistan_application_uz", ""),
-                "why_it_matters_uz": payload.get("why_it_matters_uz", ""),
-                "secondary_sources": secondary_sources,
-            }
-        )
-
-    return render_to_string(
-        "digest/group_comment.html",
-        {
-            "digest_date": digest.digest_date,
-            "items": items_data,
-            "total_items": len(items_data),
-        },
-    ).strip()
-
-
-#: Translated fields every post has. Anything else ending in `_uz` came from an archetype block.
-_COMMON_UZ_KEYS = frozenset(
-    {
-        "headline_uz",
-        "summary_uz",
-        "why_it_matters_uz",
-        "leadership_uz",
-        "uzbekistan_application_uz",
-        "lead_uz",
-        "body_1_uz",
-        "body_2_uz",
+    edition_label = "Tonggi" if digest.edition == Digest.Edition.MORNING else "Kechki"
+    # Format date in Uzbek / Latin (e.g. "24-avgust dayjesti")
+    months = {
+        1: "yanvar",
+        2: "fevral",
+        3: "mart",
+        4: "aprel",
+        5: "may",
+        6: "iyun",
+        7: "iyul",
+        8: "avgust",
+        9: "sentabr",
+        10: "oktabr",
+        11: "noyabr",
+        12: "dekabr",
     }
-)
+    month_name = months.get(digest.digest_date.month, "")
+    title = f"⚡️ {edition_label} dayjest ({digest.digest_date.day}-{month_name})"
+
+    return render_to_string(
+        "digest/roundup_post.html",
+        {
+            "title": title,
+            "items": items_data,
+            "digest": digest,
+        },
+    ).strip()
 
 
 def _item_data(item: DigestItem) -> dict:
@@ -423,31 +337,19 @@ def _item_data(item: DigestItem) -> dict:
         "source_name": item.article.source.name if item.article.source else "",
         "topic": topic_str,
         "maturity": maturity_str,
-        # The archetype lives in the English payload; its translated detail lines live in the
-        # Uzbek one, flattened there by the translation stage.
-        "archetype": en_payload.get("archetype", ""),
-        "detail": {
-            k: v for k, v in uz_payload.items() if k.endswith("_uz") and k not in _COMMON_UZ_KEYS
-        },
-        # Uzbek fields
+        # Uzbek fields. `summary_uz` is the pre-v2 name for the lead and is kept only so
+        # translations stored before v2 still render.
         "headline_uz": uz_payload.get("headline_uz", item.article.title),
         "summary_uz": lead_uz,
         "lead_uz": lead_uz,
         "body_1_uz": uz_payload.get("body_1_uz", ""),
-        "body_2_uz": uz_payload.get("body_2_uz", ""),
-        "why_it_matters_uz": uz_payload.get("why_it_matters_uz", ""),
-        "leadership_uz": uz_payload.get("leadership_uz", ""),
-        "uzbekistan_application_uz": (
-            uz_payload.get("uzbekistan_application_uz", "")
-            or en_payload.get("uzbekistan_application_uz", "")
-        ),
+        "kicker_uz": uz_payload.get("kicker_uz", ""),
         # Technical appendix. Prose comes from the translation when it exists and from the
         # English otherwise, so digests stored before appendix translation still render.
         # URLs and the install command are never translated.
         "what_was_built": uz_payload.get("what_was_built_uz")
         or technical.get("what_was_built", ""),
         "architecture": uz_payload.get("architecture_uz") or technical.get("architecture", ""),
-        "hardware": uz_payload.get("hardware_uz") or technical.get("hardware", ""),
         "benchmarks": uz_payload.get("benchmarks_uz") or technical.get("benchmarks", ""),
         "limitations": uz_payload.get("limitations_uz") or technical.get("limitations", ""),
         "license": technical.get("license", ""),
@@ -462,62 +364,14 @@ def _item_data(item: DigestItem) -> dict:
     }
 
 
-#: archetype -> template. A value missing from this map falls back to the plain post, which is
-#: the rule the whole feature rests on: the archetype block is an enhancement, and its absence
-#: simplifies the layout rather than losing the post.
-ARCHETYPE_TEMPLATES = {
-    "release": "digest/item_release.html",
-    "agent_protocol": "digest/item_agent_protocol.html",
-    "risk_hardening": "digest/item_risk_hardening.html",
-    "policy": "digest/item_policy.html",
-    "research": "digest/item_research.html",
-    "company_product": "digest/item_company_product.html",
-}
-
-#: The field each template cannot render without. Absent -> fall back.
-ARCHETYPE_REQUIRED = {
-    "release": ("what_changed_uz",),
-    "agent_protocol": ("connects_uz",),
-    "risk_hardening": ("risk_uz", "mitigation_uz"),
-    "policy": ("who_issued_uz", "who_must_comply_uz"),
-    "research": ("claim_uz",),
-    "company_product": ("what_they_do_uz",),
-}
-
-
 def render_item_post(item: DigestItem) -> str:
-    """Render one channel post, choosing v2 post_format or legacy archetype template."""
+    """Render one channel post using post_format v2."""
     data = _item_data(item)
-    if getattr(settings, "POST_FORMAT_V2_ENABLED", False):
-        from . import post_format
+    from . import post_format
 
-        max_chars = getattr(settings, "POST_MAX_CHARS", 450)
-        max_sentences = getattr(settings, "POST_MAX_SENTENCES", 4)
-        return post_format.render_item_post_v2(
-            data, max_chars=max_chars, max_sentences=max_sentences
-        )
-
-    archetype = data.get("archetype", "")
-    template = ARCHETYPE_TEMPLATES.get(archetype)
-
-    if template is None:
-        if archetype:
-            log.info(
-                "Unknown archetype %r on item #%s; using the plain post", archetype, item.position
-            )
-        return render_to_string("digest/item_post.html", data).strip()
-
-    missing = [f for f in ARCHETYPE_REQUIRED[archetype] if not data["detail"].get(f)]
-    if missing:
-        log.warning(
-            "Archetype %s on item #%s lacks %s; using the plain post",
-            archetype,
-            item.position,
-            ", ".join(missing),
-        )
-        return render_to_string("digest/item_post.html", data).strip()
-
-    return render_to_string(template, data).strip()
+    max_chars = getattr(settings, "POST_MAX_CHARS", 700)
+    max_sentences = getattr(settings, "POST_MAX_SENTENCES", 4)
+    return post_format.render_item_post_v2(data, max_chars=max_chars, max_sentences=max_sentences)
 
 
 def render_item_appendix(item: DigestItem) -> str:

@@ -1,7 +1,7 @@
 """Pure post-format layer (v3).
 
-Renders clean Uzbek prose: 3-4 sentences, no headline, no bullets, exactly one inline
-link, a closing topic hashtag, and a character guard.
+Renders clean Uzbek prose: a bold headline label, exactly three sentences, no bullets, one
+inline link, a closing topic hashtag, and a character guard.
 
 The link anchor is positional, not chosen by the model: it is the tail of the lead's
 first sentence, taking the preceding word too when that tail is a light verb. Uzbek is
@@ -215,6 +215,10 @@ def linkify_lead(lead: str, url: str, anchor: str = "") -> str:
 
 
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
+#: A headline line is exactly one <b>...</b> and nothing else. Bold is positional (the
+#: renderer applies it, the model never does), so this pattern is both the way the line is
+#: written and the way it is recognised.
+_HEADLINE_LINE_RE = re.compile(r"^<b>.*</b>$", re.DOTALL)
 
 
 def visible_length(html_text: str) -> int:
@@ -235,97 +239,95 @@ def split_sentences(text: str) -> list[str]:
 
 
 def count_sentences(html_text: str) -> int:
-    """Sentences a reader sees. The hashtag line is a label, not a sentence.
+    """Sentences a reader sees. The headline and hashtag lines are labels, not sentences.
 
     Sentences, not words: Uzbek folds prepositions into suffixes, so a word count that
     reads correctly in one language is meaningless in the other. A sentence carries
     roughly one fact in both.
     """
-    plain = _TAG_STRIP_RE.sub("", html_text)
-    unescaped = html_unescape(plain).strip()
-    lines = [
-        line.strip()
-        for line in unescaped.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
+    lines = [line.strip() for line in html_text.strip().splitlines() if line.strip()]
     total = 0
-    for line in lines:
-        total += len(split_sentences(line))
+    for index, line in enumerate(lines):
+        if index == 0 and _HEADLINE_LINE_RE.match(line):
+            continue
+        plain = html_unescape(_TAG_STRIP_RE.sub("", line)).strip()
+        if not plain or plain.startswith("#"):
+            continue
+        total += len(split_sentences(plain))
     return total
 
 
-def _assemble_candidate(lead_html: str, body_1: str, body_2: str, tag: str) -> str:
-    parts = [lead_html.strip()]
+def _assemble_candidate(
+    headline_html: str, lead_html: str, body_1: str, kicker: str, tag: str
+) -> str:
+    parts = []
+    if headline_html.strip():
+        parts.append(headline_html.strip())
+    parts.append(lead_html.strip())
     if body_1.strip():
         parts.append(html_escape(body_1.strip()))
-    if body_2.strip():
-        parts.append(html_escape(body_2.strip()))
+    if kicker.strip():
+        parts.append(html_escape(kicker.strip()))
     if tag.strip():
         parts.append(tag.strip())
     return "\n\n".join(parts)
 
 
 def trim_post_fields(
+    headline_html: str,
     lead_html: str,
     body_1: str,
-    body_2: str,
+    kicker: str,
     tag: str,
-    max_chars: int = 450,
-    max_sentences: int = 4,
-) -> tuple[str, str]:
-    """Progressively trim fields until visible length and sentence count are in budget."""
-    candidate = _assemble_candidate(lead_html, body_1, body_2, tag)
-    if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
-        return body_1, body_2
+    max_chars: int = 500,
+    max_sentences: int = 3,
+) -> str:
+    """Trim `body_1` until the post is in budget, and return what survived.
 
-    # Step 1: Drop trailing sentences from body_2
-    b2_sentences = split_sentences(body_2)
-    while b2_sentences:
-        candidate = _assemble_candidate(lead_html, body_1, " ".join(b2_sentences), tag)
-        if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
-            return body_1, " ".join(b2_sentences)
-        b2_sentences.pop()
-    body_2 = ""
+    `body_2` was removed on 2026-08-24. It was always the first thing trimmed, and the model
+    could not reliably tell it apart from `body_1` — in the live test its "cause or context"
+    sentence turned up in `body_1` instead. Generating a field to discard it costs output
+    tokens on two calls and buys nothing.
 
-    candidate = _assemble_candidate(lead_html, body_1, body_2, tag)
-    if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
-        return body_1, body_2
+    The headline and the kicker are never trimmed. They are the two elements the reference
+    channel always carries and this channel had lost, so dropping them under pressure would
+    reproduce the exact defect this format corrects.
+    """
 
-    # Step 2: Drop trailing sentences from body_1 (down to 1 sentence)
-    b1_sentences = split_sentences(body_1)
-    while len(b1_sentences) > 1:
-        b1_sentences.pop()
-        candidate = _assemble_candidate(lead_html, " ".join(b1_sentences), body_2, tag)
-        if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
-            return " ".join(b1_sentences), body_2
+    def fits(b1: str) -> bool:
+        candidate = _assemble_candidate(headline_html, lead_html, b1, kicker, tag)
+        return (
+            visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences
+        )
 
-    body_1 = " ".join(b1_sentences)
-    candidate = _assemble_candidate(lead_html, body_1, body_2, tag)
-    if visible_length(candidate) <= max_chars and count_sentences(candidate) <= max_sentences:
-        return body_1, body_2
+    if fits(body_1):
+        return body_1
 
-    # Step 3: Drop body_1 completely if lead alone still fits
-    candidate_lead_only = _assemble_candidate(lead_html, "", "", tag)
-    if (
-        visible_length(candidate_lead_only) <= max_chars
-        and count_sentences(candidate_lead_only) <= max_sentences
-    ):
-        return "", ""
+    sentences = split_sentences(body_1)
+    while len(sentences) > 1:
+        sentences.pop()
+        if fits(" ".join(sentences)):
+            return " ".join(sentences)
 
-    vis = visible_length(candidate_lead_only)
-    if vis > max_chars:
-        raise ValueError(f"Lead and tag alone exceed max_chars budget ({vis} > {max_chars})")
+    body_1 = " ".join(sentences)
+    if fits(body_1):
+        return body_1
+    if fits(""):
+        return ""
 
-    return body_1, body_2
+    vis = visible_length(_assemble_candidate(headline_html, lead_html, "", kicker, tag))
+    raise ValueError(
+        f"Headline, lead, kicker and tag alone exceed max_chars budget ({vis} > {max_chars})"
+    )
 
 
-_FORBIDDEN_TAGS_RE = re.compile(r"<(?!/?a(?:\s+[^>]*)?>)[^>]+>", re.IGNORECASE)
+_FORBIDDEN_TAGS_RE = re.compile(r"<(?!/?a(?:\s+[^>]*)?>|/?b>)[^>]+>", re.IGNORECASE)
 _BULLET_RE = re.compile(r"^\s*[•\*\-]\s+", re.MULTILINE)
 _A_TAG_RE = re.compile(r'<a\s+href="[^"]+">.*?</a>', re.DOTALL | re.IGNORECASE)
 
 
 def validate_rendered_post(
-    rendered_html: str, max_chars: int = 450, max_sentences: int = 4
+    rendered_html: str, max_chars: int = 500, max_sentences: int = 3
 ) -> list[str]:
     """Validate rendered HTML satisfies all post contract constraints."""
     violations = []
@@ -337,7 +339,9 @@ def validate_rendered_post(
     else:
         # The anchor is positional now: it must close the lead. Anything other than
         # sentence punctuation after </a> means the link is not on the tail.
-        first_block = rendered_html.split("\n\n", 1)[0]
+        blocks = rendered_html.split("\n\n")
+        lead_index = 1 if blocks and _HEADLINE_LINE_RE.match(blocks[0].strip()) else 0
+        first_block = blocks[lead_index] if len(blocks) > lead_index else ""
         tail_match = re.search(r"</a>(.*)$", first_block, re.DOTALL)
         if tail_match is None:
             violations.append("The <a> tag must be inside the lead (the first block)")
@@ -353,12 +357,18 @@ def validate_rendered_post(
     if forbidden:
         violations.append(f"Forbidden HTML tags found: {', '.join(set(forbidden))}")
 
+    lines = [line.strip() for line in rendered_html.strip().splitlines() if line.strip()]
+    bold_lines = [i for i, line in enumerate(lines) if "<b>" in line]
+    if bold_lines and bold_lines != [0]:
+        violations.append("Bold is allowed only on the headline line")
+    elif bold_lines == [0] and not _HEADLINE_LINE_RE.match(lines[0]):
+        violations.append("The headline line must be exactly <b>...</b>")
+
     # No bullet formatting
     if _BULLET_RE.search(rendered_html):
         violations.append("Bullet points or markdown lists found in post")
 
     # Final line must be exactly one approved topic hashtag
-    lines = [line.strip() for line in rendered_html.strip().splitlines() if line.strip()]
     if not lines:
         violations.append("Post is empty")
     else:
@@ -385,8 +395,8 @@ def validate_rendered_post(
     return violations
 
 
-def render_item_post_v2(item_data: dict, max_chars: int = 450, max_sentences: int = 4) -> str:
-    """Render a v3 post: lead, body_1, optional body_2, one positional link, one hashtag."""
+def render_item_post_v2(item_data: dict, max_chars: int = 500, max_sentences: int = 3) -> str:
+    """Render a post: headline, lead, body_1, kicker, one hashtag."""
     url = item_data.get("url", "")
     lead = strip_markdown_formatting(item_data.get("lead_uz") or item_data.get("summary_uz") or "")
     if not lead.strip():
@@ -395,23 +405,29 @@ def render_item_post_v2(item_data: dict, max_chars: int = 450, max_sentences: in
     anchor = anchor_from_lead(lead)
     lead_html = linkify_lead(lead, url, anchor)
 
+    # Bold is applied here and nowhere else. Stored payloads from before v3 carry no
+    # headline_uz; `_item_data` falls back to the article title, which always exists.
+    headline = strip_markdown_formatting(item_data.get("headline_uz") or "").strip()
+    headline_html = f"<b>{html_escape(headline)}</b>" if headline else ""
+
     body_1 = strip_markdown_formatting(item_data.get("body_1_uz") or "")
-    body_2 = strip_markdown_formatting(item_data.get("body_2_uz") or "")
+    # Payloads stored before v3 have no kicker. They render without one rather than failing.
+    kicker = strip_markdown_formatting(item_data.get("kicker_uz") or "")
 
     topic = item_data.get("topic") or item_data.get("primary_topic")
     tag = get_topic_tag(topic)
 
-    # Trim fields if over budget
-    b1_trimmed, b2_trimmed = trim_post_fields(
+    b1_trimmed = trim_post_fields(
+        headline_html=headline_html,
         lead_html=lead_html,
         body_1=body_1,
-        body_2=body_2,
+        kicker=kicker,
         tag=tag,
         max_chars=max_chars,
         max_sentences=max_sentences,
     )
 
-    rendered = _assemble_candidate(lead_html, b1_trimmed, b2_trimmed, tag)
+    rendered = _assemble_candidate(headline_html, lead_html, b1_trimmed, kicker, tag)
 
     violations = validate_rendered_post(rendered, max_chars=max_chars, max_sentences=max_sentences)
     if violations:

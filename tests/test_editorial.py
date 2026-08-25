@@ -60,24 +60,22 @@ def article(source):
 
 
 @respx.mock
-def test_two_stages_produce_two_analyses_on_ollama(article, settings):
-    settings.LLM_PROVIDER = "ollama"
-    settings.EDITORIAL_EN_PROVIDER = "ollama"
-    settings.TRANSLATION_PROVIDER = "ollama"
-    settings.OLLAMA_FAST_MODEL = "gemma4:31b"
-    settings.OLLAMA_BASE_URL = "http://localhost:11434"
-    settings.OLLAMA_DEEP_MODEL = "gemma4:31b"
+def test_two_stages_produce_two_analyses_on_the_gateway(article, settings):
+    settings.LLM_PROVIDER = "gateway"
+    settings.EDITORIAL_EN_PROVIDER = "gateway"
+    settings.TRANSLATION_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+    settings.GATEWAY_FAST_MODEL = "fast"
+    settings.GATEWAY_SMART_MODEL = "smart"
 
-    respx.get("http://localhost:11434/api/tags").mock(
-        return_value=httpx.Response(
-            200, json={"models": [{"name": "gemma4:31b", "digest": "d31b"}]}
+    def reply(payload):
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
         )
-    )
-    respx.post("http://localhost:11434/api/chat").mock(
-        side_effect=[
-            httpx.Response(200, json={"message": {"content": json.dumps(EN_PAYLOAD)}}),
-            httpx.Response(200, json={"message": {"content": json.dumps(UZ_PAYLOAD)}}),
-        ]
+
+    route = respx.post("http://gw.test/v1/chat/completions").mock(
+        side_effect=[reply(EN_PAYLOAD), reply(UZ_PAYLOAD)]
     )
 
     result = llm.analyse_for_digest_logic([article.id])
@@ -89,8 +87,10 @@ def test_two_stages_produce_two_analyses_on_ollama(article, settings):
 
     en = article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
     assert en.payload["lead_en"].startswith("Qwen released")
-    # The Ollama tag can be repointed silently, so the digest is recorded.
-    assert en.model_digest == "d31b"
+    # English on the deep tier, translation on the fast one — the 2026-08-17 measurement.
+    assert [json.loads(c.request.content)["model"] for c in route.calls] == ["smart", "fast"]
+    # No digest: only Ollama exposed /api/tags, and that path was removed 2026-08-25.
+    assert en.model_digest == ""
 
 
 @respx.mock
@@ -197,8 +197,8 @@ def test_rendering_requires_the_translation_stage(article):
     digest = Digest.objects.create(digest_date=date(2026, 8, 14))
     DigestItem.objects.create(digest=digest, article=article, position=1, score=0.85)
 
-    with pytest.raises(ValueError, match="English fallback is prohibited"):
-        ranking.render_channel_post(digest)
+    with pytest.raises(ValueError, match="lacks editorial_uz"):
+        ranking.render_item_post(digest.items.first())
 
 
 def test_rendering_succeeds_with_both_stages(article):
@@ -217,30 +217,43 @@ def test_rendering_succeeds_with_both_stages(article):
     )
     make_editorial(
         article,
-        summary_uz="Yangi arxitektura sinovdan o'tdi.",
+        lead_uz="Yangi arxitektura sinovdan o'tdi.",
         built="Fast transformer layer",
         limitations="Memory bounds",
     )
 
     digest = Digest.objects.create(digest_date=date(2026, 8, 14))
-    DigestItem.objects.create(digest=digest, article=article, position=1, score=0.85)
+    item = DigestItem.objects.create(digest=digest, article=article, position=1, score=0.85)
 
-    post = ranking.render_channel_post(digest)
-    assert "Yangi arxitektura sinovdan o'tdi." in post
+    post = ranking.render_item_post(item)
+    assert "Yangi arxitektura" in post
     assert "English reason" not in post
 
     # The technical appendix reads the English stage on purpose: repo URLs, licences and
     # install commands are English artefacts and are not translated.
-    appendix = ranking.render_group_comment(digest)
+    appendix = ranking.render_item_appendix(item)
     assert "Fast transformer layer" in appendix
 
 
-def test_archetype_enum_matches_the_schema():
-    """Archetypes are supported in the editorial schema."""
-    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_SCHEMA
+def test_the_editorial_schema_asks_only_for_what_gets_published():
+    """Every field the model fills must reach a reader.
+
+    `why_it_matters_en`, `uzbekistan_application_en`, `archetype` and `technical.hardware`
+    were generated, translated and then rendered nowhere. Removed 2026-08-24: they cost
+    output tokens on both calls and split the model's attention across fields with no reader.
+    """
+    from apps.digest.llm import EDITORIAL_EN_SCHEMA
 
     props = EDITORIAL_EN_SCHEMA["properties"]
-    assert set(props["archetype"]["enum"]) == set(ARCHETYPES)
+    assert set(props) == {
+        "headline_en",
+        "lead_en",
+        "body_1_en",
+        "kicker_en",
+        "evidence_level",
+        "technical",
+    }
+    assert "hardware" not in props["technical"]["properties"]
 
 
 def test_micro_pipeline_schema_required_fields():
@@ -248,7 +261,7 @@ def test_micro_pipeline_schema_required_fields():
     from apps.digest.llm import EDITORIAL_EN_SCHEMA
 
     required = EDITORIAL_EN_SCHEMA["required"]
-    for field in ["lead_en", "body_1_en", "why_it_matters_en"]:
+    for field in ["headline_en", "lead_en", "body_1_en", "kicker_en"]:
         assert field in required
 
 
@@ -257,39 +270,14 @@ def test_editorial_model_validation():
     from apps.digest.llm import EditorialEn
 
     payload = {
+        "headline_en": "Ollama v0.32.10 doubles prefill speed",
         "lead_en": "Ollama released v0.32.10 with speedup.",
         "body_1_en": "The release changes a default and speeds up prefill by 2x.",
-        "why_it_matters_en": "It standardises behaviour across engines.",
-        "uzbekistan_application_en": "Local teams running Ollama benefit directly.",
-        "archetype": "release",
+        "kicker_en": "One fewer flag to remember.",
         "evidence_level": "vendor_claim_only",
     }
     obj = EditorialEn(**payload)
     assert obj.lead_en.startswith("Ollama")
-
-
-def test_archetype_fields_flattens_only_the_chosen_block():
-    """Only the chosen block is flattened, and only its non-empty strings."""
-    from apps.digest.llm import archetype_fields
-
-    payload = {
-        "archetype": "release",
-        "release_details": {
-            "what_changed_en": "repeat_penalty defaults to 1.0",
-            "benchmarks_en": "",
-            "availability_en": "   ",
-        },
-        "policy_details": {"who_issued_en": "should be ignored"},
-    }
-    assert archetype_fields(payload) == {"what_changed_en": "repeat_penalty defaults to 1.0"}
-
-
-def test_archetype_fields_is_empty_when_there_is_no_block():
-    """A post with no detail block translates its common fields and nothing else."""
-    from apps.digest.llm import archetype_fields
-
-    assert archetype_fields({"archetype": "release"}) == {}
-    assert archetype_fields({}) == {}
 
 
 def test_translation_schema_follows_the_fields_it_is_given():
@@ -346,8 +334,10 @@ def test_technical_fields_selects_prose_and_suffixes_it():
         "architecture_en",
         "limitations_en",
         "benchmarks_en",
-        "hardware_en",
     }
+    # `hardware` is supplied above but is not translated: item_appendix.html never rendered
+    # it, so it was dropped with the other unpublished fields on 2026-08-24.
+    assert "hardware_en" not in out
     assert out["what_was_built_en"].startswith("A minor version update")
 
 
@@ -469,27 +459,55 @@ def test_editorial_en_prompt_documents_every_technical_field():
         assert field in EDITORIAL_EN_PROMPT, f"prompt never mentions technical.{field}"
 
 
-def test_editorial_en_prompt_example_obeys_its_own_rules():
-    """The few-shot dominates the model's behaviour, so it must not contradict the rules."""
+def _editorial_examples():
+    """Both few-shot examples from EDITORIAL_EN_PROMPT, parsed."""
     import json as _json
     import re as _re
 
-    from apps.digest.llm import ARCHETYPES, EDITORIAL_EN_PROMPT
+    from apps.digest.llm import EDITORIAL_EN_PROMPT
 
     filled = EDITORIAL_EN_PROMPT.format(title="T", source="S", text="X")
-    block = filled.split("Output JSON:", 1)[1].split("ARTICLE", 1)[0].strip()
-    example = _json.loads(block)
+    blocks = _re.findall(r"Output JSON:\n(\{.*?\n\})\n", filled, _re.DOTALL)
+    return [_json.loads(b) for b in blocks]
+
+
+def test_editorial_en_prompt_examples_obey_their_own_rules():
+    """The few-shot dominates the model's behaviour, so it must not contradict the rules."""
+    import re as _re
 
     def sentences(text):
         return [s for s in _re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
 
-    assert len(sentences(example["lead_en"])) == 1, "lead_en must be exactly one sentence"
-    assert example["lead_en"].rstrip().endswith("."), "lead_en must be a complete sentence"
-    assert len(sentences(example["body_1_en"])) == 1, "body_1_en must be exactly one sentence"
-    assert _re.search(r"\d", example["body_1_en"]), "body_1_en must carry a concrete number"
-    assert example["archetype"] in ARCHETYPES
-    assert "link_anchor_en" not in example, "the anchor is derived, not modelled"
-    assert "technical" in example, "the appendix depends on the technical block"
+    examples = _editorial_examples()
+    assert len(examples) == 2, "both few-shot examples must be parseable"
+
+    for i, example in enumerate(examples, 1):
+        assert len(sentences(example["lead_en"])) == 1, f"{i}: lead_en must be one sentence"
+        assert example["lead_en"].rstrip().endswith("."), f"{i}: lead_en must be complete"
+        assert len(sentences(example["body_1_en"])) == 1, f"{i}: body_1_en must be one sentence"
+        assert len(example["headline_en"].split()) <= 8, f"{i}: headline_en is capped at 8 words"
+        assert not example["headline_en"].rstrip().endswith("."), f"{i}: headline is not a sentence"
+        assert len(example["kicker_en"].split()) <= 8, f"{i}: kicker_en is capped at 8 words"
+        assert "link_anchor_en" not in example, "the anchor is derived, not modelled"
+        assert "technical" in example, "the appendix depends on the technical block"
+        for dead in ("body_2_en", "why_it_matters_en", "uzbekistan_application_en", "archetype"):
+            assert dead not in example, f"{i}: {dead} was removed from the contract"
+
+
+def test_the_second_example_teaches_the_no_number_case():
+    """The old prompt demanded a number in body_1_en unconditionally.
+
+    Measured 2026-08-24 on three live articles: two had no figure to give and the rule was
+    simply ignored, which teaches the model that the rules around it are optional too. The
+    second example exists to show what body_1_en does when the article states no number.
+    """
+    import re as _re
+
+    with_numbers, without_numbers = _editorial_examples()
+    assert _re.search(r"\d", with_numbers["body_1_en"]), "example 1 carries the number case"
+    assert not _re.search(r"\d", without_numbers["body_1_en"]), (
+        "example 2 must show a body_1_en with no invented number"
+    )
 
 
 def test_translation_prompt_has_no_anchor_rules():
@@ -517,6 +535,57 @@ def test_translation_prompt_examples_are_complete():
     assert len(blocks) == 2, "both few-shot examples must be parseable"
     for raw in blocks:
         example = _json.loads(raw)
-        for key in ("lead_uz", "body_1_uz", "body_2_uz"):
+        for key in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz"):
             assert example.get(key), f"{key} missing or empty in a few-shot example"
         assert "link_anchor_uz" not in example
+        assert "body_2_uz" not in example, "body_2 was removed from the contract"
+
+
+def test_editorial_schema_requires_headline_and_kicker():
+    """The reference style carries a headline label and a closing sentence in every post."""
+    from apps.digest.llm import EDITORIAL_EN_SCHEMA
+
+    props = EDITORIAL_EN_SCHEMA["properties"]
+    assert props["headline_en"] == {"type": "string"}
+    assert props["kicker_en"] == {"type": "string"}
+    assert set(EDITORIAL_EN_SCHEMA["required"]) == {
+        "headline_en",
+        "lead_en",
+        "body_1_en",
+        "kicker_en",
+    }
+
+
+def test_editorial_prompt_states_both_new_fields_and_their_word_cap():
+    """A field the schema requires but the prompt never names is filled with an empty string."""
+    from apps.digest.llm import EDITORIAL_EN_PROMPT
+
+    assert "headline_en" in EDITORIAL_EN_PROMPT
+    assert "kicker_en" in EDITORIAL_EN_PROMPT
+    # Both are capped at 8 words; the cap must be stated, not implied.
+    assert EDITORIAL_EN_PROMPT.count("8 words") >= 2
+
+
+def test_common_translated_fields_carry_headline_and_kicker():
+    """translation_schema_for derives _uz keys from this tuple, so membership is the switch."""
+    from apps.digest.llm import COMMON_TRANSLATED_FIELDS
+
+    assert "headline_en" in COMMON_TRANSLATED_FIELDS
+    assert "kicker_en" in COMMON_TRANSLATED_FIELDS
+
+
+def test_translation_schema_for_yields_headline_and_kicker():
+    from apps.digest.llm import translation_schema_for
+
+    schema = translation_schema_for({"headline_en": "x", "kicker_en": "y", "lead_en": "z"})
+    assert set(schema["properties"]) == {"headline_uz", "kicker_uz", "lead_uz"}
+    assert set(schema["required"]) == {"headline_uz", "kicker_uz", "lead_uz"}
+
+
+def test_translation_prompt_no_longer_forbids_a_closing_sentence():
+    """The prompt banned the kicker outright. The owner reversed that on 2026-08-24."""
+    from apps.digest.llm import TRANSLATION_PROMPT
+
+    assert "yakuniy izoh yoki xulosa jumlasi bilan tugatma" not in TRANSLATION_PROMPT
+    assert "kicker_uz" in TRANSLATION_PROMPT
+    assert "headline_uz" in TRANSLATION_PROMPT
