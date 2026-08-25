@@ -13,20 +13,25 @@ from apps.digest.models import EXCLUDED_MATURITIES, Topic
 
 
 class Command(BaseCommand):
-    help = "Evaluate the classification model against data/gold_set.jsonl"
+    help = "Evaluate the classifier tier against data/gold_set.jsonl"
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--model",
+            "--tier",
             type=str,
-            default=getattr(settings, "OLLAMA_FAST_MODEL", "gemma4:latest"),
-            help="Ollama model to evaluate (e.g. gemma4:latest or gemma4:31b)",
+            default=llm.TIER_DEEP,
+            choices=[llm.TIER_FAST, llm.TIER_DEEP],
+            help="Which tier to evaluate. The provider is CLASSIFIER_PROVIDER.",
         )
         parser.add_argument(
-            "--timeout",
-            type=int,
-            default=120,
-            help="Timeout per request in seconds",
+            "--stage",
+            type=str,
+            default="classification",
+            choices=["triage", "classification"],
+            help=(
+                "Which gate to measure. 'triage' is recall-first: a false positive costs "
+                "one classification call, a false negative loses the article."
+            ),
         )
         parser.add_argument(
             "--gold-set",
@@ -36,8 +41,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        model = options["model"]
-        timeout = options["timeout"]
+        tier = options["tier"]
+        stage = options["stage"]
         gold_set_path = Path(options["gold_set"])
         if not gold_set_path.is_absolute():
             gold_set_path = settings.BASE_DIR / gold_set_path
@@ -45,7 +50,10 @@ class Command(BaseCommand):
         if not gold_set_path.exists():
             raise CommandError(f"Gold set file not found: {gold_set_path}")
 
-        self.stdout.write(f"\nEvaluating model '{model}' against {gold_set_path.name}...\n")
+        self.stdout.write(
+            f"\nEvaluating the {tier!r} tier on {settings.CLASSIFIER_PROVIDER} "
+            f"against {gold_set_path.name}...\n"
+        )
 
         rows = []
         with open(gold_set_path, encoding="utf-8") as f:
@@ -70,26 +78,36 @@ class Command(BaseCommand):
             human_topic = row.get("human_topic", "")
             human_maturity = row.get("human_maturity", "")
 
-            num_predict = 2000 if "31b" in model else 1200
+            num_predict = 2000 if tier == llm.TIER_DEEP else 1200
             try:
-                classification, raw_payload, latency_ms, digest, _tag = llm.classify_text(
-                    title=title,
-                    source_name=source,
-                    text=text,
-                    model=model,
-                    timeout=timeout,
-                    num_predict=num_predict,
-                )
-                pred_topic = classification.primary_topic.value
-                pred_maturity = classification.maturity.value
-
-                if (
-                    classification.primary_topic == Topic.IRRELEVANT
-                    or classification.maturity in EXCLUDED_MATURITIES
-                ):
-                    pred_label = "drop"
+                if stage == "triage":
+                    passed, result = llm.triage_text(title=title, source_name=source)
+                    raw_payload, latency_ms = result.payload, result.latency_ms
+                    # Triage does not decide topic or maturity; only whether the article is
+                    # worth a classification call. Report those as not-applicable rather than
+                    # scoring the gate on a question it was never asked.
+                    pred_topic = raw_payload.get("primary_topic", "n/a")
+                    pred_maturity = raw_payload.get("maturity", "n/a")
+                    pred_label = "keep" if passed else "drop"
                 else:
-                    pred_label = "keep"
+                    classification, result = llm.classify_text(
+                        title=title,
+                        source_name=source,
+                        text=text,
+                        tier=tier,
+                        num_predict=num_predict,
+                    )
+                    latency_ms = result.latency_ms
+                    pred_topic = classification.primary_topic.value
+                    pred_maturity = classification.maturity.value
+
+                    if (
+                        classification.primary_topic == Topic.IRRELEVANT
+                        or classification.maturity in EXCLUDED_MATURITIES
+                    ):
+                        pred_label = "drop"
+                    else:
+                        pred_label = "keep"
 
             except Exception as exc:
                 self.stderr.write(f"Row {idx} ({title[:30]}...) FAILED: {exc}")
@@ -164,7 +182,7 @@ class Command(BaseCommand):
         maturity_acc = maturity_correct / len(rows) if rows else 0.0
 
         self.stdout.write("\n" + "=" * 60)
-        self.stdout.write(f"EVALUATION REPORT: {model}")
+        self.stdout.write(f"EVALUATION REPORT: {stage} on {settings.CLASSIFIER_PROVIDER}/{tier}")
         self.stdout.write("=" * 60)
         self.stdout.write(f"Total samples: {len(rows)}")
         self.stdout.write(f"True Positives (TP):  {tp}")

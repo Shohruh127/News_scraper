@@ -39,7 +39,7 @@ if settings.PUBLISHING_ENABLED:
             "PUBLISHING_ENABLED must be false during deployment "
             "(pass --allow-publishing to accept the risk)"
         )
-known = {"ollama", "gateway", "mimo"}
+known = {"gateway", "mimo"}
 providers = {
     "LLM_PROVIDER": settings.LLM_PROVIDER,
     "EDITORIAL_EN_PROVIDER": settings.EDITORIAL_EN_PROVIDER,
@@ -51,27 +51,18 @@ for name, value in providers.items():
         errors.append(f"{name}={value!r} must be one of {sorted(known)}")
 
 in_use = set(providers.values())
-if "ollama" in in_use and not settings.OLLAMA_BASE_URL:
-    errors.append("a stage runs on ollama but OLLAMA_BASE_URL is unset")
 if "gateway" in in_use and not (settings.GATEWAY_BASE_URL and settings.GATEWAY_TOKEN):
     errors.append("a stage runs on the gateway but GATEWAY_BASE_URL/GATEWAY_TOKEN are unset")
 if "mimo" in in_use and not (settings.MIMO_BASE_URL and settings.MIMO_API_KEY):
     errors.append("a stage runs on mimo but MIMO_BASE_URL/MIMO_API_KEY are unset")
 
-# The Ollama tags name the fast and deep tiers for every provider: the gateway branch
-# reads them to choose between its fast and smart aliases. So they must be set even when
-# nothing talks to Ollama. Pinning is only enforced where a floating tag can actually
-# move under us, which is Ollama itself; gateway aliases are pinned on the gateway side.
-for name in ("OLLAMA_FAST_MODEL", "OLLAMA_DEEP_MODEL"):
-    value = getattr(settings, name)
-    if not value:
-        errors.append(f"{name} is required: it names a tier, not just an Ollama model")
-    elif "ollama" in in_use and value.endswith(":latest"):
-        # A warning, not an error. Drift is already detected where it matters: every
-        # classification records Analysis.model_digest, so a repointed tag shows up in the
-        # data. Meanwhile gemma4:latest is the tag ADR-004 measured as correct for
-        # translation, so refusing it here blocked the configuration the project chose.
-        print(f"WARNING: {name}={value!r} is a floating tag; rely on Analysis.model_digest.")
+# The gateway addresses models by tier alias only and answers 404 for a real model name,
+# so an empty alias fails every call in that stage rather than falling back to anything.
+if "gateway" in in_use:
+    for name in ("GATEWAY_FAST_MODEL", "GATEWAY_SMART_MODEL"):
+        if not getattr(settings, name):
+            errors.append(f"{name} is required: it names the tier the gateway is asked for")
+
 if not settings.TELEGRAM_BOT_TOKEN:
     errors.append("TELEGRAM_BOT_TOKEN is required")
 database_host = settings.DATABASES["default"]["HOST"]

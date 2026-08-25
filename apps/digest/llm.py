@@ -1,4 +1,4 @@
-"""LLM integration: Ollama client, Pydantic schemas, prompt constants, and classification.
+"""LLM integration: provider clients, Pydantic schemas, prompt constants, and classification.
 
 Rules:
 1. Functions over classes.
@@ -11,7 +11,7 @@ Rules:
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 import httpx
@@ -37,7 +37,7 @@ BLOCKLISTED_DOMAINS = {
 
 
 class RetryableLLMError(Exception):
-    """A 5xx or 429 from Ollama. Worth retrying; client errors (4xx) are not."""
+    """A 5xx or 429 from a provider. Worth retrying; client errors (4xx) are not."""
 
 
 RETRYABLE_LLM_EXCEPTIONS = (
@@ -100,106 +100,38 @@ class TechnicalDetails(BaseModel):
     license: str = ""
     repo_url: str = ""
     api_url: str = ""
-    hardware: str = ""
     install: str = ""
     benchmarks: str = ""
     limitations: str = ""
     local_deployable: bool = False
 
 
-#: The shape of a post. Boundary definitions live in CONTENT_SCHEMA.md §5 and are quoted into
-#: EDITORIAL_EN_PROMPT verbatim, because measurement showed they carry the accuracy: without
-#: them the model scored 0/6 and filled six irrelevant blocks; with them, 5/6 and none.
-ARCHETYPES = (
-    "release",
-    "agent_protocol",
-    "risk_hardening",
-    "policy",
-    "research",
-    "company_product",
-)
-
-
-class ReleaseDetails(BaseModel):
-    what_changed_en: str = ""
-    benchmarks_en: str = ""
-    availability_en: str = ""
-
-
-class AgentProtocolDetails(BaseModel):
-    connects_en: str = ""
-    deployment_en: str = ""
-
-
-class RiskHardeningDetails(BaseModel):
-    """No severity enum. Of 11 stored security articles, none carried a CVSS score, so a
-    three-value enum with no "not stated" option would be invented nine times in eleven.
-    A stated CVE or severity belongs inside `risk_en`, quoted rather than classified."""
-
-    risk_en: str = ""
-    mitigation_en: str = ""
-    residual_en: str = ""
-
-
-class PolicyDetails(BaseModel):
-    who_issued_en: str = ""
-    who_must_comply_en: str = ""
-    deadline_en: str = ""
-
-
-class ResearchDetails(BaseModel):
-    #: Deliberately not `evidence_level`, which is a frozen enum meaning something else.
-    claim_en: str = ""
-    evidence_strength_en: str = ""
-    reproducible_en: str = ""
-
-
-class CompanyProductDetails(BaseModel):
-    what_they_do_en: str = ""
-    availability_en: str = ""
-
-
 class EditorialEn(BaseModel):
-    """English analysis. Verified independently of translation (ADR-005)."""
+    """English analysis. Verified independently of translation (ADR-005).
 
-    # v2 fields
+    Four prose fields, and every one of them is published. Fields that were generated,
+    translated and then rendered nowhere — `why_it_matters_en`, `uzbekistan_application_en`,
+    `archetype`, `technical.hardware`, and the v1 `summary_en`/`leadership_en` — were removed
+    on 2026-08-24. They cost output tokens on both LLM calls and split the model's attention
+    across fields that never reached a reader.
+    """
+
+    headline_en: str = ""
     lead_en: str = ""
     body_1_en: str = ""
-    body_2_en: str = ""
+    kicker_en: str = ""
 
-    # v1 fields (kept for backward compatibility & historical records)
-    headline_en: str = ""
-    summary_en: str = ""
-    leadership_en: str = ""
-
-    why_it_matters_en: str = ""
-    uzbekistan_application_en: str = ""
     technical: TechnicalDetails = Field(default_factory=TechnicalDetails)
     evidence_level: str = Field(default="vendor_claim_only")
-    archetype: str = "release"
-    release_details: ReleaseDetails | None = None
-    agent_protocol_details: AgentProtocolDetails | None = None
-    risk_hardening_details: RiskHardeningDetails | None = None
-    policy_details: PolicyDetails | None = None
-    research_details: ResearchDetails | None = None
-    company_product_details: CompanyProductDetails | None = None
 
 
 class Translation(BaseModel):
     """Uzbek rendering of the *_en fields. `technical` is not translated."""
 
-    # v2 fields
+    headline_uz: str = ""
     lead_uz: str = ""
     body_1_uz: str = ""
-    body_2_uz: str = ""
-
-    # v1 fields
-    headline_uz: str = ""
-    summary_uz: str = ""
-    leadership_uz: str = ""
-
-    why_it_matters_uz: str = ""
-    uzbekistan_application_uz: str = ""
+    kicker_uz: str = ""
 
 
 # --- Editorial: English analysis ---------------------------------------------
@@ -208,12 +140,10 @@ class Translation(BaseModel):
 EDITORIAL_EN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "headline_en": {"type": "string"},
         "lead_en": {"type": "string"},
         "body_1_en": {"type": "string"},
-        "body_2_en": {"type": "string"},
-        "why_it_matters_en": {"type": "string"},
-        "uzbekistan_application_en": {"type": "string"},
-        "archetype": {"type": "string", "enum": list(ARCHETYPES)},
+        "kicker_en": {"type": "string"},
         "evidence_level": {
             "type": "string",
             "enum": ["vendor_claim_only", "multiple_evidence"],
@@ -227,7 +157,6 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
                 "repo_url": {"type": "string"},
                 "api_url": {"type": "string"},
                 "install": {"type": "string"},
-                "hardware": {"type": "string"},
                 "benchmarks": {"type": "string"},
                 "limitations": {"type": "string"},
                 "local_deployable": {"type": "boolean"},
@@ -235,111 +164,139 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
         },
     },
     "required": [
+        "headline_en",
         "lead_en",
         "body_1_en",
-        "why_it_matters_en",
+        "kicker_en",
     ],
 }
 
-EDITORIAL_EN_PROMPT = (
-    "Extract the high-signal facts from the AI engineering article below for a short "
-    "Telegram news post. Return JSON only.\n\n"
-    "## Length\n"
-    "The post is 2 to 3 sentences: lead_en, body_1_en and an optional body_2_en. Each of "
-    "those fields is EXACTLY ONE sentence. Count sentences, not words.\n\n"
-    "## Output Fields:\n"
-    "- lead_en: one complete sentence with a finite main verb. Who did what. It must be "
-    "a sentence, not a noun phrase and not a fragment; 'X is a tool that does Y' is "
-    "wrong. Do not end it with a particle or a dangling conjunction. No markdown, no "
-    "headline.\n"
-    "- body_1_en: one sentence carrying the key number, benchmark, or technical spec.\n"
-    "- body_2_en: one sentence of cause or context, or an empty string.\n"
-    "- why_it_matters_en: one sentence on developer or engineering impact.\n"
-    "- uzbekistan_application_en: one sentence, or an empty string.\n"
-    "- archetype: 'release', 'company_product', 'research', 'agent_protocol', "
-    "'risk_hardening', or 'policy'\n"
-    "- evidence_level: 'vendor_claim_only' or 'multiple_evidence'\n"
-    "- technical: an object with what_was_built, architecture, license, repo_url, "
-    "api_url, install, hardware, benchmarks, limitations, local_deployable.\n"
-    "  Copy each value VERBATIM from the article. If the article does not state it, "
-    "return an empty string. Never guess a URL, a licence name, or an install command "
-    "- these are published as live links.\n\n"
-    "## Style Rules:\n"
-    "1. NO FLUFF / NO HYPE: never use words like 'revolutionary', 'game-changer', "
-    "'powerful'.\n"
-    "2. MANDATORY NUMBERS: body_1_en must carry a concrete number.\n"
-    "3. ONE SENTENCE PER FIELD. A field with two sentences is wrong.\n\n"
-    "## Few-Shot Example:\n"
-    'Input: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context, '
-    'scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."\n'
-    "Output JSON:\n"
-    "{{\n"
-    '  "lead_en": "Mistral released Mistral-Large-2, an open-weight successor to its '
-    'previous frontier model.",\n'
-    '  "body_1_en": "The model has 123B parameters, a 128k context window, and scores '
-    '84% on MMLU.",\n'
-    '  "body_2_en": "Apache-2.0 licensing places it alongside the open-weight models it '
-    'competes with.",\n'
-    '  "why_it_matters_en": "Teams can self-host a frontier-class model without an API '
-    'contract.",\n'
-    '  "uzbekistan_application_en": "Local teams can run it on their own hardware for '
-    'multilingual work.",\n'
-    '  "archetype": "release",\n'
-    '  "evidence_level": "vendor_claim_only",\n'
-    '  "technical": {{\n'
-    '    "what_was_built": "An open-weight large language model.",\n'
-    '    "architecture": "123B parameters, 128k context window",\n'
-    '    "license": "Apache-2.0",\n'
-    '    "repo_url": "https://github.com/mistralai/mistral-large-2",\n'
-    '    "api_url": "",\n'
-    '    "install": "",\n'
-    '    "hardware": "",\n'
-    '    "benchmarks": "84% on MMLU",\n'
-    '    "limitations": "",\n'
-    '    "local_deployable": true\n'
-    "  }}\n"
-    "}}\n\n"
-    "ARTICLE\n"
-    "Title: {title}\n"
-    "Source: {source}\n"
-    "---\n"
-    "{text}\n"
-)
+EDITORIAL_EN_PROMPT = """You are writing one Telegram post for a channel read by working
+AI engineers and technical decision-makers in Uzbekistan. They skim. Give them the fact,
+not the announcement. Return JSON only.
+
+## Shape
+A headline label plus EXACTLY THREE sentences: lead_en, body_1_en, kicker_en.
+One sentence per field. A field holding two sentences is wrong.
+
+## Choosing what the post is about
+An article states many facts. Pick the lead by this order, first match wins:
+  1. A named thing shipped or changed - and who shipped it.
+  2. A measured result - and who measured it.
+  3. A rule, policy or restriction - and who must comply with it.
+If the article announces something with nothing shipped and nothing measured, say so
+plainly in the lead. Do not dress an announcement up as a release.
+
+## Output fields
+- headline_en: a short label naming what happened, at most 8 words. NOT a sentence and
+  NOT a summary - no final full stop, no verb required. 'Qwen 3.8 27B tops the
+  open-weight index' is right; 'Alibaba has released a new model today' is wrong.
+- lead_en: one complete sentence with a finite main verb, AT MOST 18 WORDS. Who did what,
+  chosen by the order above. A sentence, not a noun phrase and not a fragment; 'X is a
+  tool that does Y' is wrong. Do not end it with a particle or a dangling conjunction.
+  It must not repeat the headline - the headline names the event, the lead says who did it.
+- body_1_en: the single most specific verifiable fact the article states, AT MOST 20 WORDS.
+  A number, version, price or benchmark when the article gives one; the concrete mechanism
+  when it does not. NEVER invent a number, and never restate what the lead already said.
+  One fact, not a list of every condition it holds under.
+- kicker_en: one short closing remark, at most 8 words, saying what this changes for a
+  developer. No cliches, no hype, no restating the lead.
+- evidence_level: 'vendor_claim_only' or 'multiple_evidence'
+- technical: an object with what_was_built, architecture, license, repo_url, api_url,
+  install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
+  article. If the article does not state it, return an empty string. Never guess a URL, a
+  licence name, or an install command - these are published as live links.
+
+## Style rules
+1. NO FLUFF / NO HYPE: never use words like 'revolutionary', 'game-changer', 'powerful'.
+2. Prefer the specific to the general. 'cut CI time from 40 to 6 minutes' beats
+   'improved performance'.
+3. ONE SENTENCE PER FIELD.
+
+## Example 1 - a release, with numbers
+Input: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context,
+scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."
+Output JSON:
+{{
+  "headline_en": "Mistral-Large-2 ships with open weights",
+  "lead_en": "Mistral released Mistral-Large-2, an open-weight frontier model.",
+  "body_1_en": "The model has 123B parameters, a 128k context window, and scores 84% on MMLU.",
+  "kicker_en": "A frontier model without an API contract.",
+  "evidence_level": "vendor_claim_only",
+  "technical": {{
+    "what_was_built": "An open-weight large language model.",
+    "architecture": "123B parameters, 128k context window",
+    "license": "Apache-2.0",
+    "repo_url": "https://github.com/mistralai/mistral-large-2",
+    "api_url": "", "install": "", "benchmarks": "84% on MMLU", "limitations": "",
+    "local_deployable": true
+  }}
+}}
+
+## Example 2 - a product announcement, no numbers stated
+Note what body_1_en does here: the article gives no figure, so it names the mechanism
+instead. It does not invent one, and it does not repeat the lead.
+Input: "Replit is opening a free tier of its agent, powered by GPT-5.6 Luna. The free
+tier runs planning and experimentation in the same workspace where code is written. No
+pricing or usage limits were published."
+Output JSON:
+{{
+  "headline_en": "Replit opens a free agent tier",
+  "lead_en": "Replit opened a free tier of its coding agent, running on GPT-5.6 Luna.",
+  "body_1_en": "Planning and experimentation run in the same workspace as the code.",
+  "kicker_en": "Trying an agent no longer needs a budget.",
+  "evidence_level": "vendor_claim_only",
+  "technical": {{
+    "what_was_built": "A free tier of a coding agent.",
+    "architecture": "", "license": "", "repo_url": "", "api_url": "", "install": "",
+    "benchmarks": "",
+    "limitations": "No pricing or usage limits were published.",
+    "local_deployable": false
+  }}
+}}
+
+ARTICLE
+Title: {title}
+Source: {source}
+---
+{text}
+"""
+
 
 # --- Editorial: Uzbek translation (Stage 2: Copywriter) ----------------------
 
 TRANSLATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "headline_uz": {"type": "string"},
         "lead_uz": {"type": "string"},
         "body_1_uz": {"type": "string"},
-        "body_2_uz": {"type": "string"},
-        "why_it_matters_uz": {"type": "string"},
-        "uzbekistan_application_uz": {"type": "string"},
+        "kicker_uz": {"type": "string"},
     },
     "required": [
+        "headline_uz",
         "lead_uz",
         "body_1_uz",
-        "why_it_matters_uz",
+        "kicker_uz",
     ],
 }
 
-#: Fields translated for every post regardless of archetype.
+#: The prose fields of a post, in reading order. Every one of them is published; nothing is
+#: translated that a reader will not see.
 COMMON_TRANSLATED_FIELDS = (
+    "headline_en",
     "lead_en",
     "body_1_en",
-    "body_2_en",
-    "why_it_matters_en",
-    "uzbekistan_application_en",
+    "kicker_en",
 )
 
-#: Technical fields that are prose and therefore translated.
+#: Technical fields that are prose and therefore translated. `hardware` was dropped on
+#: 2026-08-24 with the other fields `item_appendix.html` does not render.
 TECHNICAL_PROSE_FIELDS = (
     "what_was_built",
     "architecture",
     "limitations",
     "benchmarks",
-    "hardware",
 )
 
 
@@ -353,12 +310,6 @@ def technical_fields(payload: dict) -> dict[str, str]:
     }
 
 
-def archetype_fields(payload: dict) -> dict[str, str]:
-    """The chosen archetype's detail block, flattened to top-level keys."""
-    block = payload.get(f"{payload.get('archetype', '')}_details") or {}
-    return {k: v for k, v in block.items() if isinstance(v, str) and v.strip()}
-
-
 def translation_schema_for(fields: dict) -> dict:
     """A translation schema carrying exactly the fields the English stage produced."""
     props = {(k[:-3] + "_uz" if k.endswith("_en") else k): {"type": "string"} for k in fields}
@@ -369,17 +320,21 @@ TRANSLATION_PROMPT = (
     "Quyidagi faktlar asosida O'zbekistondagi AI muhandislari uchun qisqa Telegram posti "
     "yoz (Latin script). Faqat JSON qaytar.\n\n"
     "## Post tuzilishi\n"
-    "Post 2 yoki 3 ta gapdan iborat: lead_uz, body_1_uz va ixtiyoriy body_2_uz. "
-    "Har bir maydon AYNAN BITTA gap. Gaplarni sana, so'zlarni emas.\n"
-    "Postni yakuniy izoh yoki xulosa jumlasi bilan tugatma - faqat faktlar.\n\n"
+    "Post: headline_uz sarlavhasi, keyin AYNAN UCHTA gap - lead_uz, body_1_uz va kicker_uz. "
+    "Har bir maydon aynan bitta gap (headline_uz bundan mustasno - u sarlavha, gap emas). "
+    "Gaplarni sana, so'zlarni emas.\n\n"
     "## Qat'iy qoidalar:\n"
-    "1. lead_uz: aynan 1 ta to'liq gap. Kim nima qilganini bildiradi va kesim bilan "
+    "1. headline_uz: qisqa sarlavha, ko'pi bilan 8 so'z. Bu GAP EMAS - nuqta qo'yilmaydi, "
+    "kesim shart emas. Faqat birinchi harf va atoqli otlar bosh harfda; inglizcha Title "
+    "Case ishlatilmaydi.\n"
+    "2. lead_uz: aynan 1 ta to'liq gap. Kim nima qilganini bildiradi va kesim bilan "
     "tugaydi. Uni yuklama bilan tugatma ('ham', 'esa') va gapni chala qoldirma.\n"
-    "2. body_1_uz: aynan 1 ta gap. Asosiy raqam, mezon yoki texnik faktni ifodalaydi.\n"
-    "3. body_2_uz: aynan 1 ta gap - sabab yoki kontekst - yoki bo'sh satr.\n"
-    "4. Barcha raqamlar, versiyalar (masalan, v0.32.12, $12K, 95.3%) tarjimada aniq "
+    "3. body_1_uz: aynan 1 ta gap. Eng aniq, tekshirib bo'ladigan faktni beradi.\n"
+    "4. kicker_uz: aynan 1 ta qisqa gap, ko'pi bilan 8 so'z. Bu fakt dasturchi uchun nimani "
+    "o'zgartirishini aytadi. Lead'ni takrorlama, shior yozma.\n"
+    "5. Barcha raqamlar, versiyalar (masalan, v0.32.12, $12K, 95.3%) tarjimada aniq "
     "saqlansin.\n"
-    "5. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',\n"
+    "6. TAQIQLANGAN SO'ZLAR: 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',\n"
     "   'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.\n\n"
     # PROVISIONAL Uzbek. The owner is the native speaker and these two examples are his
     # to write - see docs/superpowers/specs/2026-08-20-post-format-gold-examples.md
@@ -387,31 +342,32 @@ TRANSLATION_PROMPT = (
     # the meantime, but replace them with his gold text before this reaches the channel.
     "## Few-Shot Namunalar:\n"
     "Misol 1 (Model relizi):\n"
-    'Kiruvchi faktlar: {{"lead_en": "Mistral released Mistral-Large-2 with 123B '
-    'parameters.", "body_1_en": "The model features 128k context and 84% score on '
-    'MMLU.", "body_2_en": "Apache-2.0 licensing allows commercial use."}}\n'
+    'Kiruvchi faktlar: {{"headline_en": "Mistral-Large-2 ships with open weights", '
+    '"lead_en": "Mistral released Mistral-Large-2 with 123B parameters.", '
+    '"body_1_en": "The model features 128k context and 84% score on MMLU.", '
+    '"kicker_en": "A frontier model without an API contract."}}\n'
     "Chiquvchi JSON:\n"
     "{{\n"
+    '  "headline_uz": "Mistral-Large-2 ochiq kod bilan chiqdi",\n'
     '  "lead_uz": "Mistral jamoasi 123B parametrli yangi Mistral-Large-2 modelini '
     'ochiq taqdim etdi.",\n'
     '  "body_1_uz": "Model 128k kontekstga ega bo\'lib, MMLU testida 84% natija '
     "ko'rsatgan.\",\n"
-    '  "body_2_uz": "Apache-2.0 litsenziyasi uni tijorat loyihalarida ham ishlatishga '
-    'ruxsat beradi."\n'
+    '  "kicker_uz": "API shartnomasisiz kuchli model."\n'
     "}}\n\n"
     "Misol 2 (Dasturiy vosita / Keys):\n"
-    'Kiruvchi faktlar: {{"lead_en": "Asana replaced outdated testing system in 2 weeks '
-    'for $12K with OpenAI Codex.", "body_1_en": "The project finished in two weeks '
-    'instead of estimated 5 years and $6M.", "body_2_en": "Parallel coding agents did '
-    'the migration."}}\n'
+    'Kiruvchi faktlar: {{"headline_en": "Asana replaces legacy testing with Codex", '
+    '"lead_en": "Asana replaced outdated testing system in 2 weeks for $12K with OpenAI Codex.", '
+    '"body_1_en": "The project finished in two weeks instead of estimated 5 years and $6M.", '
+    '"kicker_en": "Coding agents migrate legacy systems in weeks."}}\n'
     "Chiquvchi JSON:\n"
     "{{\n"
+    '  "headline_uz": "Asana test tizimini Codex bilan yangiladi",\n'
     '  "lead_uz": "Asana jamoasi OpenAI Codex yordamida eskirgan sinov tizimini ikki '
     'haftada $12K ga almashtirdi.",\n'
     '  "body_1_uz": "Avval 5 yil va $6M deb taxmin qilingan ish ikki haftada '
     'yakunlandi.",\n'
-    '  "body_2_uz": "Ko\'chirishni yollangan jamoa emas, parallel kodlovchi agentlar '
-    'bajardi."\n'
+    '  "kicker_uz": "Eski tizimlar endi haftalarda ko\'chiriladi."\n'
     "}}\n\n"
     "## Lug'at va atamalar (Glossary):\n"
     "- 'US', 'U.S.', 'United States' -> 'AQSH'\n"
@@ -435,23 +391,45 @@ TRANSLATION_PROMPT = (
     "{fields}\n"
 )
 
-# Lightweight prompt for the fast triage pass (T1.17). Drops heavy taxonomy definitions
-# to make the 185-run triage pass fast and focused on noise rejection.
-TRIAGE_PROMPT_TEMPLATE = (
-    "You are a fast technical triage editor for an AI engineering news digest.\n\n"
-    "Classify the article below to filter out noise. Return JSON only conforming to the schema.\n\n"
-    "Rules:\n"
-    "- If the article contains no technical AI substance (e.g. general business, executive news, "
-    "marketing, consumer gadgets, non-AI), primary_topic MUST be 'irrelevant'.\n"
-    "- Score novelty, evidence, and production_readiness integers from 1 to 10.\n"
-    "- If it is AI technical news, choose the primary_topic and maturity that best describes it.\n"
-    "\n"
-    "ARTICLE\n"
-    "Title: {title}\n"
-    "Source: {source}\n"
-    "---\n"
-    "{text}\n"
-)
+#: Triage asks one question and returns one answer. It used to request the full
+#: CLASSIFICATION_SCHEMA — topic, maturity and three 1-10 scores — from an 8000-character
+#: article, and then decided on `primary_topic == irrelevant or all three scores < 3`.
+#:
+#: Measured 2026-08-25 on the 26-row gold set: that gate rejected 3 of 26 articles at
+#: recall 1.00, for ~2134 input tokens each. The scores it asked for cannot be derived from
+#: a headline and were never the deciding signal anyway; the topic was.
+TRIAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "relevant": {"type": "boolean"},
+        "reason": {"type": "string"},
+    },
+    "required": ["relevant", "reason"],
+}
+
+#: Title and source only. This is the whole cost saving: the article body is already
+#: downloaded and stored, but sending it to the model costs ~2000 input tokens per article
+#: on the highest-volume stage in the pipeline, several hundred times a day.
+TRIAGE_PROMPT_TEMPLATE = """You are the first filter for an AI-engineering news digest read
+by working engineers.
+
+From the headline alone, decide whether this could be AI or software engineering news worth
+a closer look. Return JSON only.
+
+Answer relevant=false ONLY when the headline is clearly none of it: an executive appointment,
+a funding round, a partnership, an award, a marketing or consumer-lifestyle piece, or a story
+with no technology in it at all.
+
+When the headline is vague, ambiguous, or you are unsure, answer relevant=true. This is a
+cheap first pass and a full classification runs next: letting one extra article through costs
+one call, while dropping a good one loses it for good.
+
+reason: at most 10 words, naming what decided it.
+
+Title: {title}
+Source: {source}
+"""
+
 
 # Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3 for deep classification
 CLASSIFICATION_PROMPT_TEMPLATE = (
@@ -514,42 +492,34 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
 )
 
 
-def _get_base_url() -> str:
-    return getattr(settings, "OLLAMA_BASE_URL", "").rstrip("/")
+#: The two speed tiers every provider offers. The gateway calls its deep tier "smart" and
+#: MiMo calls it "deep"; both map from this one name.
+#:
+#: Until 2026-08-25 the tier was carried as an Ollama model tag: passing "gemma4:latest"
+#: meant "fast", and every provider compared against OLLAMA_FAST_MODEL to work out which
+#: tier the caller wanted. That made the Ollama settings load-bearing for providers that
+#: never spoke to Ollama, which is why CLAUDE.md had to warn they must stay set even when
+#: nothing used them. The tier is now said out loud.
+TIER_FAST = "fast"
+TIER_DEEP = "deep"
 
 
-_model_digest_cache: dict[str, str] = {}
+class ChatResult(NamedTuple):
+    """One provider call, with what it cost.
 
+    A NamedTuple rather than a widening tuple: the return was unpacked positionally at
+    fourteen call sites, and adding token counts to that was a rename waiting to go wrong.
+    Named fields are also why `input_tokens` cannot be silently confused with `latency_ms`.
 
-def fetch_model_digest(model_name: str, client: httpx.Client | None = None) -> str:
-    """Fetch or resolve the 64-char model digest from Ollama tags.
-
-    Cached per process per model (T1.15): /api/tags is called once per model, not
-    once per classification. The cache lives for the process lifetime, which is correct
-    because a model digest only changes when the operator explicitly pulls a new version,
-    and the worker process would be restarted after that.
+    `input_tokens` / `output_tokens` are what the provider reported. None means it sent no
+    usage block — deliberately not 0, which would make the call look free.
     """
-    if model_name in _model_digest_cache:
-        return _model_digest_cache[model_name]
 
-    base_url = _get_base_url()
-    if not base_url:
-        return ""
-    try:
-        if client:
-            r = client.get(f"{base_url}/api/tags", timeout=10)
-        else:
-            with httpx.Client(timeout=10) as c:
-                r = c.get(f"{base_url}/api/tags")
-        if r.status_code == 200:
-            for m in r.json().get("models", []):
-                if m.get("name") == model_name or m.get("model") == model_name:
-                    digest = m.get("digest", "")
-                    _model_digest_cache[model_name] = digest
-                    return digest
-    except Exception as exc:
-        log.debug("Could not fetch digest for model %s: %s", model_name, exc)
-    return ""
+    payload: dict
+    latency_ms: int
+    model_tag: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 @retry(
@@ -566,53 +536,6 @@ def _chat_post(
         raise RetryableLLMError(f"{r.status_code} from {url}: {r.text[:200]}")
     r.raise_for_status()
     return r
-
-
-def ollama_chat(
-    model: str,
-    prompt: str,
-    schema: dict | None = None,
-    timeout: int = 60,
-    num_predict: int = 400,
-    client: httpx.Client | None = None,
-) -> tuple[dict, int]:
-    """Execute a structured chat completion against Ollama with mandatory num_predict and retries.
-
-    Returns (parsed_payload, latency_ms).
-    """
-    base_url = _get_base_url()
-    url = f"{base_url}/api/chat"
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
-        "options": {
-            "temperature": 0,
-            "num_predict": num_predict,
-        },
-    }
-    if schema:
-        payload["format"] = schema
-
-    close_client = False
-    if client is None:
-        client = httpx.Client(timeout=timeout)
-        close_client = True
-
-    t0 = time.perf_counter()
-    try:
-        r = _chat_post(client, url, payload)
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-        data = r.json()
-        content = data.get("message", {}).get("content", "")
-        if schema:
-            parsed = json.loads(content)
-        else:
-            parsed = {"raw": content}
-        return parsed, latency_ms
-    finally:
-        if close_client:
-            client.close()
 
 
 def _strip_code_fence(text: str) -> str:
@@ -647,8 +570,8 @@ def _openai_chat(
     timeout: int = 120,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
-) -> tuple[dict, int]:
-    """Chat completion against any OpenAI-compatible endpoint. Returns (payload, latency_ms).
+) -> ChatResult:
+    """Chat completion against any OpenAI-compatible endpoint.
 
     Uses `json_schema` strict mode, not `json_object`. Measured 2026-08-17 on the
     editorial schema:
@@ -705,7 +628,17 @@ def _openai_chat(
                 "model, max_tokens has to cover its reasoning as well as the answer."
             )
         parsed = json.loads(_strip_code_fence(content)) if schema else {"raw": content}
-        return parsed, latency_ms
+        # Verified live against the gateway on 2026-08-25: it returns prompt_tokens,
+        # completion_tokens and total_tokens. `.get` rather than `[...]` so a provider that
+        # omits the block records None instead of failing the call.
+        usage = r.json().get("usage") or {}
+        return ChatResult(
+            payload=parsed,
+            latency_ms=latency_ms,
+            model_tag=model,
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+        )
     finally:
         if close_client:
             client.close()
@@ -718,8 +651,8 @@ def mimo_chat(
     timeout: int = 120,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
-) -> tuple[dict, int]:
-    """OpenAI-compatible chat completion against MiMo. Returns (parsed_payload, latency_ms)."""
+) -> ChatResult:
+    """OpenAI-compatible chat completion against MiMo."""
     return _openai_chat(
         base_url=settings.MIMO_BASE_URL,
         api_key=settings.MIMO_API_KEY,
@@ -739,8 +672,8 @@ def gateway_chat(
     timeout: int | None = None,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
-) -> tuple[dict, int]:
-    """Chat completion against the internal LLM gateway. Returns (payload, latency_ms).
+) -> ChatResult:
+    """Chat completion against the internal LLM gateway.
 
     `model` must be a tier alias (`fast`/`smart`), never a real model name — the gateway
     answers 404 model_not_found for real names on purpose, because the alias is what lets
@@ -760,74 +693,100 @@ def gateway_chat(
     )
 
 
-def _gateway_alias(ollama_model: str | None) -> str:
-    """Map an Ollama tag onto a gateway tier alias.
+def _combine(first: ChatResult | None, retry: ChatResult) -> ChatResult:
+    """Fold a first attempt's cost into the retry that replaced it.
 
-    The fast/deep distinction already travels through this module as an Ollama tag, so the
-    gateway branch reads that rather than introducing a second way to say the same thing.
-    Anything that is not explicitly the fast model gets the smart tier.
+    A stage that retries makes two calls and must report both, or a validation failure
+    looks free in the token accounting and nobody notices the stage is retrying.
+    `first` is None when the first call raised before returning anything.
     """
-    if ollama_model and ollama_model == settings.OLLAMA_FAST_MODEL:
-        return settings.GATEWAY_FAST_MODEL
-    return settings.GATEWAY_SMART_MODEL
+    if first is None:
+        return retry
+
+    def add(a: int | None, b: int | None) -> int | None:
+        return None if a is None and b is None else (a or 0) + (b or 0)
+
+    return retry._replace(
+        latency_ms=first.latency_ms + retry.latency_ms,
+        input_tokens=add(first.input_tokens, retry.input_tokens),
+        output_tokens=add(first.output_tokens, retry.output_tokens),
+    )
 
 
-def _mimo_model_for(ollama_model: str | None) -> str:
-    """Pick the MiMo model matching the tier the caller asked for."""
-    if ollama_model and ollama_model == settings.OLLAMA_FAST_MODEL:
-        return settings.MIMO_FAST_MODEL
-    return settings.MIMO_DEEP_MODEL
+def _model_for(provider: str, tier: str) -> str:
+    """The model name `provider` uses for `tier`.
+
+    The gateway addresses models by tier alias only and answers 404 for a real model name,
+    which is the point: a tier can be repointed without any caller changing.
+    """
+    if provider == "gateway":
+        return settings.GATEWAY_FAST_MODEL if tier == TIER_FAST else settings.GATEWAY_SMART_MODEL
+    if provider == "mimo":
+        return settings.MIMO_FAST_MODEL if tier == TIER_FAST else settings.MIMO_DEEP_MODEL
+    raise RuntimeError(f"unknown LLM provider {provider!r}; expected 'gateway' or 'mimo'")
 
 
-def classifier_chat(
-    model: str,
+def _dispatch(
+    provider: str,
+    tier: str,
     prompt: str,
     schema: dict,
-    timeout: int,
     num_predict: int,
     client: httpx.Client | None = None,
-) -> tuple[dict, int, str]:
-    """Dispatch a triage or classification call. Returns (payload, latency_ms, model_tag).
+) -> ChatResult:
+    """One chat call to `provider` at `tier`.
 
-    `model` is always an Ollama tag: it is what the caller knows, and it also encodes the
-    fast/deep tier the other providers need. The returned tag is the one that actually ran,
-    so provenance stays truthful when the call did not go to Ollama.
-
-    CLASSIFIER_PROVIDER covers both stages together because they share a backend; there is
-    no measurement saying triage and classification want different providers.
+    `model_tag` is what actually served the call. On the gateway that is the alias, not the
+    model behind it — the gateway echoes the alias back and does not say which model it
+    resolves to, so the database can record the tier and no more. `Analysis.model_digest` is
+    empty for the same reason: only Ollama exposed /api/tags, and the direct Ollama path was
+    removed on 2026-08-25.
     """
-    provider = settings.CLASSIFIER_PROVIDER
+    model = _model_for(provider, tier)
     if provider == "gateway":
-        alias = _gateway_alias(model)
-        payload, ms = gateway_chat(
-            model=alias,
+        return gateway_chat(
+            model=model,
             prompt=prompt,
             schema=schema,
             max_tokens=num_predict,
             client=client,
         )
-        return payload, ms, alias
-    if provider == "mimo":
-        mimo_model = _mimo_model_for(model)
-        payload, ms = mimo_chat(
-            model=mimo_model,
-            prompt=prompt,
-            schema=schema,
-            timeout=settings.MIMO_TIMEOUT,
-            max_tokens=num_predict,
-            client=client,
-        )
-        return payload, ms, mimo_model
 
-    payload, ms = ollama_chat(
+    if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
+        raise RuntimeError("provider is mimo but MIMO_API_KEY/MIMO_BASE_URL are unset")
+    return mimo_chat(
         model=model,
         prompt=prompt,
         schema=schema,
-        timeout=timeout,
+        timeout=settings.MIMO_TIMEOUT,
+        max_tokens=num_predict,
+        client=client,
+    )
+
+
+def classifier_chat(
+    tier: str,
+    prompt: str,
+    schema: dict,
+    num_predict: int,
+    client: httpx.Client | None = None,
+) -> ChatResult:
+    """Dispatch a triage or classification call.
+
+    CLASSIFIER_PROVIDER covers both stages together because they share a backend; there is
+    no measurement saying triage and classification want different providers. It stays a
+    separate setting from LLM_PROVIDER on purpose: these two stages make several hundred
+    calls a day, and inheriting would move that volume the moment the editorial provider
+    changed.
+    """
+    return _dispatch(
+        provider=settings.CLASSIFIER_PROVIDER,
+        tier=tier,
+        prompt=prompt,
+        schema=schema,
         num_predict=num_predict,
         client=client,
     )
-    return payload, ms, model
 
 
 def editorial_chat(
@@ -836,55 +795,26 @@ def editorial_chat(
     num_predict: int,
     client: httpx.Client | None = None,
     provider: str | None = None,
-    ollama_model: str | None = None,
-) -> tuple[dict, int, str]:
-    """Dispatch an editorial call to a provider.
+    tier: str = TIER_DEEP,
+) -> ChatResult:
+    """Dispatch an editorial call.
 
-    Returns (payload, latency_ms, model_tag). The two editorial stages are routed
-    independently — see EDITORIAL_EN_PROVIDER and TRANSLATION_PROVIDER. Triage and
-    classification have their own switch, CLASSIFIER_PROVIDER, via classifier_chat.
+    The two editorial stages are routed independently — see EDITORIAL_EN_PROVIDER and
+    TRANSLATION_PROVIDER. Triage and classification have their own switch via
+    classifier_chat.
 
-    `ollama_model` matters: translation belongs on the fast model. gemma4:latest lost
-    0/7 numbers in measurement, while gemma4:31b is the model that garbled Uzbek in the
-    first digest. Defaulting the whole Ollama branch to the deep model would have sent
-    translation to the wrong one.
+    `tier` matters: translation belongs on the fast tier. Measured 2026-08-17, the fast
+    model lost 0/7 numbers while the deep one garbled Uzbek in the first digest. Defaulting
+    every editorial call to the deep tier would send translation to the wrong one.
     """
-    if provider is None:
-        provider = settings.LLM_PROVIDER
-    if provider == "gateway":
-        alias = _gateway_alias(ollama_model)
-        payload, ms = gateway_chat(
-            model=alias,
-            prompt=prompt,
-            schema=schema,
-            max_tokens=num_predict,
-            client=client,
-        )
-        return payload, ms, alias
-    if provider == "mimo":
-        if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
-            raise RuntimeError("LLM_PROVIDER=mimo but MIMO_API_KEY/MIMO_BASE_URL are unset")
-        model = settings.MIMO_EDITORIAL_MODEL
-        payload, ms = mimo_chat(
-            model=model,
-            prompt=prompt,
-            schema=schema,
-            timeout=settings.MIMO_TIMEOUT,
-            max_tokens=num_predict,
-            client=client,
-        )
-        return payload, ms, model
-
-    model = ollama_model or settings.OLLAMA_DEEP_MODEL
-    payload, ms = ollama_chat(
-        model=model,
+    return _dispatch(
+        provider=provider or settings.LLM_PROVIDER,
+        tier=tier,
         prompt=prompt,
         schema=schema,
-        timeout=settings.OLLAMA_DEEP_TIMEOUT,
         num_predict=num_predict,
         client=client,
     )
-    return payload, ms, model
 
 
 # --- Source-based maturity ceiling -------------------------------------------
@@ -1033,17 +963,16 @@ def classify_text(
     title: str,
     source_name: str,
     text: str,
-    model: str,
-    timeout: int,
+    tier: str,
     num_predict: int = 400,
     client: httpx.Client | None = None,
     prompt_template: str = CLASSIFICATION_PROMPT_TEMPLATE,
-) -> tuple[Classification, dict, int, str, str]:
+) -> tuple[Classification, ChatResult]:
     """Classify article text with Pydantic validation and 1-attempt recovery.
 
-    Returns (classification_obj, raw_payload, latency_ms, digest, model_tag). `model_tag`
-    is what actually served the call, which is not `model` unless CLASSIFIER_PROVIDER is
-    ollama; the caller records it, so provenance must not assume the requested tag.
+    The recovery attempt's latency and tokens are folded into the returned result, so the
+    stored Analysis records what the article actually cost rather than what the last call
+    cost. A retry billed as one call is a retry nobody notices.
     """
     truncated_text = text[:8000]
     prompt = prompt_template.format(
@@ -1052,23 +981,16 @@ def classify_text(
         text=truncated_text,
     )
 
-    # Only Ollama exposes /api/tags, and only an Ollama tag can be repointed silently, so
-    # the drift-detection digest is meaningless for the other providers.
-    on_ollama = settings.CLASSIFIER_PROVIDER == "ollama"
-    digest = fetch_model_digest(model, client=client) if on_ollama else ""
-    latency_ms = 0
-
+    first: ChatResult | None = None
     try:
-        raw_payload, latency_ms, model_tag = classifier_chat(
-            model=model,
+        first = classifier_chat(
+            tier=tier,
             prompt=prompt,
             schema=CLASSIFICATION_SCHEMA,
-            timeout=timeout,
             num_predict=num_predict,
             client=client,
         )
-        classification = Classification.model_validate(raw_payload)
-        return classification, raw_payload, latency_ms, digest, model_tag
+        return Classification.model_validate(first.payload), first
     except (ValidationError, json.JSONDecodeError) as exc:
         log.warning(
             "Validation error on first attempt for '%s': %s. Retrying once with error.",
@@ -1080,16 +1002,47 @@ def classify_text(
             f"IMPORTANT: Your previous output failed schema validation with error:\n{exc}\n"
             "Please fix the error and return valid JSON conforming strictly to the schema."
         )
-        raw_payload, latency_retry_ms, model_tag = classifier_chat(
-            model=model,
+        retry = classifier_chat(
+            tier=tier,
             prompt=recovery_prompt,
             schema=CLASSIFICATION_SCHEMA,
-            timeout=timeout,
             num_predict=max(num_predict, 1500),
             client=client,
         )
-        classification = Classification.model_validate(raw_payload)
-        return classification, raw_payload, latency_ms + latency_retry_ms, digest, model_tag
+        return Classification.model_validate(retry.payload), _combine(first, retry)
+
+
+def triage_text(
+    title: str,
+    source_name: str,
+    client: httpx.Client | None = None,
+) -> tuple[bool, ChatResult]:
+    """Decide from the headline whether an article is worth classifying.
+
+    Pure with respect to the database so `eval_classifier --stage triage` and
+    `eval_triage_replay` measure the same gate the pipeline runs.
+
+    Recall-first by design: a false positive costs one classification call, a false negative
+    loses the article. The prompt says so explicitly, and the measurement to watch is recall,
+    not precision.
+
+    The article body is deliberately not passed. It is already downloaded and stored, but
+    sending it costs ~2000 input tokens on the pipeline's highest-volume stage.
+    """
+    prompt = TRIAGE_PROMPT_TEMPLATE.format(title=title, source=source_name)
+    # 1000, not the ~40 tokens this answer needs. Measured 2026-08-25: at 200 the gateway's
+    # `fast` alias returned finish_reason "length" with empty content on all 26 gold-set
+    # rows — it charges its own reasoning to max_tokens before writing any answer, exactly
+    # as the `smart` alias does. The budget is a cap, not a cost: the model stops when it is
+    # done, so the saving here comes from the input side and this stays generous.
+    result = classifier_chat(
+        tier=TIER_FAST,
+        prompt=prompt,
+        schema=TRIAGE_SCHEMA,
+        num_predict=1000,
+        client=client,
+    )
+    return bool(result.payload.get("relevant")), result
 
 
 def triage_article_logic(article: Article, client: httpx.Client | None = None) -> bool:
@@ -1101,19 +1054,11 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
         article.save(update_fields=["status"])
         return False
 
-    model = getattr(settings, "OLLAMA_FAST_MODEL", "gemma4:latest")
-    timeout = getattr(settings, "OLLAMA_FAST_TIMEOUT", 60)
-
     try:
-        classification, raw_payload, latency_ms, digest, model_tag = classify_text(
+        passed, result = triage_text(
             title=article.title,
             source_name=article.source.name if article.source else "",
-            text=article.extracted_text,
-            model=model,
-            timeout=timeout,
-            num_predict=1000,
             client=client,
-            prompt_template=TRIAGE_PROMPT_TEMPLATE,
         )
     except (ValidationError, json.JSONDecodeError) as exc:
         # Permanent model schema failure on this article after retry
@@ -1146,49 +1091,24 @@ def triage_article_logic(article: Article, client: httpx.Client | None = None) -
         )
         return False
 
-    # The source decides what a paper is; the model is not asked to re-derive it.
-    raw_payload = apply_maturity_ceiling(article, raw_payload)
-    classification = Classification.model_validate(raw_payload)
+    # No maturity ceiling here: the triage payload carries no maturity to cap. Paper
+    # domains are already excluded before any LLM call by check_rule_prefilter, and the
+    # ceiling still applies to the classification payload.
+    _record_analysis(article, Analysis.Stage.TRIAGE, result)
 
-    Analysis.objects.create(
-        article=article,
-        stage=Analysis.Stage.TRIAGE,
-        model_tag=model_tag,
-        model_digest=digest,
-        payload=raw_payload,
-        latency_ms=latency_ms,
-    )
-
-    # Triage decision: drop only clear irrelevant or all-low scores.
-    # Do NOT reject on maturity here — 8B is unreliable for maturity
-    # (M0.1: AVA-Encoder arXiv paper got production_deployment).
-    # Maturity exclusion happens in ranking.select_digest_candidates()
-    # after the 31B classification pass.
-    if classification.primary_topic == Topic.IRRELEVANT or (
-        classification.novelty < 3
-        and classification.evidence < 3
-        and classification.production_readiness < 3
-    ):
-        article.status = Article.Status.SKIPPED
-    else:
-        article.status = Article.Status.TRIAGED
-
+    article.status = Article.Status.TRIAGED if passed else Article.Status.SKIPPED
     article.save(update_fields=["status"])
     return article.status == Article.Status.TRIAGED
 
 
 def classify_article_logic(article: Article, client: httpx.Client | None = None) -> bool:
-    """Classification logic using the deep model. Sets article status to CLASSIFIED or SKIPPED."""
-    model = getattr(settings, "OLLAMA_DEEP_MODEL", "gemma4:31b")
-    timeout = getattr(settings, "OLLAMA_DEEP_TIMEOUT", 300)
-
+    """Classification logic on the deep tier. Sets article status to CLASSIFIED or SKIPPED."""
     try:
-        classification, raw_payload, latency_ms, digest, model_tag = classify_text(
+        classification, result = classify_text(
             title=article.title,
             source_name=article.source.name if article.source else "",
             text=article.extracted_text,
-            model=model,
-            timeout=timeout,
+            tier=TIER_DEEP,
             num_predict=2000,
             client=client,
         )
@@ -1225,17 +1145,11 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
         )
         return False
 
-    raw_payload = apply_maturity_ceiling(article, raw_payload)
-    classification = Classification.model_validate(raw_payload)
+    # The source decides what a paper is; the model is not asked to re-derive it.
+    capped = apply_maturity_ceiling(article, result.payload)
+    classification = Classification.model_validate(capped)
 
-    Analysis.objects.create(
-        article=article,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag=model_tag,
-        model_digest=digest,
-        payload=raw_payload,
-        latency_ms=latency_ms,
-    )
+    _record_analysis(article, Analysis.Stage.CLASSIFICATION, result._replace(payload=capped))
 
     if (
         classification.primary_topic == Topic.IRRELEVANT
@@ -1284,7 +1198,7 @@ def analyse_for_digest_logic(
             en_by_article[art.id] = existing
             continue
         try:
-            payload, latency_ms, model_tag = _editorial_call(
+            result = _editorial_call(
                 prompt=EDITORIAL_EN_PROMPT.format(
                     title=art.title,
                     source=art.source.name if art.source else "",
@@ -1296,14 +1210,7 @@ def analyse_for_digest_logic(
                 client=client,
                 provider=settings.EDITORIAL_EN_PROVIDER,
             )
-            en_by_article[art.id] = _record(
-                art,
-                Analysis.Stage.EDITORIAL_EN,
-                model_tag,
-                payload,
-                latency_ms,
-                settings.EDITORIAL_EN_PROVIDER,
-            )
+            en_by_article[art.id] = _record_analysis(art, Analysis.Stage.EDITORIAL_EN, result)
             log.info("English editorial done for article %s", art.id)
         except Exception as exc:
             log.error("English editorial failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1326,14 +1233,13 @@ def analyse_for_digest_logic(
                 for k in COMMON_TRANSLATED_FIELDS
                 if isinstance(en.payload.get(k), str) and en.payload[k].strip()
             }
-            fields.update(archetype_fields(en.payload))
             fields.update(technical_fields(en.payload))
             uz_schema = translation_schema_for(fields)
             uz_model = create_model(
                 "TranslationDynamic",
                 **{k: (str, ...) for k in uz_schema["properties"]},
             )
-            payload, latency_ms, model_tag = _editorial_call(
+            result = _editorial_call(
                 prompt=TRANSLATION_PROMPT.format(
                     fields=json.dumps(fields, ensure_ascii=False, indent=2)
                 ),
@@ -1342,13 +1248,13 @@ def analyse_for_digest_logic(
                 num_predict=settings.TRANSLATION_NUM_PREDICT,
                 client=client,
                 provider=settings.TRANSLATION_PROVIDER,
-                ollama_model=settings.OLLAMA_FAST_MODEL,
+                tier=TIER_FAST,
             )
 
-            payload = _normalize_uz_payload(payload)
+            result = result._replace(payload=_normalize_uz_payload(result.payload))
 
             # Translation quality gates (T1.16)
-            violations = translation_gates.validate_translation(fields, payload)
+            violations = translation_gates.validate_translation(fields, result.payload)
             if violations:
                 log.warning(
                     "Translation gates failed for article %s: %s. Retrying once.",
@@ -1363,17 +1269,17 @@ def analyse_for_digest_logic(
                     + "\nPlease fix these specific errors and return valid JSON."
                 )
                 try:
-                    retry_payload, retry_ms, retry_model = editorial_chat(
+                    retry = editorial_chat(
                         prompt=retry_prompt,
                         schema=uz_schema,
                         num_predict=settings.TRANSLATION_NUM_PREDICT,
                         client=client,
                         provider=settings.TRANSLATION_PROVIDER,
-                        ollama_model=settings.OLLAMA_FAST_MODEL,
+                        tier=TIER_FAST,
                     )
-                    retry_payload = _normalize_uz_payload(retry_payload)
-                    uz_model.model_validate(retry_payload)
-                    retry_violations = translation_gates.validate_translation(fields, retry_payload)
+                    retry = retry._replace(payload=_normalize_uz_payload(retry.payload))
+                    uz_model.model_validate(retry.payload)
+                    retry_violations = translation_gates.validate_translation(fields, retry.payload)
                     if retry_violations:
                         log.error(
                             "Translation gates failed permanently for article %s: %s.",
@@ -1381,9 +1287,7 @@ def analyse_for_digest_logic(
                             retry_violations,
                         )
                         continue
-                    payload = retry_payload
-                    latency_ms += retry_ms
-                    model_tag = retry_model
+                    result = _combine(result, retry)
                 except Exception as exc:
                     log.error(
                         "Translation gate recovery failed for article %s: %s.",
@@ -1392,16 +1296,7 @@ def analyse_for_digest_logic(
                     )
                     continue
 
-            created.append(
-                _record(
-                    art,
-                    Analysis.Stage.EDITORIAL_UZ,
-                    model_tag,
-                    payload,
-                    latency_ms,
-                    settings.TRANSLATION_PROVIDER,
-                )
-            )
+            created.append(_record_analysis(art, Analysis.Stage.EDITORIAL_UZ, result))
             log.info("Uzbek translation done for article %s", art.id)
         except Exception as exc:
             log.error("Translation failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1409,20 +1304,17 @@ def analyse_for_digest_logic(
     return created
 
 
-def _record(
-    article, stage, model_tag: str, payload: dict, latency_ms: int, provider: str
-) -> Analysis:
+def _record_analysis(article, stage, result: ChatResult) -> Analysis:
+    """Store one call. Every Analysis row goes through here so none forgets its cost."""
     return Analysis.objects.create(
         article=article,
         stage=stage,
-        model_tag=model_tag,
-        # MiMo exposes no digest; only Ollama tags can be repointed silently. The provider
-        # is per stage, so the global LLM_PROVIDER cannot answer this: with
-        # LLM_PROVIDER=mimo it blanked the digest on translation rows, which are produced
-        # by Ollama and are exactly the ones a repointed tag would corrupt unnoticed.
-        model_digest=fetch_model_digest(model_tag) if provider != "mimo" else "",
-        payload=payload,
-        latency_ms=latency_ms,
+        model_tag=result.model_tag,
+        model_digest="",
+        payload=result.payload,
+        latency_ms=result.latency_ms,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
     )
 
 
@@ -1433,43 +1325,43 @@ def _editorial_call(
     num_predict: int,
     client=None,
     provider: str | None = None,
-    ollama_model: str | None = None,
-):
-    """One editorial call with validation retry and empty technical block check (T1.17)."""
+    tier: str = TIER_DEEP,
+) -> ChatResult:
+    """One editorial call with validation retry and empty technical block check (T1.17).
+
+    Every attempt's cost is folded into the returned result, so a stage that retried twice
+    is not recorded as having cost one call.
+    """
+    first: ChatResult | None = None
     try:
-        payload, ms, model_tag = editorial_chat(
-            prompt, schema, num_predict, client, provider, ollama_model
-        )
-        model_cls.model_validate(payload)
+        first = editorial_chat(prompt, schema, num_predict, client, provider, tier)
+        model_cls.model_validate(first.payload)
+        result = first
     except (ValidationError, json.JSONDecodeError) as exc:
         log.warning("Editorial validation failed, retrying once: %s", exc)
         recovery = (
             f"{prompt}\n\nIMPORTANT: your previous output failed validation:\n{exc}\n"
             "Return valid JSON conforming strictly to the schema."
         )
-        payload, ms, model_tag = editorial_chat(
-            recovery, schema, max(num_predict, 2000), client, provider, ollama_model
-        )
-        model_cls.model_validate(payload)
+        retry = editorial_chat(recovery, schema, max(num_predict, 2000), client, provider, tier)
+        model_cls.model_validate(retry.payload)
+        result = _combine(first, retry)
 
     # Post-check for empty lead_en in English editorial
-    lead_en = payload.get("lead_en", "").strip()
-    if model_cls is EditorialEn and not lead_en:
+    if model_cls is EditorialEn and not result.payload.get("lead_en", "").strip():
         log.warning("Empty lead_en in English editorial, retrying once.")
         recovery = (
             f"{prompt}\n\nIMPORTANT: The 'lead_en' field was empty. "
             "You must provide a non-empty 1-sentence lead with action verb link anchor."
         )
         try:
-            retry_payload, retry_ms, retry_model = editorial_chat(
-                recovery, schema, max(num_predict, 2000), client, provider, ollama_model
-            )
-            model_cls.model_validate(retry_payload)
-            if retry_payload.get("lead_en", "").strip():
-                payload = retry_payload
-                ms += retry_ms
-                model_tag = retry_model
+            retry = editorial_chat(recovery, schema, max(num_predict, 2000), client, provider, tier)
+            model_cls.model_validate(retry.payload)
+            if retry.payload.get("lead_en", "").strip():
+                result = _combine(result, retry)
         except Exception as exc:
+            # The failed attempt still cost tokens, but the provider raised before
+            # reporting them, so there is nothing to add.
             log.debug("lead_en recovery attempt failed: %s", exc)
 
-    return payload, ms, model_tag
+    return result

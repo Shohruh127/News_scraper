@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 import respx
-from django.conf import settings
 
 from apps.digest import llm, tasks
 from apps.digest.models import Analysis, Article, Maturity, Source, Topic
@@ -32,8 +31,29 @@ def sample_article(db, source):
     )
 
 
+GW = "http://gw.test/v1"
+
+
+@pytest.fixture(autouse=True)
+def _gateway(settings):
+    """Every stage runs on the gateway. The direct Ollama path was removed 2026-08-25."""
+    settings.GATEWAY_BASE_URL = GW
+    settings.GATEWAY_TOKEN = "sk-test"
+    settings.GATEWAY_FAST_MODEL = "fast"
+    settings.GATEWAY_SMART_MODEL = "smart"
+    settings.CLASSIFIER_PROVIDER = "gateway"
+    settings.LLM_PROVIDER = "gateway"
+    settings.EDITORIAL_EN_PROVIDER = "gateway"
+    settings.TRANSLATION_PROVIDER = "gateway"
+    return settings
+
+
+def _gw_reply(payload):
+    return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(payload)}}]})
+
+
 @respx.mock
-def test_ollama_chat_success():
+def test_gateway_chat_success():
     mock_payload = {
         "primary_topic": "frontier_models",
         "maturity": "live_product",
@@ -42,28 +62,23 @@ def test_ollama_chat_success():
         "production_readiness": 9,
         "reason": "New model release with public API access.",
     }
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
-        return_value=httpx.Response(
-            200,
-            json={"message": {"content": json.dumps(mock_payload)}},
-        )
-    )
+    respx.post(f"{GW}/chat/completions").mock(return_value=_gw_reply(mock_payload))
 
-    parsed, latency = llm.ollama_chat(
-        model="gemma4:latest",
+    result = llm.gateway_chat(
+        model="fast",
         prompt="Classify this",
         schema=llm.CLASSIFICATION_SCHEMA,
-        num_predict=400,
+        max_tokens=400,
     )
 
-    assert parsed["primary_topic"] == "frontier_models"
-    assert parsed["maturity"] == "live_product"
-    assert parsed["novelty"] == 9
-    assert latency >= 0
+    assert result.payload["primary_topic"] == "frontier_models"
+    assert result.payload["maturity"] == "live_product"
+    assert result.payload["novelty"] == 9
+    assert result.latency_ms >= 0
 
 
 @respx.mock
-def test_ollama_chat_retries_on_503():
+def test_gateway_chat_retries_on_503():
     mock_payload = {
         "primary_topic": "frontier_models",
         "maturity": "live_product",
@@ -72,20 +87,20 @@ def test_ollama_chat_retries_on_503():
         "production_readiness": 8,
         "reason": "Retried successfully.",
     }
-    route = respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat")
+    route = respx.post(f"{GW}/chat/completions")
     route.side_effect = [
         httpx.Response(503, text="server busy"),
-        httpx.Response(200, json={"message": {"content": json.dumps(mock_payload)}}),
+        _gw_reply(mock_payload),
     ]
 
-    parsed, latency = llm.ollama_chat(
-        model="gemma4:latest",
+    result = llm.gateway_chat(
+        model="fast",
         prompt="Classify this",
         schema=llm.CLASSIFICATION_SCHEMA,
-        num_predict=400,
+        max_tokens=400,
     )
 
-    assert parsed["primary_topic"] == "frontier_models"
+    assert result.payload["primary_topic"] == "frontier_models"
     assert route.call_count == 2
 
 
@@ -127,49 +142,37 @@ def test_classify_text_recovery_on_validation_error():
         "production_readiness": 8,
         "reason": "Recovered valid schema.",
     }
-    route = respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat")
+    route = respx.post(f"{GW}/chat/completions")
     route.side_effect = [
-        httpx.Response(200, json={"message": {"content": json.dumps(invalid_payload)}}),
-        httpx.Response(200, json={"message": {"content": json.dumps(valid_payload)}}),
+        httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(invalid_payload)}}]}
+        ),
+        httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(valid_payload)}}]}
+        ),
     ]
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(
-            200,
-            json={"models": [{"name": "gemma4:latest", "digest": "c6eb396d"}]},
-        )
-    )
 
-    classification, raw, latency, digest, model_tag = llm.classify_text(
+    classification, result = llm.classify_text(
         title="Test Article",
         source_name="test_source",
         text="Valid article text " * 30,
-        model="gemma4:latest",
-        timeout=60,
+        tier=llm.TIER_DEEP,
     )
 
     assert classification.primary_topic == Topic.FRONTIER_MODELS
     assert classification.maturity == Maturity.LIVE_PRODUCT
     assert route.call_count == 2
-    assert digest == "c6eb396d"
+    # Both attempts are billed to the article: a retry counted as one call is invisible.
+    assert result.latency_ms >= 0
+    assert result.payload["reason"] == "Recovered valid schema."
 
 
 @respx.mock
 def test_triage_article_logic_keep(db, sample_article):
-    mock_payload = {
-        "primary_topic": "frontier_models",
-        "maturity": "live_product",
-        "novelty": 9,
-        "evidence": 8,
-        "production_readiness": 8,
-        "reason": "Keep in triage",
-    }
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
-        return_value=httpx.Response(200, json={"message": {"content": json.dumps(mock_payload)}})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+    mock_payload = {"relevant": True, "reason": "Named model release"}
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(
-            200,
-            json={"models": [{"name": "gemma4:latest", "digest": "c6eb396d"}]},
+            200, json={"choices": [{"message": {"content": json.dumps(mock_payload)}}]}
         )
     )
 
@@ -191,13 +194,9 @@ def test_triage_article_logic_irrelevant_skipped(db, sample_article):
         "production_readiness": 1,
         "reason": "Executive hiring announcement.",
     }
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
-        return_value=httpx.Response(200, json={"message": {"content": json.dumps(mock_payload)}})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(
-            200,
-            json={"models": [{"name": "gemma4:latest", "digest": "c6eb396d"}]},
+            200, json={"choices": [{"message": {"content": json.dumps(mock_payload)}}]}
         )
     )
 
@@ -210,23 +209,15 @@ def test_triage_article_logic_irrelevant_skipped(db, sample_article):
 
 @respx.mock
 def test_triage_passes_paper_only_to_classify(db, sample_article):
-    """paper_only maturity must NOT be rejected at triage — 8B is unreliable for maturity.
-    Maturity exclusion happens in ranking after the 31B pass."""
-    mock_payload = {
-        "primary_topic": "new_approaches",
-        "maturity": "paper_only",
-        "novelty": 8,
-        "evidence": 7,
-        "production_readiness": 2,
-        "reason": "Research paper with code promised.",
-    }
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
-        return_value=httpx.Response(200, json={"message": {"content": json.dumps(mock_payload)}})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+    """Triage never rejects on maturity: since 2026-08-25 it does not decide maturity at all.
+
+    It sees the headline and answers one question. Maturity exclusion happens in ranking,
+    after the deep-tier classification pass.
+    """
+    mock_payload = {"relevant": True, "reason": "Research method, worth classifying"}
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(
-            200,
-            json={"models": [{"name": "gemma4:latest", "digest": "c6eb396d"}]},
+            200, json={"choices": [{"message": {"content": json.dumps(mock_payload)}}]}
         )
     )
 
@@ -247,13 +238,9 @@ def test_classify_article_logic(db, sample_article):
         "production_readiness": 8,
         "reason": "Agent framework release.",
     }
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
-        return_value=httpx.Response(200, json={"message": {"content": json.dumps(mock_payload)}})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(
-            200,
-            json={"models": [{"name": "gemma4:31b", "digest": "6316f062"}]},
+            200, json={"choices": [{"message": {"content": json.dumps(mock_payload)}}]}
         )
     )
 
@@ -270,11 +257,8 @@ def test_classify_article_logic(db, sample_article):
 @respx.mock
 def test_triage_infra_failure_leaves_status_fetched(db, sample_article):
     """When Ollama returns 503/timeout, article must remain in FETCHED status for next retry."""
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(503, json={"error": "server busy"})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": []})
     )
 
     passed = llm.triage_article_logic(sample_article)
@@ -291,11 +275,8 @@ def test_classify_infra_failure_leaves_status_triaged(db, sample_article):
     sample_article.status = Article.Status.TRIAGED
     sample_article.save(update_fields=["status"])
 
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(503, json={"error": "server busy"})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": []})
     )
 
     passed = llm.classify_article_logic(sample_article)
@@ -308,11 +289,10 @@ def test_classify_infra_failure_leaves_status_triaged(db, sample_article):
 @respx.mock
 def test_triage_validation_failure_marks_skipped(db, sample_article):
     """When model output permanently fails schema validation after retry, mark SKIPPED."""
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
-        return_value=httpx.Response(200, json={"message": {"content": "not json content"}})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": []})
+    respx.post(f"{GW}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": "not json content"}}]}
+        )
     )
 
     passed = llm.triage_article_logic(sample_article)
@@ -345,7 +325,10 @@ def test_triage_and_classify_batch(db, source, monkeypatch):
         status=Article.Status.FETCHED,
     )
 
-    keep_payload = {
+    # Triage answers a binary gate; classification still returns the full schema.
+    keep_payload = {"relevant": True, "reason": "Named model release"}
+    drop_payload = {"relevant": False, "reason": "Executive appointment"}
+    classified_payload = {
         "primary_topic": "frontier_models",
         "maturity": "live_product",
         "novelty": 9,
@@ -353,24 +336,16 @@ def test_triage_and_classify_batch(db, source, monkeypatch):
         "production_readiness": 9,
         "reason": "Good",
     }
-    drop_payload = {
-        "primary_topic": "irrelevant",
-        "maturity": "announcement_only",
-        "novelty": 1,
-        "evidence": 1,
-        "production_readiness": 1,
-        "reason": "Bad",
-    }
 
-    route = respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat")
+    route = respx.post(f"{GW}/chat/completions")
     route.side_effect = [
-        httpx.Response(200, json={"message": {"content": json.dumps(keep_payload)}}),
-        httpx.Response(200, json={"message": {"content": json.dumps(drop_payload)}}),
-        httpx.Response(200, json={"message": {"content": json.dumps(keep_payload)}}),
+        # Two triage calls (art1 keeps, art2 drops), then one classification for art1.
+        httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(keep_payload)}}]}),
+        httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(drop_payload)}}]}),
+        httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(classified_payload)}}]}
+        ),
     ]
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": []})
-    )
 
     result = tasks.triage_and_classify()
 
@@ -417,46 +392,51 @@ def test_eval_classifier_command(tmp_path):
         for r in rows:
             f.write(json.dumps(r) + "\n")
 
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+    respx.post(f"{GW}/chat/completions").mock(
         side_effect=[
             httpx.Response(
                 200,
                 json={
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "primary_topic": "frontier_models",
-                                "maturity": "live_product",
-                                "novelty": 9,
-                                "evidence": 9,
-                                "production_readiness": 9,
-                                "reason": "Top frontier model",
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "primary_topic": "frontier_models",
+                                        "maturity": "live_product",
+                                        "novelty": 9,
+                                        "evidence": 9,
+                                        "production_readiness": 9,
+                                        "reason": "Top frontier model",
+                                    }
+                                )
                             }
-                        )
-                    }
+                        }
+                    ]
                 },
             ),
             httpx.Response(
                 200,
                 json={
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "primary_topic": "irrelevant",
-                                "maturity": "announcement_only",
-                                "novelty": 1,
-                                "evidence": 1,
-                                "production_readiness": 1,
-                                "reason": "Donation",
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "primary_topic": "irrelevant",
+                                        "maturity": "announcement_only",
+                                        "novelty": 1,
+                                        "evidence": 1,
+                                        "production_readiness": 1,
+                                        "reason": "Donation",
+                                    }
+                                )
                             }
-                        )
-                    }
+                        }
+                    ]
                 },
             ),
         ]
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": []})
     )
 
     out = StringIO()
@@ -492,11 +472,8 @@ def test_eval_classifier_aborts_on_errors(tmp_path):
             f.write(json.dumps(r) + "\n")
 
     # Simulate 503 from Ollama (all retries exhausted)
-    respx.post(f"{settings.OLLAMA_BASE_URL}/api/chat").mock(
+    respx.post(f"{GW}/chat/completions").mock(
         return_value=httpx.Response(503, json={"error": "server busy"})
-    )
-    respx.get(f"{settings.OLLAMA_BASE_URL}/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": []})
     )
 
     out = StringIO()
@@ -508,3 +485,89 @@ def test_eval_classifier_aborts_on_errors(tmp_path):
     output = out.getvalue()
     assert "EVALUATION ABORTED" in output
     assert "Precision" not in output
+
+
+def test_chat_result_carries_reported_tokens():
+    """The provider reports usage; we store it rather than estimating from characters."""
+    import respx as _respx
+
+    with _respx.mock:
+        _respx.post(f"{GW}/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": '{"ok": true}'}}],
+                    "usage": {"prompt_tokens": 197, "completion_tokens": 20},
+                },
+            )
+        )
+        result = llm.gateway_chat(
+            model="fast", prompt="hi", schema={"type": "object"}, max_tokens=100
+        )
+
+    assert result.input_tokens == 197
+    assert result.output_tokens == 20
+
+
+def test_a_provider_that_reports_no_usage_records_none_not_zero():
+    """None means unmeasured. Zero would make the call look free and understate every total."""
+    import respx as _respx
+
+    with _respx.mock:
+        _respx.post(f"{GW}/chat/completions").mock(
+            return_value=httpx.Response(
+                200, json={"choices": [{"message": {"content": '{"ok": true}'}}]}
+            )
+        )
+        result = llm.gateway_chat(
+            model="fast", prompt="hi", schema={"type": "object"}, max_tokens=100
+        )
+
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+
+
+def test_combine_bills_both_attempts_to_the_article():
+    """A stage that retried made two calls. Recording only the last one hides the retry."""
+    first = llm.ChatResult(
+        {"a": 1}, latency_ms=100, model_tag="fast", input_tokens=10, output_tokens=2
+    )
+    retry = llm.ChatResult(
+        {"a": 2}, latency_ms=250, model_tag="fast", input_tokens=30, output_tokens=5
+    )
+
+    combined = llm._combine(first, retry)
+
+    assert combined.payload == {"a": 2}, "the retry's answer wins"
+    assert combined.latency_ms == 350
+    assert combined.input_tokens == 40
+    assert combined.output_tokens == 7
+
+
+def test_combine_survives_a_first_call_that_never_returned():
+    """The first attempt can raise before reporting anything; there is then nothing to add."""
+    retry = llm.ChatResult(
+        {"a": 2}, latency_ms=250, model_tag="fast", input_tokens=30, output_tokens=5
+    )
+    assert llm._combine(None, retry) == retry
+
+
+@respx.mock
+def test_triage_stores_what_the_call_cost(db, sample_article):
+    respx.post(f"{GW}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": json.dumps({"relevant": True, "reason": "release"})}}
+                ],
+                "usage": {"prompt_tokens": 197, "completion_tokens": 20},
+            },
+        )
+    )
+
+    llm.triage_article_logic(sample_article)
+
+    analysis = Analysis.objects.get(article=sample_article, stage=Analysis.Stage.TRIAGE)
+    assert analysis.input_tokens == 197
+    assert analysis.output_tokens == 20

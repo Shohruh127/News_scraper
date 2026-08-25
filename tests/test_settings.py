@@ -22,18 +22,61 @@ def test_publishing_defaults_to_off_when_unset(monkeypatch):
     assert environ.Env(PUBLISHING_ENABLED=(bool, False))("PUBLISHING_ENABLED") is False
 
 
-def test_editorial_provider_is_switchable():
-    """ADR-004 §5: reverting from MiMo to local Ollama must be one setting."""
-    assert settings.LLM_PROVIDER in ("ollama", "mimo")
-    if settings.LLM_PROVIDER == "mimo":
-        assert settings.MIMO_BASE_URL, "LLM_PROVIDER=mimo requires MIMO_BASE_URL"
-        assert settings.MIMO_API_KEY, "LLM_PROVIDER=mimo requires MIMO_API_KEY"
+def test_every_configured_provider_has_its_credentials():
+    """Switching a stage between providers must be one setting, and the target must work.
+
+    Measured 2026-08-25: the gateway's `smart` tier can answer 503 overloaded, so MiMo stays
+    configured as a different machine to move a stage to. That only helps if its credentials
+    are actually present whenever a stage names it.
+    """
+    stages = {
+        "LLM_PROVIDER": settings.LLM_PROVIDER,
+        "EDITORIAL_EN_PROVIDER": settings.EDITORIAL_EN_PROVIDER,
+        "TRANSLATION_PROVIDER": settings.TRANSLATION_PROVIDER,
+        "CLASSIFIER_PROVIDER": settings.CLASSIFIER_PROVIDER,
+    }
+    for name, provider in stages.items():
+        assert provider in ("gateway", "mimo"), f"{name}={provider!r} is not a provider"
+
+    in_use = set(stages.values())
+    if "gateway" in in_use:
+        assert settings.GATEWAY_BASE_URL, "a stage runs on the gateway but its URL is unset"
+        assert settings.GATEWAY_TOKEN, "a stage runs on the gateway but its token is unset"
+    if "mimo" in in_use:
+        assert settings.MIMO_BASE_URL, "a stage runs on mimo but MIMO_BASE_URL is unset"
+        assert settings.MIMO_API_KEY, "a stage runs on mimo but MIMO_API_KEY is unset"
 
 
 def test_llm_concurrency_matches_measurement():
     """Measured in docs/spike/OLLAMA_BENCHMARK.md: 8 parallel requests are slower
-    than serial. Raising this without a new measurement is a regression."""
-    assert settings.OLLAMA_MAX_CONCURRENCY == 2
+    than serial. The ceiling is the GPU's, so it survived the move to the gateway.
+    Raising this without a new measurement is a regression."""
+    assert settings.LLM_MAX_CONCURRENCY == 2
+
+
+def test_no_stage_defaults_to_a_provider_that_no_longer_exists(monkeypatch):
+    """The direct Ollama path was removed on 2026-08-25.
+
+    Asserts the declared defaults with the variables removed, not the developer's live
+    .env — the same rule as test_publishing_defaults_to_off_when_unset. A test that reads
+    the current environment fails the moment someone legitimately points a stage at MiMo.
+    """
+    import environ
+
+    for name in (
+        "LLM_PROVIDER",
+        "EDITORIAL_EN_PROVIDER",
+        "TRANSLATION_PROVIDER",
+        "CLASSIFIER_PROVIDER",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    env = environ.Env()
+    llm_provider = env("LLM_PROVIDER", default="gateway")
+    assert llm_provider == "gateway"
+    assert env("EDITORIAL_EN_PROVIDER", default=llm_provider) == "gateway"
+    assert env("TRANSLATION_PROVIDER", default=llm_provider) == "gateway"
+    assert env("CLASSIFIER_PROVIDER", default="gateway") == "gateway"
 
 
 def test_celery_routes_separate_fetch_from_llm():
@@ -112,4 +155,20 @@ def test_post_budget_defaults():
     from django.conf import settings as _settings
 
     assert _settings.POST_MAX_SENTENCES == 3
-    assert _settings.POST_MAX_CHARS == 450
+    assert _settings.POST_MAX_CHARS == 500
+
+
+def test_drip_tasks_are_routed_by_their_registered_names():
+    """A route keyed on a name no task registered under silently routes nothing."""
+    from django.conf import settings as _settings
+
+    from apps.digest import tasks
+
+    routes = _settings.CELERY_TASK_ROUTES
+    assert routes[tasks.publish_next_item.name] == {"queue": "publish"}
+    assert routes[tasks.publish_roundup.name] == {"queue": "publish"}
+    # Every route must name a real task; a stale key is dead configuration.
+    from config.celery import app
+
+    for name in routes:
+        assert name in app.tasks, f"{name} is routed but not registered"

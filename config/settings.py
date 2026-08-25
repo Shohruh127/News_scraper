@@ -9,8 +9,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DJANGO_DEBUG=(bool, False),
     PUBLISHING_ENABLED=(bool, False),
-    OLLAMA_FAST_TIMEOUT=(int, 60),
-    OLLAMA_DEEP_TIMEOUT=(int, 300),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -86,7 +84,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Celery -----------------------------------------------------------------
 # Two queues, two concurrency budgets. Network fetching is I/O bound and can run
-# wide; Ollama measured a ceiling of 2 (docs/spike/OLLAMA_BENCHMARK.md §6).
+# wide; the GPU measured a ceiling of 2 (docs/spike/OLLAMA_BENCHMARK.md §6). That
+# ceiling is about the hardware, so it survived the move to the gateway.
 CELERY_BROKER_URL = env("REDIS_URL", default="redis://127.0.0.1:6380/0")
 CELERY_RESULT_BACKEND = "django-db"
 CELERY_TIMEZONE = TIME_ZONE
@@ -99,44 +98,42 @@ CELERY_TASK_ROUTES = {
     "digest.triage_and_classify": {"queue": "llm"},
     "digest.analyse_for_digest": {"queue": "llm"},
     "digest.compose_and_publish": {"queue": "publish"},
+    "digest.publish_next_item": {"queue": "publish"},
+    "digest.publish_roundup": {"queue": "publish"},
     "digest.dispatch_worker_heartbeats": {"queue": "fetch"},
 }
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
-# --- Ollama -----------------------------------------------------------------
-OLLAMA_BASE_URL = env("OLLAMA_BASE_URL", default="").rstrip("/")
-OLLAMA_FAST_MODEL = env("OLLAMA_FAST_MODEL", default="gemma4:latest")
-OLLAMA_DEEP_MODEL = env("OLLAMA_DEEP_MODEL", default="gemma4:31b")
-OLLAMA_FAST_TIMEOUT = env("OLLAMA_FAST_TIMEOUT")
-OLLAMA_DEEP_TIMEOUT = env("OLLAMA_DEEP_TIMEOUT")
-OLLAMA_MAX_CONCURRENCY = 2
+# --- LLM providers ----------------------------------------------------------
+# Two providers, two tiers each. The direct Ollama path was removed on 2026-08-25: the
+# gateway fronts the same local GPU models (`fast` is the 8B, `smart` is the 31B), so the
+# second client bought nothing and its model tags had become the tier vocabulary for
+# providers that never spoke to it.
+#
+# Cost of that removal, recorded because it is not obvious: `Analysis.model_digest` is now
+# always empty and `model_tag` records the tier alias, not the model. Only Ollama exposed
+# /api/tags. The gateway can repoint an alias silently — that is its purpose — and nothing
+# in the database will show it happened.
+#
+# Measured 2026-08-17 on the seven live digest items, and still the reason translation asks
+# for the fast tier: the fast model lost 0/7 numbers and kept the glossary, while the deep
+# one garbled Uzbek in the first digest. Translation is a constrained task — the input is
+# fixed and the output shape is fixed — and a stronger model spends its extra freedom
+# changing things, which in translation is always an error.
+#
+# MiMo stays available as a second provider. Its Token Plan forbids automated/backend use,
+# so it is not the default anywhere; see ADR-004 §5.
+LLM_MAX_CONCURRENCY = 2
 
-# --- Editorial provider (ADR-004 §5) ----------------------------------------
-# Scoped to the editorial stage only. Triage and classification always run on
-# local Ollama. Set LLM_PROVIDER=ollama to revert; that is the whole change.
-#
-# The MiMo Token Plan forbids automated/backend use. This is accepted by the
-# project owner for the testing phase only, with a stated intention to move to a
-# local model or a backend-permitted tier before release. See ADR-004 §5.
-# Per-stage providers. Measured 2026-08-17 on the seven live digest items:
-#
-#   English analysis   MiMo    real reasoning; gemma4:31b garbled Uzbek and was slower
-#   Translation        Ollama  gemma4:latest lost 0/7 numbers and kept the glossary;
-#                              mimo-v2.5 changed 2.4 trillion to 2 trillion and
-#                              calqued open-weight in two posts
-#
-# Translation is a constrained task: the input is fixed and the output shape is fixed.
-# A stronger model spends its extra freedom changing things, and in translation any
-# change is an error. Heavy reasoning to the heavy model, fidelity to the local one.
-LLM_PROVIDER = env("LLM_PROVIDER", default="ollama")
+LLM_PROVIDER = env("LLM_PROVIDER", default="gateway")
 EDITORIAL_EN_PROVIDER = env("EDITORIAL_EN_PROVIDER", default=LLM_PROVIDER)
-TRANSLATION_PROVIDER = env("TRANSLATION_PROVIDER", default="ollama")
+TRANSLATION_PROVIDER = env("TRANSLATION_PROVIDER", default=LLM_PROVIDER)
 #: Uzbek tokenises poorly, so a 1200-token cap truncated the JSON mid-object and the
 #: whole translation was lost. Measured: 2500 gives 7/7 twice, 1200 gave 2/7.
 TRANSLATION_NUM_PREDICT = env.int("TRANSLATION_NUM_PREDICT", default=2500)
-#: The English editorial budget. Was a hardcoded 1500, which is enough on Ollama and MiMo but
-#: not on the gateway: its `smart` tier is a reasoning model and charges its reasoning to the
-#: same budget. Measured 2026-08-21 on the live gateway with the real editorial prompt — 1500
+#: The English editorial budget. Was a hardcoded 1500, which is enough on MiMo but not on the
+#: gateway: its `smart` tier is a reasoning model and charges its reasoning to the same
+#: budget. Measured 2026-08-21 on the live gateway with the real editorial prompt — 1500
 #: returned finish_reason "length" and an empty message, 3000 completed. An unused cap costs
 #: nothing (the model stops when it is done), a cap that is too small drops the article, so the
 #: default takes the generous side of that asymmetry.
@@ -145,15 +142,13 @@ MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")
 MIMO_DEEP_MODEL = env("MIMO_DEEP_MODEL", default="mimo-v2.5-pro")
-#: mimo-v2.5 measured clean Uzbek in ADR-004 §5; pro is not required for summaries.
-MIMO_EDITORIAL_MODEL = env("MIMO_EDITORIAL_MODEL", default="mimo-v2.5")
 MIMO_TIMEOUT = env.int("MIMO_TIMEOUT", default=120)
 
 # --- Internal LLM gateway ----------------------------------------------------
 # OpenAI-compatible front door to the same local GPU models. Callers name a tier alias
 # (`fast`/`smart`) rather than a model, so a tier can be repointed without a redeploy;
-# sending a real model name is a 404. This runs alongside the direct Ollama path for the
-# whole migration — the direct path goes away only once every stage has moved.
+# sending a real model name is a 404. `fast` is the 8B model and `smart` the 31B — the
+# same models the direct Ollama path used before it was removed on 2026-08-25.
 GATEWAY_BASE_URL = env("GATEWAY_BASE_URL", default="").rstrip("/")
 GATEWAY_TOKEN = env("GATEWAY_TOKEN", default="")
 GATEWAY_FAST_MODEL = env("GATEWAY_FAST_MODEL", default="fast")
@@ -162,10 +157,11 @@ GATEWAY_SMART_MODEL = env("GATEWAY_SMART_MODEL", default="smart")
 #: for up to 30s. A shorter client timeout abandons a generation the gateway still runs.
 GATEWAY_TIMEOUT = env.int("GATEWAY_TIMEOUT", default=300)
 
-#: Triage and classification. Defaults to "ollama", not LLM_PROVIDER: these two stages
-#: were hardwired to local Ollama, and inheriting the global default would silently move
-#: several hundred calls a day onto whatever the editorial stage happens to use.
-CLASSIFIER_PROVIDER = env("CLASSIFIER_PROVIDER", default="ollama")
+#: Triage and classification. A separate setting rather than inheriting LLM_PROVIDER:
+#: these two stages make several hundred calls a day, and inheriting would move that
+#: volume the moment the editorial provider changed. Any new provider setting must
+#: default to preserving current behaviour.
+CLASSIFIER_PROVIDER = env("CLASSIFIER_PROVIDER", default="gateway")
 
 # --- Telegram ---------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
@@ -186,12 +182,17 @@ TELEGRAM_LINK_PREVIEW = env.bool("TELEGRAM_LINK_PREVIEW", default=True)
 
 # --- Post format v2 redesign ------------------------------------------------
 POST_FORMAT_V2_ENABLED = env.bool("POST_FORMAT_V2_ENABLED", default=True)
-#: Guard only. The real budget is POST_MAX_SENTENCES.
-POST_MAX_CHARS = env.int("POST_MAX_CHARS", default=450)
+#: Guard only. The real budget is POST_MAX_SENTENCES: the structure bounds the length, so
+#: this should never bind on a well-formed post. A photo caption caps at 1024, so 500 leaves
+#: room. Do not tune this against another channel's character counts — Uzbek agglutinates,
+#: and a length calibrated on English or Russian means nothing here.
+POST_MAX_CHARS = env.int("POST_MAX_CHARS", default=500)
 #: Words are the wrong unit for Uzbek: it folds prepositions into suffixes, so the same
-#: content is fewer, longer words than in English or Russian. 3 = lead + body_1 +
-#: body_2, with body_2 the first to go when trimming.
+#: content is fewer, longer words than in English or Russian. 3 = lead + body_1 + kicker;
+#: the headline and hashtag lines are labels and are not counted. body_2 was removed on
+#: 2026-08-24 - it was always the first thing trimmed and the model confused it with body_1.
 POST_MAX_SENTENCES = env.int("POST_MAX_SENTENCES", default=3)
+
 
 # --- Ingestion --------------------------------------------------------------
 USER_AGENT = "news-radar/0.1 (+daily AI digest)"
@@ -222,10 +223,14 @@ RANKING_WEIGHTS = {
     "source_credibility": 0.10,
     "audience_relevance": 0.10,
 }
-# One post per news item (ADR-004 §6), so this is a post count, not a list length.
-# The project owner expects 10-15 posts per day.
-DIGEST_MAX_ITEMS = env.int("DIGEST_MAX_ITEMS", default=15)
-DIGEST_MAX_PER_TOPIC = env.int("DIGEST_MAX_PER_TOPIC", default=3)
+# One post per news item (ADR-004 §6). Two blocks a day, six posts each, one every two hours.
+DIGEST_MAX_ITEMS = env.int("DIGEST_MAX_ITEMS", default=6)
+#: 3 of 6 on one topic is half a block. Lowered with DIGEST_MAX_ITEMS on 2026-08-24.
+DIGEST_MAX_PER_TOPIC = env.int("DIGEST_MAX_PER_TOPIC", default=2)
+#: Selected above DIGEST_MAX_ITEMS so an item whose editorial or translation failed can be
+#: dropped without shortening the block. At six items a block, one failure is 17% of it.
+DIGEST_SELECT_MARGIN = env.int("DIGEST_SELECT_MARGIN", default=2)
+
 
 # --- Clustering, Tier A (ADR-004 §3) ----------------------------------------
 # Character 5-gram Jaccard over article text. Measured in

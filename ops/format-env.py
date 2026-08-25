@@ -20,7 +20,7 @@ from pathlib import Path
 
 #: Keys added when absent. Nothing else is ever invented.
 NEW_DEFAULTS = {
-    "CLASSIFIER_PROVIDER": "ollama",
+    "CLASSIFIER_PROVIDER": "gateway",
     "GATEWAY_BASE_URL": "",
     "GATEWAY_TOKEN": "",
     "GATEWAY_FAST_MODEL": "fast",
@@ -52,22 +52,6 @@ BLOCKS = [
         ["Celery broker, worker heartbeats, and the pipeline overlap lock."],
     ),
     (
-        "Ollama (org LAN)",
-        [
-            "OLLAMA_BASE_URL",
-            "OLLAMA_FAST_MODEL",
-            "OLLAMA_DEEP_MODEL",
-            "OLLAMA_FAST_TIMEOUT",
-            "OLLAMA_DEEP_TIMEOUT",
-        ],
-        [
-            "No trailing slash on the base URL.",
-            "The two model tags name the fast and deep tiers for EVERY provider: the gateway",
-            "and MiMo branches read them to decide which tier a call belongs to. Keep them",
-            "set even when nothing talks to Ollama directly.",
-        ],
-    ),
-    (
         "LLM providers",
         [
             "LLM_PROVIDER",
@@ -76,14 +60,14 @@ BLOCKS = [
             "CLASSIFIER_PROVIDER",
         ],
         [
-            "Each accepts: ollama | gateway | mimo. Set all four to one value to run the whole",
+            "Each accepts: gateway | mimo. Set all four to one value to run the whole",
             "pipeline on one provider; set them separately to mix.",
             "",
             "  LLM_PROVIDER          global default for anything not overridden below",
             "  EDITORIAL_EN_PROVIDER English analysis stage",
-            "  TRANSLATION_PROVIDER  Uzbek translation. Measured 2026-08-17: MiMo turned",
-            "                        2.4 trillion into 2 trillion here. Ollama is the safe",
-            "                        value.",
+            "  TRANSLATION_PROVIDER  Uzbek translation. It asks for the fast tier: measured",
+            "                        2026-08-17, the fast model lost 0/7 numbers while the",
+            "                        deep one garbled Uzbek.",
             "  CLASSIFIER_PROVIDER   triage + classification, several hundred calls a day",
         ],
     ),
