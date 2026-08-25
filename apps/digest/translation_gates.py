@@ -45,20 +45,62 @@ def extract_numbers(text: str) -> set[str]:
     return set(re.findall(r"\d+(?:\.\d+)*", _THOUSANDS.sub("", text)))
 
 
+#: Uzbek words for the small numbers, which prose spells out rather than writing as digits.
+#:
+#: Measured 2026-08-24: the English headline said "in 2 weeks" and the Uzbek correctly said
+#: "ikki hafta". The gate saw no "2", called it a lost number, and article 11 lost its
+#: translation permanently on a translation that was right.
+#:
+#: The list stops at ten on purpose. The defect this gate exists for is a *changed* precise
+#: figure — mimo-v2.5 turning 2.4 trillion into 2 trillion — and no one writes 2.4, 123 or 84%
+#: as words. Accepting a spelled-out small number costs none of that protection.
+UZBEK_SMALL_NUMERALS = {
+    "1": ("bir",),
+    "2": ("ikki",),
+    "3": ("uch",),
+    "4": ("to'rt", "tort", "toʻrt"),
+    "5": ("besh",),
+    "6": ("olti",),
+    "7": ("yetti", "etti"),
+    "8": ("sakkiz",),
+    "9": ("to'qqiz", "toqqiz", "toʻqqiz"),
+    "10": ("o'n", "on", "oʻn"),
+}
+
+
+def _carries_number(number: str, uz_numbers: set[str], uz_text: str) -> bool:
+    """True when the Uzbek carries `number` as digits or, for 1-10, as a word."""
+    if number in uz_numbers:
+        return True
+    lowered = uz_text.lower()
+    return any(re.search(rf"\b{word}\b", lowered) for word in UZBEK_SMALL_NUMERALS.get(number, ()))
+
+
 def check_numbers(en_fields: dict, uz_fields: dict) -> list[str]:
     """Gate 1: every number in translated English fields must appear in Uzbek.
 
     Catches errors like 2.4 trillion -> 2 trillion (mimo-v2.5 defect).
     Compares corresponding field pairs (e.g. lead_en vs lead_uz, limitations_en vs limitations_uz).
+    A small number spelled out in Uzbek counts as carried - see UZBEK_SMALL_NUMERALS.
     """
     missing_all: set[str] = set()
     for k_en, v_en in en_fields.items():
+        # The headline is a label capped at 8 words, not a translation. It is allowed to
+        # compress, and compressing means dropping something.
+        #
+        # Measured 2026-08-24: headline_en was "Asana removes Enzyme with Codex in 2 weeks"
+        # and headline_uz was "Asana test tizimini Codex bilan o'chirdi". The gate called the
+        # missing "2" a lost number and killed the post - while the same article's kicker
+        # said "ikki haftada" and its body carried $12K and $6M. Holding a label to the same
+        # rule as the fact-carrying fields defeats the point of having a label.
+        if k_en.startswith("headline"):
+            continue
         k_uz = k_en[:-3] + "_uz" if k_en.endswith("_en") else k_en + "_uz"
         v_uz = uz_fields.get(k_uz)
         if v_uz and isinstance(v_en, str) and isinstance(v_uz, str):
             en_nums = extract_numbers(v_en)
             uz_nums = extract_numbers(v_uz)
-            missing = en_nums - uz_nums
+            missing = {n for n in en_nums - uz_nums if not _carries_number(n, uz_nums, v_uz)}
             if missing:
                 missing_all.update(missing)
 
@@ -117,17 +159,28 @@ def _is_suffixed_acronym(word: str, en_caps: set[str]) -> bool:
     return any(_acronym_stem(cap) == stem for cap in en_caps)
 
 
-def check_headline_case(en_headline: str, uz_headline: str) -> list[str]:
+def check_headline_case(en_headline: str, uz_headline: str, en_context: str = "") -> list[str]:
     """Gate 3: Uzbek headlines must not use English Title Case.
 
     Only the first word and proper nouns / acronyms appearing capitalized in English
     are allowed to be capitalized.
+
+    `en_context` is the rest of the English payload, and it is not optional in practice.
+    Measured 2026-08-24 on a live run: the Uzbek headline for article 11 named `Enzyme`, the
+    testing library Asana migrated off. It appears in `lead_en` but not in `headline_en`, so
+    a headline-only vocabulary flagged a correct proper noun, the retry flagged it again, and
+    the article lost its translation permanently.
+
+    This is the same shape as the presence gate removed on 2026-08-18: firing on the absence
+    of a known-good token rather than the presence of a known-bad one. Widening the
+    vocabulary keeps the real detection — genuine Title Case capitalises ordinary Uzbek
+    words like `Bilan` or `Bepul`, which appear capitalised in no English field.
     """
     if not uz_headline or not en_headline:
         return []
 
     # Extract all capitalized words and components (e.g. Copilot from Copilot-Approved)
-    en_raw_tokens = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", en_headline)
+    en_raw_tokens = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", f"{en_headline} {en_context}")
     en_caps = set()
     for w in en_raw_tokens:
         if w and w[0].isupper():
@@ -177,7 +230,10 @@ def validate_translation(en_fields: dict, uz_fields: dict) -> list[str]:
     en_hl = en_fields.get("headline_en", "")
     uz_hl = uz_fields.get("headline_uz", "")
     if en_hl and uz_hl:
-        violations.extend(check_headline_case(en_hl, uz_hl))
+        # Every English field is the capitalisation vocabulary, not just the headline: a
+        # proper noun the headline paraphrases away still belongs in the Uzbek one.
+        context = " ".join(str(v) for k, v in en_fields.items() if k != "headline_en")
+        violations.extend(check_headline_case(en_hl, uz_hl, en_context=context))
 
     if violations:
         log.warning("Translation gate violation: %s", "; ".join(violations))

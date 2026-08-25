@@ -230,3 +230,78 @@ def test_glossary_does_not_require_context_at_all():
 
 def test_link_anchor_gate_is_gone():
     assert not hasattr(translation_gates, "check_link_anchor")
+
+
+def test_headline_case_accepts_a_proper_noun_the_headline_paraphrases_away():
+    """Measured 2026-08-24: article 11 lost its translation to this false positive.
+
+    `Enzyme` (the testing library Asana migrated off) is in lead_en, not headline_en. A
+    headline-only vocabulary flagged it, the retry flagged it again, and the post was lost.
+    """
+    en_fields = {
+        "headline_en": "Asana removes legacy test system with Codex",
+        "lead_en": "Asana used OpenAI Codex to remove its outdated Enzyme testing system.",
+    }
+    uz_fields = {
+        "headline_uz": "Asana Enzyme sinov tizimini Codex bilan olib tashladi",
+        "lead_uz": "Asana jamoasi eskirgan Enzyme tizimini olib tashladi.",
+    }
+    assert translation_gates.validate_translation(en_fields, uz_fields) == []
+
+
+def test_headline_case_still_rejects_real_title_case():
+    """Widening the vocabulary must not disarm the gate. Ordinary Uzbek words appear
+    capitalised in no English field, so genuine Title Case is still caught."""
+    en_fields = {
+        "headline_en": "Replit launches free mode with GPT-5.6 Luna",
+        "lead_en": "Replit shipped a free tier powered by GPT-5.6 Luna.",
+    }
+    uz_fields = {"headline_uz": "Replit GPT-5.6 Luna Bilan Bepul Rejimni Ishga Tushirdi"}
+    violations = translation_gates.validate_translation(en_fields, uz_fields)
+    assert any("Bilan" in v for v in violations)
+
+
+def test_a_small_number_spelled_out_in_uzbek_counts_as_carried():
+    """Measured 2026-08-24: article 11 lost its translation twice, once to this.
+
+    The English headline said "in 2 weeks"; the Uzbek correctly said "ikki hafta". The gate
+    saw no digit 2 and called it a lost number.
+    """
+    en = {"headline_en": "Asana replaces Enzyme with Codex in 2 weeks"}
+    uz = {"headline_uz": "Asana Enzyme'ni Codex bilan ikki haftada almashtirdi"}
+    assert translation_gates.check_numbers(en, uz) == []
+
+
+def test_a_changed_precise_number_is_still_caught():
+    """Spelling out small numbers must not disarm the gate. Nobody writes 2.4 as words, so
+    the mimo-v2.5 defect this gate exists for is untouched."""
+    en = {"lead_en": "Qwen shipped a 2.4 trillion parameter model."}
+    uz = {"lead_uz": "Qwen 2 trillion parametrli modelni taqdim etdi."}
+    violations = translation_gates.check_numbers(en, uz)
+    assert violations and "2.4" in violations[0]
+
+
+def test_a_dropped_large_number_is_still_caught():
+    en = {"body_1_en": "The model scores 84% on MMLU."}
+    uz = {"body_1_uz": "Model MMLU testida yuqori natija ko'rsatdi."}
+    assert translation_gates.check_numbers(en, uz)
+
+
+def test_the_headline_is_exempt_from_the_number_gate():
+    """A headline is a label capped at 8 words, not a translation, so it may compress.
+
+    Measured 2026-08-24: headline_en "Asana removes Enzyme with Codex in 2 weeks" became
+    "Asana test tizimini Codex bilan o'chirdi". The gate killed the post over the missing
+    "2" while the same post's kicker said "ikki haftada".
+    """
+    en = {"headline_en": "Asana removes Enzyme with Codex in 2 weeks"}
+    uz = {"headline_uz": "Asana test tizimini Codex bilan o'chirdi"}
+    assert translation_gates.check_numbers(en, uz) == []
+
+
+def test_the_body_is_not_exempt_from_the_number_gate():
+    """Exempting the label must not exempt the fields that carry the facts."""
+    en = {"body_1_en": "The migration cost about $12K against a $6M estimate."}
+    uz = {"body_1_uz": "Ko'chirish arzonroq tushdi."}
+    violations = translation_gates.check_numbers(en, uz)
+    assert violations and "12" in violations[0]
