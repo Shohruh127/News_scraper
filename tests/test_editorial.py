@@ -464,9 +464,11 @@ def _editorial_examples():
     import json as _json
     import re as _re
 
-    from apps.digest.llm import EDITORIAL_EN_PROMPT
+    from apps.digest.llm import EDITORIAL_EN_PROMPT, SHAPE_BLOCKS, SHAPE_GENERAL
 
-    filled = EDITORIAL_EN_PROMPT.format(title="T", source="S", text="X")
+    filled = EDITORIAL_EN_PROMPT.format(
+        shape=SHAPE_BLOCKS[SHAPE_GENERAL], title="T", source="S", text="X"
+    )
     blocks = _re.findall(r"Output JSON:\n(\{.*?\n\})\n", filled, _re.DOTALL)
     return [_json.loads(b) for b in blocks]
 
@@ -616,3 +618,151 @@ def test_triage_does_not_ask_the_model_to_judge_significance():
 
     assert "cannot tell how significant it is, keep it" in TRIAGE_PROMPT_TEMPLATE
     assert "belongs to the classification stage" in TRIAGE_PROMPT_TEMPLATE
+
+
+def test_every_topic_maps_to_a_shape():
+    """A topic with no entry silently falls back, so the map must be complete by test."""
+    from apps.digest.llm import SHAPE_BLOCKS, TOPIC_SHAPES
+    from apps.digest.models import Topic
+
+    expected = {t.value for t in Topic} - {Topic.IRRELEVANT.value}
+    assert set(TOPIC_SHAPES) == expected, "every topic except irrelevant needs a shape"
+    for topic, shape in TOPIC_SHAPES.items():
+        assert shape in SHAPE_BLOCKS, f"{topic} maps to unknown shape {shape}"
+
+
+def test_irrelevant_is_not_mapped():
+    """It never reaches the editorial stage; classification filters it."""
+    from apps.digest.llm import TOPIC_SHAPES
+    from apps.digest.models import Topic
+
+    assert Topic.IRRELEVANT.value not in TOPIC_SHAPES
+
+
+def test_an_unknown_topic_falls_back_to_the_general_shape():
+    """A Topic added later must degrade to today's behaviour, not raise."""
+    from apps.digest.llm import SHAPE_GENERAL, shape_for
+
+    assert shape_for("a_topic_invented_next_year") == SHAPE_GENERAL
+    assert shape_for(None) == SHAPE_GENERAL
+    assert shape_for("") == SHAPE_GENERAL
+
+
+def test_each_shape_text_reaches_the_formatted_prompt():
+    """The archetype system failed for want of exactly this test.
+
+    Its code was present, the prompt never asked for what the code consumed, and nothing
+    compared the two — so six templates sat unused for a week. Assert the substitution,
+    not merely the dict.
+    """
+    from apps.digest.llm import EDITORIAL_EN_PROMPT, SHAPE_BLOCKS
+
+    for shape, block in SHAPE_BLOCKS.items():
+        filled = EDITORIAL_EN_PROMPT.format(shape=block, title="T", source="S", text="X")
+        first_line = block.strip().splitlines()[0]
+        assert first_line in filled, f"{shape} block did not reach the prompt"
+
+
+def test_the_shapes_actually_differ():
+    """Six identical blocks would pass every other test and change nothing."""
+    from apps.digest.llm import SHAPE_BLOCKS
+
+    assert len(SHAPE_BLOCKS) == 7, "six groups plus the general fallback"
+    assert len({b.strip() for b in SHAPE_BLOCKS.values()}) == 7, "blocks must be distinct"
+
+
+def test_only_the_three_sentence_fields_vary():
+    """headline_en is a label and does not change with the story type."""
+    from apps.digest.llm import SHAPE_BLOCKS
+
+    for shape, block in SHAPE_BLOCKS.items():
+        assert "headline_en" not in block, f"{shape} must not redefine the headline"
+
+
+@respx.mock
+def test_the_editorial_prompt_carries_the_shape_for_the_article_topic(article, settings):
+    """A safety item must be written to the risk instruction, not the release one."""
+    settings.LLM_PROVIDER = "gateway"
+    settings.EDITORIAL_EN_PROVIDER = "gateway"
+    settings.TRANSLATION_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    Analysis.objects.create(
+        article=article,
+        stage=Analysis.Stage.CLASSIFICATION,
+        model_tag="smart",
+        payload={
+            "primary_topic": "safety_security",
+            "maturity": "live_product",
+            "novelty": 7,
+            "evidence": 7,
+            "production_readiness": 7,
+            "reason": "A disclosed vulnerability.",
+        },
+        latency_ms=1000,
+    )
+
+    prompts = []
+
+    def capture(request):
+        body = json.loads(request.content)
+        prompts.append(body["messages"][0]["content"])
+        payload = EN_PAYLOAD if len(prompts) == 1 else UZ_PAYLOAD
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
+    llm.analyse_for_digest_logic([article.id])
+
+    assert "what the risk is and who it reaches" in prompts[0]
+    assert "who shipped what" not in prompts[0], "the release instruction must not appear"
+
+
+@respx.mock
+def test_an_article_with_no_classification_gets_the_general_shape(article, settings):
+    """Nothing in the pipeline reaches editorial without a classification, but a direct
+    call to analyse_for_digest_logic must not crash on one."""
+    settings.LLM_PROVIDER = "gateway"
+    settings.EDITORIAL_EN_PROVIDER = "gateway"
+    settings.TRANSLATION_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    prompts = []
+
+    def capture(request):
+        prompts.append(json.loads(request.content)["messages"][0]["content"])
+        payload = EN_PAYLOAD if len(prompts) == 1 else UZ_PAYLOAD
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
+    llm.analyse_for_digest_logic([article.id])
+
+    assert "Pick the lead by this order" in prompts[0]
+
+
+@pytest.mark.django_db
+def test_classified_topic_reads_the_latest_classification(article):
+    """Two classifications can exist after a re-run; the newest is the live one."""
+    for topic in ("frontier_models", "safety_security"):
+        Analysis.objects.create(
+            article=article,
+            stage=Analysis.Stage.CLASSIFICATION,
+            model_tag="smart",
+            payload={
+                "primary_topic": topic,
+                "maturity": "live_product",
+                "novelty": 5,
+                "evidence": 5,
+                "production_readiness": 5,
+                "reason": "x",
+            },
+            latency_ms=1,
+        )
+
+    assert llm._classified_topic(article) == "safety_security"
+    assert llm.shape_for(llm._classified_topic(article)) == "risk"

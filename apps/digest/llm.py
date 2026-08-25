@@ -171,6 +171,92 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
     ],
 }
 
+#: The editorial instruction, chosen by the article's classified topic.
+#:
+#: Only the three sentence fields vary. `headline_en` is a label of at most eight words and
+#: does not change with the kind of story, and neither do the style rules, the technical
+#: block or the few-shot examples — those stay in the base prompt so six copies cannot drift
+#: apart.
+#:
+#: This is not the archetype system removed on 2026-08-24. That one added output structure
+#: (`*_details` blocks, six templates) with no data behind it — `license` was populated 0% of
+#: the time. A shape adds no structure: the same four fields are produced for every group and
+#: all four are always filled, so a group nobody hits is an unread dict entry.
+SHAPE_GENERAL = "general"
+
+SHAPE_BLOCKS: dict[str, str] = {
+    SHAPE_GENERAL: """An article states many facts. Pick the lead by this order, first match wins:
+  1. A named thing shipped or changed - and who shipped it.
+  2. A measured result - and who measured it.
+  3. A rule, policy or restriction - and who must comply with it.
+If the article announces something with nothing shipped and nothing measured, say so
+plainly in the lead. Do not dress an announcement up as a release.""",
+    "release": """This is a release. The reader is deciding whether to use the thing.
+  lead_en    who shipped what
+  body_1_en  the number or specification that matters most - parameters, context window,
+             version, throughput, benchmark score
+  kicker_en  what the reader can now do that they could not before
+If nothing actually shipped and the article only announces an intention, say that plainly
+in the lead rather than dressing it up as a release.""",
+    "agent": """This is an agent, protocol or integration. The reader is deciding whether it fits
+their stack, and the deciding fact is what it talks to - not a benchmark score.
+  lead_en    what connects to what
+  body_1_en  how it is deployed and what it requires - transport, runtime, permissions,
+             which hosts or clients support it
+  kicker_en  what it replaces or removes the need for""",
+    "risk": """This is a risk or its mitigation. Do NOT lead with who published the advisory;
+lead with the risk itself, because that is what the reader needs first.
+  lead_en    what the risk is and who it reaches
+  body_1_en  its scope or mechanism - which versions, which models, what an attacker gets,
+             or how the mitigation works
+  kicker_en  what the reader should do about it""",
+    "research": """This is a finding. The question is not what shipped but how much the evidence
+supports the claim.
+  lead_en    what is being claimed, and by whom
+  body_1_en  how strong the evidence is - dataset, sample size, the baseline compared
+             against, whether code or weights exist today
+  kicker_en  what it changes if it holds
+Do not report a promised artifact as a shipped one.""",
+    "product": """This is a company shipping a product. The reader is deciding whether to try it,
+so price and availability decide more than a benchmark does.
+  lead_en    who launched what, and what it does
+  body_1_en  whether it is available today and what it costs - free tier, waitlist, pricing,
+             region limits
+  kicker_en  who it is useful to""",
+    "robotics": """This is physical embodiment. The reader's question is what the machine can
+actually do in the world.
+  lead_en    what the robot or system can physically do
+  body_1_en  the physical numbers - speed, payload, autonomy duration, success rate, and
+             where it was tested
+  kicker_en  what it means for real deployment""",
+}
+
+#: Topic -> shape. `irrelevant` is absent because it never reaches the editorial stage:
+#: classification drops it. Verified complete by test_every_topic_maps_to_a_shape.
+TOPIC_SHAPES: dict[str, str] = {
+    Topic.FRONTIER_MODELS.value: "release",
+    Topic.PRODUCTION_ENGINEERING.value: "release",
+    Topic.SPEECH_VOICE.value: "release",
+    Topic.AI_AGENTS.value: "agent",
+    Topic.SAFETY_SECURITY.value: "risk",
+    Topic.NEW_APPROACHES.value: "research",
+    Topic.TECHNICAL_TALKS.value: "research",
+    Topic.STARTUPS.value: "product",
+    Topic.FINTECH.value: "product",
+    Topic.GOVTECH.value: "product",
+    Topic.ROBOTICS.value: "robotics",
+}
+
+
+def shape_for(topic: str | None) -> str:
+    """The instruction group for a classified topic.
+
+    An unmapped topic gets the general block rather than raising, so adding a Topic later
+    degrades to today's behaviour instead of dropping every article in that category.
+    """
+    return TOPIC_SHAPES.get(topic or "", SHAPE_GENERAL)
+
+
 EDITORIAL_EN_PROMPT = """You are writing one Telegram post for a channel read by working
 AI engineers and technical decision-makers in Uzbekistan. They skim. Give them the fact,
 not the announcement. Return JSON only.
@@ -179,13 +265,8 @@ not the announcement. Return JSON only.
 A headline label plus EXACTLY THREE sentences: lead_en, body_1_en, kicker_en.
 One sentence per field. A field holding two sentences is wrong.
 
-## Choosing what the post is about
-An article states many facts. Pick the lead by this order, first match wins:
-  1. A named thing shipped or changed - and who shipped it.
-  2. A measured result - and who measured it.
-  3. A rule, policy or restriction - and who must comply with it.
-If the article announces something with nothing shipped and nothing measured, say so
-plainly in the lead. Do not dress an announcement up as a release.
+## What this story needs
+{shape}
 
 ## Output fields
 - headline_en: a short label naming what happened, at most 8 words. NOT a sentence and
@@ -1197,6 +1278,18 @@ def _normalize_uz_payload(payload: dict) -> dict:
     return normalized
 
 
+def _classified_topic(article: Article) -> str | None:
+    """The topic the deep tier assigned, or None if the article was never classified.
+
+    Ordered newest-first because a re-run leaves more than one classification row and the
+    latest is the live verdict — the same rule select_digest_candidates uses.
+    """
+    latest = (
+        article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION).order_by("-created_at").first()
+    )
+    return latest.topic if latest else None
+
+
 def analyse_for_digest_logic(
     article_ids: list[int],
     client: httpx.Client | None = None,
@@ -1206,7 +1299,11 @@ def analyse_for_digest_logic(
     Batched by stage rather than per article, so the model loads once per stage. Returns
     the translation analyses, since those are what rendering consumes.
     """
-    articles = list(Article.objects.filter(id__in=article_ids).select_related("source"))
+    articles = list(
+        Article.objects.filter(id__in=article_ids)
+        .select_related("source")
+        .prefetch_related("analyses")
+    )
 
     # --- Stage 1: English -----------------------------------------------------
     en_by_article: dict[int, Analysis] = {}
@@ -1218,8 +1315,10 @@ def analyse_for_digest_logic(
             en_by_article[art.id] = existing
             continue
         try:
+            shape = shape_for(_classified_topic(art))
             result = _editorial_call(
                 prompt=EDITORIAL_EN_PROMPT.format(
+                    shape=SHAPE_BLOCKS[shape],
                     title=art.title,
                     source=art.source.name if art.source else "",
                     text=art.extracted_text[:8000],
@@ -1231,7 +1330,7 @@ def analyse_for_digest_logic(
                 provider=settings.EDITORIAL_EN_PROVIDER,
             )
             en_by_article[art.id] = _record_analysis(art, Analysis.Stage.EDITORIAL_EN, result)
-            log.info("English editorial done for article %s", art.id)
+            log.info("English editorial done for article %s (shape=%s)", art.id, shape)
         except Exception as exc:
             log.error("English editorial failed for article %s (%s): %s", art.id, art.title, exc)
 
