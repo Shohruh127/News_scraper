@@ -589,3 +589,30 @@ def test_translation_prompt_no_longer_forbids_a_closing_sentence():
     assert "yakuniy izoh yoki xulosa jumlasi bilan tugatma" not in TRANSLATION_PROMPT
     assert "kicker_uz" in TRANSLATION_PROMPT
     assert "headline_uz" in TRANSLATION_PROMPT
+
+
+def test_triage_keep_rules_are_independent():
+    """A-D must each be sufficient on their own.
+
+    Measured 2026-08-25 while tuning: an earlier draft said the naming test "overrides
+    everything else", and the model read that as subordinating the other rules to it.
+    "Disrupting a covert influence campaign" names no model, so it was dropped — recall
+    fell to 0.80 on the replay. Stating the rules as independent restored it to 1.00.
+    """
+    from apps.digest.llm import TRIAGE_PROMPT_TEMPLATE
+
+    assert "ANY ONE of these holds" in TRIAGE_PROMPT_TEMPLATE
+    assert "They are independent" in TRIAGE_PROMPT_TEMPLATE
+    for rule in ("A.", "B.", "C.", "D."):
+        assert rule in TRIAGE_PROMPT_TEMPLATE, f"keep rule {rule} is missing"
+    # Rule C is the one an override clause silently disables.
+    assert "even when nothing is named" in TRIAGE_PROMPT_TEMPLATE
+
+
+def test_triage_does_not_ask_the_model_to_judge_significance():
+    """Significance needs the article. Triage decides whether the article is worth reading,
+    and says so, or the fast tier starts guessing at what classification is for."""
+    from apps.digest.llm import TRIAGE_PROMPT_TEMPLATE
+
+    assert "cannot tell how significant it is, keep it" in TRIAGE_PROMPT_TEMPLATE
+    assert "belongs to the classification stage" in TRIAGE_PROMPT_TEMPLATE

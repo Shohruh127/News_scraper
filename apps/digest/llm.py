@@ -411,18 +411,38 @@ TRIAGE_SCHEMA: dict[str, Any] = {
 #: downloaded and stored, but sending it to the model costs ~2000 input tokens per article
 #: on the highest-volume stage in the pipeline, several hundred times a day.
 TRIAGE_PROMPT_TEMPLATE = """You are the first filter for an AI-engineering news digest read
-by working engineers.
+by working engineers. Return JSON only.
 
-From the headline alone, decide whether this could be AI or software engineering news worth
-a closer look. Return JSON only.
+The readers want engineering, not the business around it.
 
-Answer relevant=false ONLY when the headline is clearly none of it: an executive appointment,
-a funding round, a partnership, an award, a marketing or consumer-lifestyle piece, or a story
-with no technology in it at all.
+Answer relevant=true if ANY ONE of these holds. They are independent — one is enough, and
+you do not need the others.
 
-When the headline is vague, ambiguous, or you are unsure, answer relevant=true. This is a
-cheap first pass and a full classification runs next: letting one extra article through costs
-one call, while dropping a good one loses it for good.
+  A. The headline names a specific model, tool, library, protocol, API, dataset or product.
+  B. It reports something shipped, released, opened, updated, deprecated or priced.
+  C. It reports an operational or engineering action taken with real systems — disrupting,
+     detecting, mitigating, hardening, migrating, scaling — even when nothing is named.
+  D. It reports a concrete technical finding, benchmark or measurement.
+
+Answer relevant=false only when none of A-D holds and the headline is about the business
+around the work: money raised, valuations, acquisitions or share deals; hiring, appointments
+or someone speaking at an event; partnerships and collaborations; policy positions, lobbying,
+regulation or court cases; opinion, speculation or "will X happen" questions; company
+retrospectives and anniversary posts; advertising and monetisation; consumer lifestyle
+gadgets.
+
+On rule A, do not also ask whether the headline is "about" the named thing in the right way.
+A question about it, a complaint about it, or a report of a problem with it all count. That
+judgement belongs to the classification stage, which reads the article.
+
+  "Who is behind the stealth model Ox Alpha?"        A: names Ox Alpha       -> true
+  "Instinct's AI assistant raises privacy concerns"  A: names the assistant  -> true
+  "Disrupting a covert influence campaign"           C: an action taken      -> true
+  "Nvidia partners with a data centre developer"     none of A-D             -> false
+  "Hugging Face in talks to be acquired for $13B"    none of A-D             -> false
+
+If one of A-D holds but you cannot tell how significant it is, keep it: letting one extra
+through costs one call, while dropping a real release loses it for good.
 
 reason: at most 10 words, naming what decided it.
 
