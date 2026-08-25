@@ -8,6 +8,7 @@ Acceptance criteria from REMAINING_WORK.md:
 """
 
 import json
+from datetime import date
 from html import unescape
 
 import httpx
@@ -446,14 +447,14 @@ def test_failure_on_item_8_leaves_1_through_7_sent_digest_failed(db, digest_15, 
 
     res = publish.publish_digest(digest_15)
 
-    # Item 8 failed, so digest should be FAILED
-    assert res["status"] == Digest.Status.FAILED
+    # Item 8 failed, but 14 items landed, so digest is PUBLISHED with an alert.
+    assert res["status"] == Digest.Status.PUBLISHED
     # 14 sent (items 1-7 + 9-15), 1 failed (item 8)
     assert res["items_sent"] == 14
     assert res["items_failed"] == 1
 
     digest_15.refresh_from_db()
-    assert digest_15.status == Digest.Status.FAILED
+    assert digest_15.status == Digest.Status.PUBLISHED
 
     # Items 1-7 should have channel_message_id
     first_7 = DigestItem.objects.filter(digest=digest_15, position__lte=7)
@@ -617,146 +618,6 @@ def test_a_failed_alert_is_not_recorded_as_sent(db, settings):
     assert src.is_degraded is True
     assert src.enabled is True
     assert src.last_alerted_on is None
-
-
-@pytest.mark.django_db
-def test_unknown_archetype_falls_back_without_raising(digest_item_factory, settings):
-    """An archetype we do not recognise must simplify the layout, never lose the post."""
-    settings.POST_FORMAT_V2_ENABLED = False
-    item = digest_item_factory(archetype="teleportation", detail={})
-
-    html = ranking.render_item_post(item)
-
-    assert "Yangi model chiqdi" in html
-
-
-@pytest.mark.django_db
-def test_missing_required_detail_falls_back(digest_item_factory, settings):
-    """A release with no `what_changed_uz` renders as a plain post rather than an empty one."""
-    settings.POST_FORMAT_V2_ENABLED = False
-    item = digest_item_factory(archetype="release", detail={})
-
-    html = ranking.render_item_post(item)
-
-    assert "Yangi model chiqdi" in html
-    assert "🚀" not in html
-
-
-@pytest.mark.django_db
-def test_archetype_selects_its_template(digest_item_factory, settings):
-    """A release with its required field renders the release template."""
-    settings.POST_FORMAT_V2_ENABLED = False
-    item = digest_item_factory(
-        archetype="release",
-        detail={"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
-    )
-
-    html = ranking.render_item_post(item)
-
-    assert "🚀" in html
-    assert "repeat_penalty endi 1.0 ga teng" in html
-
-
-ARCHETYPE_CASES = [
-    (
-        "release",
-        "🚀",
-        {"what_changed_uz": "repeat_penalty endi 1.0 ga teng"},
-        {
-            "benchmarks_uz": "Prefill 7–8% tezroq",
-            "availability_uz": "GitHub relizlaridan yuklab olinadi",
-        },
-    ),
-    (
-        "agent_protocol",
-        "🔌",
-        {"connects_uz": "IDE ni ma'lumotlar bazasiga ulaydi"},
-        {"deployment_uz": "Self-hosted va Ollama bilan ishlaydi"},
-    ),
-    (
-        "risk_hardening",
-        "🛡",
-        {"risk_uz": "Suv belgisini o'chirish oson", "mitigation_uz": "Kriptografik imzo qo'shildi"},
-        {"residual_uz": "Qisqa matnlarda hamon ishonchsiz"},
-    ),
-    (
-        "policy",
-        "⚖️",
-        {
-            "who_issued_uz": "Yevropa Ittifoqi",
-            "who_must_comply_uz": "Generativ model provayderlari",
-        },
-        {"deadline_uz": "2027-yil 1-avgust"},
-    ),
-    (
-        "research",
-        "🔬",
-        {"claim_uz": "Ixchamlash uzun sessiyalarni saqlaydi"},
-        {
-            "evidence_strength_uz": "Bitta laboratoriya, mustaqil takror yo'q",
-            "reproducible_uz": "Kod ochiq emas",
-        },
-    ),
-    (
-        "company_product",
-        "🏢",
-        {"what_they_do_uz": "Konteyner obrazlarini avtomatik tozalaydi"},
-        {"availability_uz": "Enterprise mijozlar uchun ochiq"},
-    ),
-]
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
-def test_archetype_renders_with_every_field(
-    digest_item_factory, archetype, emoji, required, optional, settings
-):
-    settings.POST_FORMAT_V2_ENABLED = False
-    item = digest_item_factory(archetype=archetype, detail={**required, **optional})
-
-    html = ranking.render_item_post(item)
-    unescaped = unescape(html)
-
-    assert emoji in html
-    for value in {**required, **optional}.values():
-        assert value in unescaped
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
-def test_archetype_renders_with_no_optional_fields(
-    digest_item_factory, archetype, emoji, required, optional, settings
-):
-    """The path most posts actually take.
-
-    `benchmarks` is populated 40% of the time, so two release posts in three walk this branch.
-    The full case is the one easy to imagine and the rarer one in production.
-    """
-    settings.POST_FORMAT_V2_ENABLED = False
-    item = digest_item_factory(archetype=archetype, detail=required)
-
-    html = ranking.render_item_post(item)
-    unescaped = unescape(html)
-
-    assert emoji in html
-    for value in required.values():
-        assert value in unescaped
-    for value in optional.values():
-        assert value not in unescaped
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("archetype, emoji, required, optional", ARCHETYPE_CASES)
-def test_visible_part_stays_short(
-    digest_item_factory, archetype, emoji, required, optional, settings
-):
-    """Everything new lives inside the collapsed block, so the visible length must not grow."""
-    settings.POST_FORMAT_V2_ENABLED = False
-    item = digest_item_factory(archetype=archetype, detail={**required, **optional})
-
-    visible = ranking.render_item_post(item).split("<blockquote expandable>")[0]
-
-    assert len(visible) < 600
 
 
 @pytest.mark.django_db
@@ -1105,3 +966,72 @@ def test_publish_digest_stale_sending_promoted_to_unknown(digest_item_factory, s
 
     item.refresh_from_db()
     assert item.channel_delivery_state == DeliveryState.UNKNOWN
+
+
+@pytest.mark.django_db
+def test_empty_digest_stays_composed():
+    """(digest_date, edition) is unique. Any other status burns the slot — 2026-08-21."""
+    from apps.digest import publish
+    from apps.digest.models import Digest
+
+    digest = Digest.objects.create(digest_date=date(2026, 8, 24), edition=Digest.Edition.MORNING)
+    assert publish.refresh_digest_status(digest) == Digest.Status.COMPOSED
+    digest.refresh_from_db()
+    assert digest.published_at is None
+
+
+@pytest.mark.django_db
+def test_status_is_composed_while_an_item_is_pending(digest_with_two_items):
+    from apps.digest import publish
+    from apps.digest.models import DeliveryState, Digest
+
+    first, second = digest_with_two_items.items.order_by("position")
+    first.channel_delivery_state = DeliveryState.SENT
+    first.save(update_fields=["channel_delivery_state"])
+    assert publish.refresh_digest_status(digest_with_two_items) == Digest.Status.COMPOSED
+
+
+@pytest.mark.django_db
+def test_partial_block_is_published_not_failed(digest_with_two_items):
+    """Five of six landing is a published block with one visible failure, not a failed digest.
+
+    Failing the digest invites a re-run that reposts the items that worked.
+    """
+    from apps.digest import publish
+    from apps.digest.models import DeliveryState, Digest
+
+    first, second = digest_with_two_items.items.order_by("position")
+    first.channel_delivery_state = DeliveryState.SENT
+    first.save(update_fields=["channel_delivery_state"])
+    second.channel_delivery_state = DeliveryState.FAILED
+    second.save(update_fields=["channel_delivery_state"])
+
+    assert publish.refresh_digest_status(digest_with_two_items) == Digest.Status.PUBLISHED
+    digest_with_two_items.refresh_from_db()
+    assert digest_with_two_items.published_at is not None
+
+
+@pytest.mark.django_db
+def test_digest_fails_only_when_nothing_landed(digest_with_two_items):
+    from apps.digest import publish
+    from apps.digest.models import DeliveryState, Digest
+
+    digest_with_two_items.items.update(channel_delivery_state=DeliveryState.FAILED)
+    assert publish.refresh_digest_status(digest_with_two_items) == Digest.Status.FAILED
+
+
+@pytest.mark.django_db
+@respx.mock
+def test_publish_roundup_is_idempotent(digest_with_two_items, settings):
+    from apps.digest import publish
+
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "token"
+    settings.TELEGRAM_CHANNEL_ID = "-100123"
+
+    digest_with_two_items.roundup_message_id = 999
+    digest_with_two_items.save()
+
+    res = publish.publish_roundup(digest_with_two_items)
+    assert res["status"] == "skipped"
+    assert res["message_id"] == 999

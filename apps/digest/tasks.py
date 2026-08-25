@@ -11,7 +11,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from . import connectors, extract
-from .models import Article, Source
+from .models import Article, DeliveryState, Source
 
 log = logging.getLogger(__name__)
 
@@ -351,16 +351,33 @@ def compose_and_publish(
         candidates = ranking.select_digest_candidates(target_date)
         candidate_article_ids = [c[0].id for c in candidates]
 
-        # Step 3: Run Editorial Stage on selected candidates
+        # Step 3: Run the editorial stage on the selected candidates.
+        #
+        # The return value is the set of articles that produced a usable translation, and
+        # discarding it is what let an item whose editorial failed reach the renderer, raise
+        # ValueError and fail the whole digest. Selection carries a margin (see
+        # DIGEST_SELECT_MARGIN) so dropping one or two still fills the block.
         if candidate_article_ids:
             log.info(
                 "Running editorial stage for %d candidate articles", len(candidate_article_ids)
             )
-            llm.analyse_for_digest_logic(candidate_article_ids)
+            analyses = llm.analyse_for_digest_logic(candidate_article_ids)
+            translated = {a.article_id for a in analyses}
+            dropped = [cid for cid in candidate_article_ids if cid not in translated]
+            if dropped:
+                log.warning(
+                    "Dropping %d candidates with no usable translation: %s",
+                    len(dropped),
+                    dropped,
+                )
+            max_items = getattr(settings, "DIGEST_MAX_ITEMS", 6)
+
+            candidates = [c for c in candidates if c[0].id in translated][:max_items]
 
         # Step 4: Compose Digest
         try:
             digest = ranking.compose_digest(target_date, edition=edition, candidates=candidates)
+
         except IntegrityError:
             log.warning(
                 "Digest for %s (%s) already exists. Using existing composed digest.",
@@ -373,8 +390,14 @@ def compose_and_publish(
         if settings.BENCHMARK_VERIFICATION_ENABLED:
             verification.apply_cluster_evidence(digest)
 
-        # Step 6: Publish Digest
-        res = publish.publish_digest(digest)
+        # Step 6: Trigger the drip. Item #1 goes out immediately; items #2-#6 follow on the
+        # two-hour schedule. The manual publish_digest bulk path stays available for operators.
+        if getattr(settings, "PUBLISHING_ENABLED", False):
+            publish_next_item.delay(digest.id)
+            res = {"status": "drip_started", "digest_id": digest.id}
+        else:
+            log.info("[KILL SWITCH ACTIVE] Suppressed drip publish for digest %s", digest.id)
+            res = {"status": "suppressed", "digest_id": digest.id}
 
         # Step 7: Record pipeline freshness in Redis
         try:
@@ -403,6 +426,104 @@ def compose_and_publish(
         log.error("Failed in compose_and_publish for %s (%s): %s", target_date, edition, exc)
         publish.send_admin_alert(f"Failed compose_and_publish for {target_date} ({edition}): {exc}")
         return {"error": str(exc), "digest_date": str(target_date), "edition": edition}
+
+
+#: Delivery states that still owe the block an attempt.
+#:
+#: FAILED is NOT here, and that is the whole point. It is terminal in
+#: publish.TERMINAL_DELIVERY_STATES, so listing it here made the two disagree: the drip
+#: re-sent a permanently failed item at every tick forever, and because the item never left
+#: the "unfinished" set, the block never completed and its roundup never fired.
+UNFINISHED_DELIVERY_STATES = (DeliveryState.PENDING, DeliveryState.SENDING)
+
+
+@shared_task(name="digest.publish_next_item")
+def publish_next_item(digest_id: int | None = None) -> dict:
+    """Find the oldest active digest, send its next unposted item, and refresh its status.
+
+    Triggered:
+    1. Immediately by compose_and_publish so item #1 lands when the block is ready (ADR-004 §6).
+    2. Every two hours by Celery beat so items #2-#6 drip out across the window.
+    3. Manually by an operator specifying digest_id to resume a specific block.
+
+    When every item in the block is sent, triggers publish_roundup.delay(digest.id).
+    """
+    from . import publish
+    from .models import Digest
+
+    if digest_id is not None:
+        digest = Digest.objects.filter(id=digest_id).first()
+        if not digest:
+            log.warning("publish_next_item called with unknown digest_id=%s", digest_id)
+            return {"status": "idle", "reason": "unknown_digest"}
+    else:
+        # FIFO by composition time, so a morning block delayed by a slow LLM stage finishes
+        # before the evening block starts. Ordering on `edition` would do the opposite:
+        # TextChoices sort alphabetically, and "evening" < "morning".
+        digest = (
+            Digest.objects.filter(items__channel_delivery_state__in=UNFINISHED_DELIVERY_STATES)
+            .distinct()
+            .order_by("composed_at")
+            .first()
+        )
+        if not digest:
+            log.info("No active digest has pending items.")
+            return {"status": "idle", "reason": "no_pending_items"}
+
+    # Lowest position that still owes an attempt. FAILED and UNKNOWN are stepped past:
+    # publish_digest_item refuses to retry UNKNOWN automatically, and a FAILED item has
+    # already had its attempt, so retrying either here would stall the rest of the block.
+    item = (
+        digest.items.filter(channel_delivery_state__in=UNFINISHED_DELIVERY_STATES)
+        .order_by("position")
+        .first()
+    )
+    if not item:
+        publish.refresh_digest_status(digest)
+        return {"status": "idle", "reason": "digest_finished", "digest_id": digest.id}
+
+    log.info(
+        "Drip publishing item #%d (%s) for digest %s (%s)",
+        item.position,
+        item.article.title,
+        digest.digest_date,
+        digest.edition,
+    )
+    res = publish.publish_digest_item(item)
+    new_status = publish.refresh_digest_status(digest)
+
+    # Nothing left to attempt means the block is done, so the roundup goes out. Causal, not
+    # scheduled: a clock-driven roundup would index a block whose last post was still queued.
+    has_remaining = digest.items.filter(
+        channel_delivery_state__in=UNFINISHED_DELIVERY_STATES
+    ).exists()
+    if not has_remaining:
+        try:
+            publish_roundup.delay(digest.id)
+        except Exception as exc:
+            # Never silent: a swallowed dispatch failure means the block's index is missing
+            # from the channel with nothing in the log to say why.
+            log.error("Could not dispatch the roundup for digest %s: %s", digest.id, exc)
+
+    return {
+        "status": res.get("status", "unknown"),
+        "digest_id": digest.id,
+        "item_id": item.id,
+        "position": item.position,
+        "digest_status": new_status,
+    }
+
+
+@shared_task(name="digest.publish_roundup")
+def publish_roundup(digest_id: int) -> dict:
+    from . import publish
+    from .models import Digest
+
+    digest = Digest.objects.filter(id=digest_id).first()
+    if not digest:
+        log.warning("publish_roundup task called with unknown digest_id=%s", digest_id)
+        return {"status": "idle", "reason": "unknown_digest"}
+    return publish.publish_roundup(digest)
 
 
 @shared_task(name="digest.heartbeat")

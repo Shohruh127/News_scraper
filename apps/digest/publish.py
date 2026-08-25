@@ -737,6 +737,42 @@ def publish_digest_item(
             client.close()
 
 
+#: A delivery state that will not change on its own. UNKNOWN is terminal on purpose:
+#: publish_digest_item refuses to retry it automatically, so treating it as unfinished would
+#: stall a block forever behind an item that can only be resolved by hand.
+TERMINAL_DELIVERY_STATES = (DeliveryState.SENT, DeliveryState.FAILED, DeliveryState.UNKNOWN)
+
+
+def refresh_digest_status(digest: Digest) -> str:
+    """Set the digest's status from its items, and return it.
+
+    Items are now spread over twelve hours, so there is no single moment at which a digest
+    becomes published. The per-item truth already lives in DigestItem.channel_delivery_state;
+    the digest reads it rather than keeping a second copy.
+
+    A digest with no items always stays COMPOSED. (digest_date, edition) is unique, so any
+    other status refuses every later attempt at the slot — including the pipeline's own, once
+    the LLM stage finishes. That is what cost 2026-08-21 its post.
+    """
+    states = list(digest.items.values_list("channel_delivery_state", flat=True))
+    if not states:
+        return digest.status
+    if any(state not in TERMINAL_DELIVERY_STATES for state in states):
+        return digest.status
+
+    if DeliveryState.SENT in states:
+        digest.status = Digest.Status.PUBLISHED
+        fields = ["status"]
+        if digest.published_at is None:
+            digest.published_at = timezone.now()
+            fields.append("published_at")
+        digest.save(update_fields=fields)
+    else:
+        digest.status = Digest.Status.FAILED
+        digest.save(update_fields=["status"])
+    return digest.status
+
+
 def publish_digest(
     digest: Digest,
     client: httpx.Client | None = None,
@@ -873,12 +909,10 @@ def publish_digest(
                 log.debug("Error releasing publish lock: %s", exc)
 
     # --- Status decision ---
-    # Only a channel post that did not go out fails a digest. An appendix that did not land
-    # leaves a degraded post, and marking the digest FAILED for it invites a re-run that
-    # posts everything a second time.
+    # The status now follows the items (refresh_digest_status), so the manual bulk path and
+    # the drip path cannot disagree about what a partially delivered block means.
+    refresh_digest_status(digest)
     if failed_items:
-        digest.status = Digest.Status.FAILED
-        digest.save(update_fields=["status"])
         alert_msg = (
             f"Digest {digest.digest_date}: {sent_count}/{len(items)} items posted. "
             f"Failed: {', '.join(failed_items)}"
@@ -886,19 +920,12 @@ def publish_digest(
         send_admin_alert(alert_msg)
         log.error(alert_msg)
     elif not items:
-        # An empty digest must not claim its slot. (digest_date, edition) is unique, so
-        # marking this published refuses every later attempt at the slot — including the
-        # pipeline's own, once the LLM stage finally finishes. Measured 2026-08-21: the
-        # clock published an empty morning digest and the day produced no post at all.
         log.warning(
             "Digest %s (%s) has no items; leaving it unpublished so the slot stays open.",
             digest.digest_date,
             digest.edition,
         )
     else:
-        digest.status = Digest.Status.PUBLISHED
-        digest.published_at = timezone.now()
-        digest.save(update_fields=["status", "published_at"])
         log.info("Digest %s published: %s items posted", digest.digest_date, sent_count)
 
     if appendix_failures:
@@ -921,3 +948,70 @@ def publish_digest(
         "status": digest.status,
         "suppressed": False,
     }
+
+
+def publish_roundup(digest: Digest, client: httpx.Client | None = None) -> dict:
+    """Send the closing summary post for a completed drip block to the channel.
+
+    Idempotent: if digest.roundup_message_id is already set, skips.
+    """
+    if digest.roundup_message_id:
+        log.info(
+            "Roundup for digest %s already published (message %s)",
+            digest.id,
+            digest.roundup_message_id,
+        )
+        return {
+            "status": "skipped",
+            "message_id": digest.roundup_message_id,
+            "digest_id": digest.id,
+        }
+
+    if not getattr(settings, "PUBLISHING_ENABLED", False):
+        log.info("[KILL SWITCH ACTIVE] Suppressed roundup for digest %s", digest.id)
+        return {"status": "suppressed", "digest_id": digest.id}
+
+    from . import ranking
+
+    text = ranking.render_roundup_post(digest)
+
+    channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
+    bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    if not channel_id or not bot_token:
+        log.warning("Telegram channel or token not configured for roundup")
+        return {"status": "failed", "error": "not_configured"}
+
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=30)
+        close_client = True
+
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": channel_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": {"is_disabled": True},
+        }
+        resp = client.post(url, json=payload)
+        data = resp.json()
+        if data.get("ok"):
+            msg_id = data["result"]["message_id"]
+            digest.roundup_message_id = msg_id
+            digest.save(update_fields=["roundup_message_id"])
+            log.info("Roundup for digest %s published as message %s", digest.id, msg_id)
+            return {"status": "sent", "message_id": msg_id, "digest_id": digest.id}
+        else:
+            log.error("Failed to publish roundup for digest %s: %s", digest.id, data)
+            return {
+                "status": "failed",
+                "error": data.get("description", "unknown"),
+                "digest_id": digest.id,
+            }
+    except Exception as exc:
+        log.error("Error publishing roundup for digest %s: %s", digest.id, exc)
+        return {"status": "failed", "error": str(exc), "digest_id": digest.id}
+    finally:
+        if close_client:
+            client.close()

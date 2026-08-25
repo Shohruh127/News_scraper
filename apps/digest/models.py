@@ -114,11 +114,17 @@ class Analysis(models.Model):
         db_index=True,
     )
     model_tag = models.CharField(max_length=60)
-    #: Ollama digest. On this server the 8B model has no tag but `latest`, so a
-    #: repointed tag is only detectable through this field.
+    #: Ollama digest. Always empty since the direct Ollama path was removed on 2026-08-25 —
+    #: it was the only provider exposing /api/tags. Rows written before then carry real
+    #: values, which is why the column stays.
     model_digest = models.CharField(max_length=64, blank=True)
     payload = models.JSONField()
     latency_ms = models.PositiveIntegerField()
+    #: Reported by the provider, not estimated. NULL means the row predates this column
+    #: (2026-08-25) or the provider returned no usage block — deliberately not 0, which
+    #: would make an unmeasured call look free.
+    input_tokens = models.PositiveIntegerField(null=True, blank=True)
+    output_tokens = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -158,6 +164,11 @@ class Digest(models.Model):
     status = models.CharField(max_length=20, choices=Status, default=Status.COMPOSED)
     composed_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
+    roundup_message_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Telegram message ID of the closing summary post in the channel.",
+    )
 
     class Meta:
         ordering = ["-digest_date", "-edition"]

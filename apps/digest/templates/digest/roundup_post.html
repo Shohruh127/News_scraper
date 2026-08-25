@@ -1,0 +1,5 @@
+<b>{{ title }}</b>
+{% for item in items %}
+{{ forloop.counter }}. <a href="{{ item.channel_url }}">{{ item.headline }}</a>{% endfor %}
+
+#dayjest

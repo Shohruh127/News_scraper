@@ -44,4 +44,19 @@ app.conf.beat_schedule = {
         "task": "digest.dispatch_worker_heartbeats",
         "schedule": 30.0,
     },
+    # --- Drip publishing ---
+    # Odd hours, not even ones, because the ticks are aligned to the triage entries above:
+    # triage runs at 08:30 and 18:00, so the first tick a freshly composed block can use is
+    # 09:00 and 19:00. On even hours a morning block composed at 08:40 would wait until
+    # 10:00 with an empty 08:00 tick behind it.
+    #
+    # `expires` is safe here and deliberate, unlike on the triage entries: a dropped tick
+    # delays one post by two hours, where a dropped triage message costs the whole edition.
+    # Without it, a tick queued behind a busy worker fires late and puts two posts out back
+    # to back.
+    "drip-publish": {
+        "task": "digest.publish_next_item",
+        "schedule": crontab(minute=0, hour="1,3,5,7,9,11,13,15,17,19,21,23"),
+        "options": {"expires": 3600},
+    },
 }
