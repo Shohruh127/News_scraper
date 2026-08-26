@@ -179,6 +179,9 @@ TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHANNEL_ID = env("TELEGRAM_CHANNEL_ID", default="")
 TELEGRAM_GROUP_ID = env("TELEGRAM_GROUP_ID", default="")
 TELEGRAM_ADMIN_CHAT_ID = env("TELEGRAM_ADMIN_CHAT_ID", default="")
+#: Target for `eval_editorial_uz --post`. Unset means the command refuses to post, which is
+#: what makes an eval run on the server unable to reach the live channel.
+TELEGRAM_EVAL_CHANNEL_ID = env("TELEGRAM_EVAL_CHANNEL_ID", default="")
 TELEGRAM_FORWARD_TTL = env.int("TELEGRAM_FORWARD_TTL", default=300)
 PUBLISHING_ENABLED = env("PUBLISHING_ENABLED")
 

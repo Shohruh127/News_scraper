@@ -268,3 +268,17 @@ def test_the_call_runs_on_the_deep_tier(risk_article, settings):
     llm.editorial_uz_for_article(risk_article)
 
     assert json.loads(route.calls[0].request.content)["model"] == "smart"
+
+
+def test_posting_is_refused_without_an_eval_channel(settings):
+    """The guard exists because a stray compose_and_publish reached worker-publish on
+    2026-08-26 through a path nobody had modelled. The server will not set this key."""
+    from io import StringIO
+
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    settings.TELEGRAM_EVAL_CHANNEL_ID = ""
+
+    with pytest.raises(CommandError, match="TELEGRAM_EVAL_CHANNEL_ID"):
+        call_command("eval_editorial_uz", "--post", stdout=StringIO())
