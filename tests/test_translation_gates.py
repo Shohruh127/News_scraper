@@ -396,3 +396,23 @@ def test_the_article_title_supplies_the_headline_vocabulary():
         uz_fields={"headline_uz": "Ollama Yangi Runner Chiqardi"},
     )
     assert violations, "English Title Case in the Uzbek headline must be caught"
+
+
+def test_a_proper_noun_from_the_article_body_is_not_a_headline_violation():
+    """The 2026-08-24 defect in its new shape, and the reason en_context is passed.
+
+    `Enzyme` appeared in `lead_en` and not in `headline_en`. A headline-only vocabulary
+    flagged a correct proper noun, the retry flagged it again, and article 11 lost its
+    translation permanently. After the merge the vocabulary is the article text, so
+    dropping it reintroduces exactly that failure.
+
+    Written 2026-08-26 because the mutation `en_context=article_text` -> `en_context=""`
+    survived: three tests covered the entry point and none of them covered the context.
+    """
+    from apps.digest.translation_gates import validate_against_source
+
+    assert not validate_against_source(
+        article_title="Asana replaces its testing stack",
+        article_text="Asana migrated off Enzyme, the testing library, in two weeks.",
+        uz_fields={"headline_uz": "Asana Enzyme dan voz kechdi"},
+    )

@@ -4,8 +4,11 @@ Post quality has no automatic label, so the owner is the judge. This prints both
 and, with --post, sends them to a test channel so they can be read as real Telegram posts
 rather than as terminal text.
 
-Nothing is stored. No Digest, no DigestItem, no Analysis row — the command can be run
-repeatedly without touching the pipeline.
+No Digest and no DigestItem is created, so this command cannot claim a publishing slot
+or put a post into a block. The new path writes nothing at all. The old path does write the
+two Analysis rows it always writes, because it runs the real two-stage flow — they are the
+same rows the pipeline would write for that article, so a re-run costs those two calls
+again rather than corrupting anything.
 """
 
 from django.core.management.base import BaseCommand, CommandError
