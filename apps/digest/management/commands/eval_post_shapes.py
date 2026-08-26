@@ -22,36 +22,40 @@ class Command(BaseCommand):
             "--limit",
             type=int,
             default=3,
-            help="How many articles to compare. Each costs two editorial calls.",
+            help="How many comparisons to print. Each costs two editorial calls.",
         )
 
     def handle(self, *args, **options):
-        articles = [
-            a
-            for a in Article.objects.filter(analyses__stage=Analysis.Stage.CLASSIFICATION)
+        limit = options["limit"]
+        # `limit` counts comparisons produced, not articles examined. An article whose topic
+        # maps to the general instruction yields no comparison — both halves would be the
+        # same prompt — so slicing the queryset to `limit` answers a request for five with
+        # one and reads like a broken command.
+        candidates = (
+            Article.objects.filter(analyses__stage=Analysis.Stage.CLASSIFICATION)
             .distinct()
             .select_related("source")
             .prefetch_related("analyses")
-            .order_by("-fetched_at")[: options["limit"]]
-        ]
-        if not articles:
-            self.stdout.write("No classified articles to compare.")
-            return
+            .order_by("-fetched_at")
+        )
 
-        for article in articles:
+        compared = 0
+        skipped = 0
+        for article in candidates:
+            if compared >= limit:
+                break
+
             topic = llm._classified_topic(article)
             shape = llm.shape_for(topic)
+            if shape == llm.SHAPE_GENERAL:
+                skipped += 1
+                continue
+
+            compared += 1
             self.stdout.write("\n" + "=" * 72)
             self.stdout.write(f"{article.title[:68]}")
             self.stdout.write(f"topic={topic}  shape={shape}")
             self.stdout.write("=" * 72)
-
-            if shape == llm.SHAPE_GENERAL:
-                self.stdout.write(
-                    "  This topic maps to the general instruction, so both sides would be"
-                    " identical. Skipped."
-                )
-                continue
 
             for label, block_key in (("GENERAL", llm.SHAPE_GENERAL), (shape.upper(), shape)):
                 try:
@@ -80,7 +84,16 @@ class Command(BaseCommand):
                 self.stdout.write(f"    body_1    {p.get('body_1_en', '')}")
                 self.stdout.write(f"    kicker    {p.get('kicker_en', '')}")
 
+        if not compared:
+            self.stdout.write(
+                f"No comparisons to print. {skipped} classified article(s) were examined and"
+                " every one maps to the general instruction, so both halves would be"
+                " identical."
+            )
+            return
+
         self.stdout.write(
+            f"\n  {compared} comparison(s); {skipped} article(s) skipped as general-shape."
             "\n  Read the pairs. The question is which lead answers what a reader of this"
             "\n  kind of story actually wants first, not which reads more smoothly."
         )

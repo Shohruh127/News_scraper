@@ -1281,13 +1281,19 @@ def _normalize_uz_payload(payload: dict) -> dict:
 def _classified_topic(article: Article) -> str | None:
     """The topic the deep tier assigned, or None if the article was never classified.
 
-    Ordered newest-first because a re-run leaves more than one classification row and the
-    latest is the live verdict — the same rule select_digest_candidates uses.
+    The newest row wins: a re-run leaves more than one classification and the latest is the
+    live verdict, which is the rule select_digest_candidates uses too.
+
+    Reads `analyses.all()` rather than filtering in the database on purpose. The caller
+    prefetches `analyses`, and a `.filter()` on a prefetched related manager issues a fresh
+    query and throws that cache away — so the prefetch would have bought nothing.
     """
-    latest = (
-        article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION).order_by("-created_at").first()
-    )
-    return latest.topic if latest else None
+    classifications = [
+        a for a in article.analyses.all() if a.stage == Analysis.Stage.CLASSIFICATION
+    ]
+    if not classifications:
+        return None
+    return max(classifications, key=lambda a: a.created_at).topic
 
 
 def analyse_for_digest_logic(
