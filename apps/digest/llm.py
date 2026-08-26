@@ -1663,6 +1663,32 @@ def analyse_for_digest_logic(
     return created
 
 
+def editorial_uz_for_article(article: Article, client: httpx.Client | None = None) -> ChatResult:
+    """Read the article and write the Uzbek post in one call (2026-08-26 design).
+
+    Phase 1: nothing calls this from the pipeline. `analyse_for_digest_logic` still runs the
+    two-stage flow, so this can be measured against it before anything is replaced.
+
+    No Analysis row is written here. The caller decides whether the result is worth storing,
+    which keeps the eval command from polluting the pipeline's data.
+    """
+    block_key = shape_for(_classified_topic(article))
+    return _editorial_call(
+        prompt=EDITORIAL_UZ_PROMPT.format(
+            block=UZ_BLOCKS[block_key],
+            title=article.title,
+            source=article.source.name if article.source else "",
+            text=(article.extracted_text or "")[:8000],
+        ),
+        schema=EDITORIAL_UZ_SCHEMA,
+        model_cls=EditorialUz,
+        num_predict=settings.EDITORIAL_NUM_PREDICT,
+        client=client,
+        provider=settings.EDITORIAL_UZ_PROVIDER,
+        tier=TIER_DEEP,
+    )
+
+
 def _record_analysis(article, stage, result: ChatResult) -> Analysis:
     """Store one call. Every Analysis row goes through here so none forgets its cost."""
     return Analysis.objects.create(

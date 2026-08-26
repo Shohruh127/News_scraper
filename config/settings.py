@@ -135,6 +135,10 @@ LLM_MAX_CONCURRENCY = 2
 LLM_PROVIDER = env("LLM_PROVIDER", default="gateway")
 EDITORIAL_EN_PROVIDER = env("EDITORIAL_EN_PROVIDER", default=LLM_PROVIDER)
 TRANSLATION_PROVIDER = env("TRANSLATION_PROVIDER", default=LLM_PROVIDER)
+#: The single-stage Uzbek editorial (2026-08-26 design). Defaults to LLM_PROVIDER like the
+#: two stages it replaces; CLASSIFIER_PROVIDER deliberately does not, because its volume is
+#: several hundred calls a day and must not move silently.
+EDITORIAL_UZ_PROVIDER = env("EDITORIAL_UZ_PROVIDER", default=LLM_PROVIDER)
 #: Uzbek tokenises poorly, so a 1200-token cap truncated the JSON mid-object and the
 #: whole translation was lost. Measured: 2500 gives 7/7 twice, 1200 gave 2/7.
 TRANSLATION_NUM_PREDICT = env.int("TRANSLATION_NUM_PREDICT", default=2500)

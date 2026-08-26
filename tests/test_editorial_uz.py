@@ -3,7 +3,14 @@
 Phase 1 builds this beside the two-stage flow. Nothing here touches the pipeline.
 """
 
+import json
+import re
+
+import httpx
 import pytest
+import respx
+
+from apps.digest.models import Analysis, Article, Source
 
 pytestmark = pytest.mark.django_db
 
@@ -116,7 +123,6 @@ def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
 def _example_payloads():
     """Every JSON object under the examples heading, parsed."""
     import json
-    import re
 
     from apps.digest.llm import EDITORIAL_UZ_PROMPT
 
@@ -145,7 +151,6 @@ def test_the_examples_obey_the_limits_they_teach():
 
 def test_the_examples_are_one_sentence_each():
     """Three sentences total is the whole post contract."""
-    import re
 
     for payload in _example_payloads():
         for field in ("lead_uz", "body_1_uz", "kicker_uz"):
@@ -153,3 +158,113 @@ def test_the_examples_are_one_sentence_each():
             assert len(sents) == 1, f"{field} must be exactly one sentence"
             assert payload[field].rstrip().endswith("."), f"{field} must end with a full stop"
         assert not payload["headline_uz"].endswith("."), "the headline is a label"
+
+
+UZ_PAYLOAD = {
+    "headline_uz": "Qwen ochiq model chiqardi",
+    "lead_uz": "Qwen jamoasi 123B parametrli modelni ochiq taqdim etdi.",
+    "body_1_uz": "Model 128k kontekstga ega.",
+    "kicker_uz": "Shartnomasiz kuchli model.",
+    "evidence_level": "vendor_claim_only",
+    "technical": {"repo_url": "https://example.com/repo", "local_deployable": True},
+}
+
+
+@pytest.fixture
+def risk_article(db):
+    source = Source.objects.create(
+        name="uz_src", connector=Source.Connector.RSS, url="https://e.test/rss", priority=80
+    )
+    article = Article.objects.create(
+        source=source,
+        canonical_url="https://e.test/a",
+        content_hash="uz_h1",
+        title="A jailbreak bypasses the content filter",
+        extracted_text="Details of the jailbreak. " * 40,
+        status=Article.Status.CLASSIFIED,
+    )
+    Analysis.objects.create(
+        article=article,
+        stage=Analysis.Stage.CLASSIFICATION,
+        model_tag="smart",
+        payload={
+            "primary_topic": "safety_security",
+            "maturity": "live_product",
+            "novelty": 7,
+            "evidence": 7,
+            "production_readiness": 7,
+            "reason": "security",
+        },
+        latency_ms=100,
+    )
+    return article
+
+
+@respx.mock
+def test_one_call_produces_the_uzbek_post(risk_article, settings):
+    """One request, not two. The two-stage flow costs 3600 + 2700 input tokens."""
+    from apps.digest import llm
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+    settings.GATEWAY_SMART_MODEL = "smart"
+
+    route = respx.post("http://gw.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+    )
+
+    result = llm.editorial_uz_for_article(risk_article)
+
+    assert route.call_count == 1, "one call replaces the editorial+translation pair"
+    assert result.payload["headline_uz"].startswith("Qwen")
+    assert result.payload["technical"]["repo_url"] == "https://example.com/repo"
+
+
+@respx.mock
+def test_the_call_uses_the_block_for_the_classified_topic(risk_article, settings):
+    """A safety item must be written to the risk block, not the release one."""
+    from apps.digest import llm
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    sent = {}
+
+    def capture(request):
+        sent.update(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
+    llm.editorial_uz_for_article(risk_article)
+
+    prompt = sent["messages"][0]["content"]
+    assert llm.UZ_BLOCKS["risk"].strip().splitlines()[0] in prompt
+    assert llm.UZ_BLOCKS["release"].strip().splitlines()[0] not in prompt
+
+
+@respx.mock
+def test_the_call_runs_on_the_deep_tier(risk_article, settings):
+    """It comprehends the article and writes the post; translation's fast tier is not enough."""
+    from apps.digest import llm
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+    settings.GATEWAY_FAST_MODEL = "fast"
+    settings.GATEWAY_SMART_MODEL = "smart"
+
+    route = respx.post("http://gw.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+    )
+
+    llm.editorial_uz_for_article(risk_article)
+
+    assert json.loads(route.calls[0].request.content)["model"] == "smart"
