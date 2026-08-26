@@ -1,6 +1,8 @@
 """The single-stage Uzbek editorial (2026-08-26 design).
 
-Phase 1 builds this beside the two-stage flow. Nothing here touches the pipeline.
+One call reads the article and writes the post. This file covers the prompt, the class
+blocks, the call, and the pipeline function that runs it — `analyse_for_digest_logic` is
+this path now, so these tests do touch the pipeline.
 """
 
 import json
@@ -536,3 +538,104 @@ def test_strict_json_schema_is_requested_not_json_object(risk_article, settings)
 
     assert captured["response_format"]["type"] == "json_schema"
     assert captured["response_format"]["json_schema"]["strict"] is True
+
+
+# --- Recovered from tests/test_editorial.py -----------------------------------
+# That file was deleted whole when the two-stage flow went, and 41 of its 48 tests went
+# correctly with it. These five did not: they cover code the single-stage path still runs,
+# and the suite was green without them because nothing was left to notice.
+
+
+def test_triage_keep_rules_are_independent():
+    """A-D must each be sufficient on their own.
+
+    Measured 2026-08-25 while tuning: an earlier draft said the naming test "overrides
+    everything else", and the model read that as subordinating the other rules to it.
+    "Disrupting a covert influence campaign" names no model, so it was dropped — recall
+    fell to 0.80 on the replay. Stating the rules as independent restored it to 1.00.
+    """
+    from apps.digest.llm import TRIAGE_PROMPT_TEMPLATE
+
+    assert "ANY ONE of these holds" in TRIAGE_PROMPT_TEMPLATE
+    assert "They are independent" in TRIAGE_PROMPT_TEMPLATE
+    for rule in ("A.", "B.", "C.", "D."):
+        assert rule in TRIAGE_PROMPT_TEMPLATE, f"keep rule {rule} is missing"
+    # Rule C is the one an override clause silently disables.
+    assert "even when nothing is named" in TRIAGE_PROMPT_TEMPLATE
+
+
+def test_triage_does_not_ask_the_model_to_judge_significance():
+    """Significance needs the article. Triage decides whether the article is worth reading,
+    and says so, or the fast tier starts guessing at what classification is for."""
+    from apps.digest.llm import TRIAGE_PROMPT_TEMPLATE
+
+    assert "cannot tell how significant it is, keep it" in TRIAGE_PROMPT_TEMPLATE
+    assert "belongs to the classification stage" in TRIAGE_PROMPT_TEMPLATE
+
+
+def test_a_blank_local_deployable_does_not_cost_a_retry():
+    """The one non-string field in `technical`, and models returned '' for it.
+
+    Measured 2026-08-26 on MiMo: '' raised ValidationError, `_editorial_call` retried, and
+    the article cost 5346 input tokens instead of 2682. Blank means the article did not
+    say, which is exactly the default. The validator moved to EditorialUz with the merge;
+    its test did not, and was restored the same day.
+    """
+    from apps.digest.llm import EditorialUz
+
+    parsed = EditorialUz.model_validate({"headline_uz": "H", "technical": {"local_deployable": ""}})
+    assert parsed.technical.local_deployable is False
+
+
+def test_rendering_requires_the_uzbek_editorial(risk_article):
+    """Rendering fails loudly rather than falling back (ADR-003).
+
+    There is no English text to fall back to any more, which makes the loud failure the
+    only behaviour left — and therefore the one worth pinning.
+    """
+    from datetime import date
+
+    from apps.digest import ranking
+    from apps.digest.models import Digest, DigestItem
+
+    digest = Digest.objects.create(digest_date=date(2026, 8, 26))
+    DigestItem.objects.create(digest=digest, article=risk_article, position=1, score=0.85)
+
+    with pytest.raises(ValueError, match="lacks editorial_uz"):
+        ranking.render_item_post(digest.items.first())
+
+
+@respx.mock
+def test_an_article_with_no_classification_gets_the_general_block(settings):
+    """shape_for(None) returns the general key. Nothing in the pipeline reaches editorial
+    without a classification, but a direct call must not crash on one."""
+    from apps.digest import llm
+
+    source = Source.objects.create(
+        name="uz_src_nc", connector=Source.Connector.RSS, url="https://e.test/rss2", priority=50
+    )
+    article = Article.objects.create(
+        source=source,
+        canonical_url="https://e.test/nc",
+        content_hash="uz_nc",
+        title="Something happened",
+        extracted_text="Body text. " * 40,
+        status=Article.Status.CLASSIFIED,
+    )
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    prompts = []
+
+    def capture(request):
+        prompts.append(json.loads(request.content)["messages"][0]["content"])
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
+    llm.analyse_for_digest_logic([article.id])
+
+    assert "Maqolada ko'p fakt bo'ladi" in prompts[0]
