@@ -434,7 +434,48 @@ claim about what matters. Where the block gives a word count, that count is the 
    term that has a real Uzbek equivalent, and never calque one that should stay English.
 7. Plain text only: no markdown bold, no asterisks, no backticks, no list markers.
 
-%%EXAMPLES%%
+## Namunalar
+
+Misol 1 - model relizi, raqamlar bor:
+Maqola: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context,
+scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."
+Chiquvchi JSON:
+{{
+  "headline_uz": "Mistral-Large-2 ochiq vazn bilan chiqdi",
+  "lead_uz": "Mistral jamoasi 123B parametrli Mistral-Large-2 modelini ochiq taqdim etdi.",
+  "body_1_uz": "Model 128k kontekstga ega va MMLU testida 84% natija ko'rsatdi.",
+  "kicker_uz": "API shartnomasisiz kuchli model.",
+  "evidence_level": "vendor_claim_only",
+  "technical": {{
+    "what_was_built": "An open-weight large language model.",
+    "architecture": "123B parameters, 128k context window",
+    "license": "Apache-2.0",
+    "repo_url": "https://github.com/mistralai/mistral-large-2",
+    "api_url": "", "install": "", "benchmarks": "84% on MMLU", "limitations": "",
+    "local_deployable": true
+  }}
+}}
+
+Misol 2 - mahsulot e'loni, raqam yo'q. body_1_uz nima qilishiga e'tibor ber: maqolada
+raqam yo'q, shuning uchun u mexanizmni nomlaydi. Raqam to'qimaydi va lead'ni takrorlamaydi.
+Maqola: "Replit is opening a free tier of its agent, powered by GPT-5.6 Luna. The free
+tier runs planning and experimentation in the same workspace where code is written. No
+pricing or usage limits were published."
+Chiquvchi JSON:
+{{
+  "headline_uz": "Replit bepul agent darajasini ochdi",
+  "lead_uz": "Replit GPT-5.6 Luna asosidagi kodlash agentining bepul darajasini ochdi.",
+  "body_1_uz": "Rejalashtirish va tajriba kod yoziladigan bir ish maydonida ishlaydi.",
+  "kicker_uz": "Agentni sinash endi byudjet talab qilmaydi.",
+  "evidence_level": "vendor_claim_only",
+  "technical": {{
+    "what_was_built": "A free tier of a coding agent.",
+    "architecture": "", "license": "", "repo_url": "", "api_url": "", "install": "",
+    "benchmarks": "",
+    "limitations": "No pricing or usage limits were published.",
+    "local_deployable": false
+  }}
+}}
 
 ARTICLE
 Title: {title}

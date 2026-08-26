@@ -111,3 +111,45 @@ def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
 
     rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Style rules")[0]
     assert "EXCEPT" in rule and "local_deployable, which is a boolean" in rule
+
+
+def _example_payloads():
+    """Every JSON object under the examples heading, parsed."""
+    import json
+    import re
+
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    section = EDITORIAL_UZ_PROMPT.split("## Namunalar")[1].split("ARTICLE")[0]
+    # The prompt doubles its braces for str.format; undo that before parsing.
+    section = section.replace("{{", "{").replace("}}", "}")
+    return [json.loads(m) for m in re.findall(r"\{\s*\"headline_uz\".*?\n\}", section, re.S)]
+
+
+def test_the_examples_are_valid_json():
+    """A previous prompt shipped examples with real newlines inside string values."""
+    payloads = _example_payloads()
+    assert len(payloads) == 2, "two examples"
+
+
+def test_the_examples_obey_the_limits_they_teach():
+    """A model copies a shown example over a stated rule, so an example that breaks the
+    cap teaches the model to break it. Measured 2026-08-26: the shape block's content
+    instruction beat a limit stated later in the prompt."""
+    caps = {"headline_uz": 8, "lead_uz": 14, "body_1_uz": 16, "kicker_uz": 8}
+    for payload in _example_payloads():
+        for field, cap in caps.items():
+            words = len(payload[field].split())
+            assert words <= cap, f"{field} example is {words} words, cap is {cap}"
+
+
+def test_the_examples_are_one_sentence_each():
+    """Three sentences total is the whole post contract."""
+    import re
+
+    for payload in _example_payloads():
+        for field in ("lead_uz", "body_1_uz", "kicker_uz"):
+            sents = [s for s in re.split(r"(?<=[.!?])\s+", payload[field].strip()) if s.strip()]
+            assert len(sents) == 1, f"{field} must be exactly one sentence"
+            assert payload[field].rstrip().endswith("."), f"{field} must end with a full stop"
+        assert not payload["headline_uz"].endswith("."), "the headline is a label"
