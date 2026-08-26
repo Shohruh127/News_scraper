@@ -32,7 +32,7 @@ def test_every_configured_provider_has_its_credentials():
     stages = {
         "LLM_PROVIDER": settings.LLM_PROVIDER,
         "EDITORIAL_EN_PROVIDER": settings.EDITORIAL_EN_PROVIDER,
-        "TRANSLATION_PROVIDER": settings.TRANSLATION_PROVIDER,
+        "EDITORIAL_UZ_PROVIDER": settings.EDITORIAL_UZ_PROVIDER,
         "CLASSIFIER_PROVIDER": settings.CLASSIFIER_PROVIDER,
     }
     for name, provider in stages.items():
@@ -66,7 +66,7 @@ def test_no_stage_defaults_to_a_provider_that_no_longer_exists(monkeypatch):
     for name in (
         "LLM_PROVIDER",
         "EDITORIAL_EN_PROVIDER",
-        "TRANSLATION_PROVIDER",
+        "EDITORIAL_UZ_PROVIDER",
         "CLASSIFIER_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -75,7 +75,7 @@ def test_no_stage_defaults_to_a_provider_that_no_longer_exists(monkeypatch):
     llm_provider = env("LLM_PROVIDER", default="gateway")
     assert llm_provider == "gateway"
     assert env("EDITORIAL_EN_PROVIDER", default=llm_provider) == "gateway"
-    assert env("TRANSLATION_PROVIDER", default=llm_provider) == "gateway"
+    assert env("EDITORIAL_UZ_PROVIDER", default=llm_provider) == "gateway"
     assert env("CLASSIFIER_PROVIDER", default="gateway") == "gateway"
 
 

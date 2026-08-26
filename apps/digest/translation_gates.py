@@ -123,39 +123,6 @@ def check_numbers_against_source(article_text: str, uz_fields: dict) -> list[str
     return violations
 
 
-def check_numbers(en_fields: dict, uz_fields: dict) -> list[str]:
-    """Gate 1: every number in translated English fields must appear in Uzbek.
-
-    Catches errors like 2.4 trillion -> 2 trillion (mimo-v2.5 defect).
-    Compares corresponding field pairs (e.g. lead_en vs lead_uz, limitations_en vs limitations_uz).
-    A small number spelled out in Uzbek counts as carried - see UZBEK_SMALL_NUMERALS.
-    """
-    missing_all: set[str] = set()
-    for k_en, v_en in en_fields.items():
-        # The headline is a label capped at 8 words, not a translation. It is allowed to
-        # compress, and compressing means dropping something.
-        #
-        # Measured 2026-08-24: headline_en was "Asana removes Enzyme with Codex in 2 weeks"
-        # and headline_uz was "Asana test tizimini Codex bilan o'chirdi". The gate called the
-        # missing "2" a lost number and killed the post - while the same article's kicker
-        # said "ikki haftada" and its body carried $12K and $6M. Holding a label to the same
-        # rule as the fact-carrying fields defeats the point of having a label.
-        if k_en.startswith("headline"):
-            continue
-        k_uz = k_en[:-3] + "_uz" if k_en.endswith("_en") else k_en + "_uz"
-        v_uz = uz_fields.get(k_uz)
-        if v_uz and isinstance(v_en, str) and isinstance(v_uz, str):
-            en_nums = extract_numbers(v_en)
-            uz_nums = extract_numbers(v_uz)
-            missing = {n for n in en_nums - uz_nums if not _carries_number(n, uz_nums, v_uz)}
-            if missing:
-                missing_all.update(missing)
-
-    if missing_all:
-        return [f"Numbers missing in Uzbek: {', '.join(sorted(missing_all))}"]
-    return []
-
-
 def check_glossary(en_fields: dict, uz_fields: dict) -> list[str]:
     """Gate 2: terms that appear in English must not be calqued/transliterated in Uzbek."""
     en_text = " ".join(str(v) for v in en_fields.values())
@@ -268,26 +235,6 @@ def check_headline_case(en_headline: str, uz_headline: str, en_context: str = ""
     return violations
 
 
-def validate_translation(en_fields: dict, uz_fields: dict) -> list[str]:
-    """Run deterministic translation gates. Returns list of violation messages."""
-    violations = []
-    violations.extend(check_numbers(en_fields, uz_fields))
-    violations.extend(check_glossary(en_fields, uz_fields))
-
-    en_hl = en_fields.get("headline_en", "")
-    uz_hl = uz_fields.get("headline_uz", "")
-    if en_hl and uz_hl:
-        # Every English field is the capitalisation vocabulary, not just the headline: a
-        # proper noun the headline paraphrases away still belongs in the Uzbek one.
-        context = " ".join(str(v) for k, v in en_fields.items() if k != "headline_en")
-        violations.extend(check_headline_case(en_hl, uz_hl, en_context=context))
-
-    if violations:
-        log.warning("Translation gate violation: %s", "; ".join(violations))
-
-    return violations
-
-
 def validate_against_source(
     article_title: str,
     article_text: str,
@@ -296,12 +243,9 @@ def validate_against_source(
 ) -> list[str]:
     """Gates for the single-stage Uzbek editorial (2026-08-26 design).
 
-    The two-stage flow compares the Uzbek against four English fields. One stage has no such
+    The two-stage flow compared the Uzbek against four English fields. One stage has no such
     fields, so the English side becomes the article itself — which is larger than the four
     fields ever were, so the calque gate sees more terms, not fewer.
-
-    `validate_translation` above is untouched and still serves the two-stage flow. Phase 2
-    removes it.
     """
     english_source = {"title": article_title, "text": article_text}
     if technical:

@@ -280,92 +280,6 @@ def test_editorial_model_validation():
     assert obj.lead_en.startswith("Ollama")
 
 
-def test_translation_schema_follows_the_fields_it_is_given():
-    """A block absent from the schema cannot be filled by a model that felt like filling it.
-
-    Measured 2026-08-18: given six visible blocks and no definitions, the model filled six
-    irrelevant ones.
-    """
-    from apps.digest.llm import translation_schema_for
-
-    schema = translation_schema_for({"headline_en": "x", "summary_en": "y", "what_changed_en": "z"})
-    assert set(schema["properties"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
-    assert set(schema["required"]) == {"headline_uz", "summary_uz", "what_changed_uz"}
-    assert "policy_details" not in schema["properties"]
-
-
-def test_translation_schema_only_rewrites_a_trailing_suffix():
-    """`_en` is replaced at the end of the key, never in the middle of a word."""
-    from apps.digest.llm import translation_schema_for
-
-    schema = translation_schema_for({"deployment_en": "a", "residual_en": "b"})
-    assert set(schema["properties"]) == {"deployment_uz", "residual_uz"}
-
-
-def test_technical_fields_selects_prose_and_suffixes_it():
-    """Prose is translated; URLs and commands are not.
-
-    `install` is excluded because it is mixed: of five stored values two were prose and one was
-    the bare command `ollama run muse-glimmer`. A mangled command is actively wrong — someone
-    may run it — while an untranslated short phrase is merely suboptimal. The appendix already
-    renders it inside <code>.
-    """
-    from apps.digest.llm import technical_fields
-
-    payload = {
-        "technical": {
-            "what_was_built": "A minor version update for the checkpoint library.",
-            "architecture": "Uses a custom database called DeltaDB.",
-            "limitations": "Limited to American Sign Language.",
-            "benchmarks": "Scores 70 BLEURT on FLEURS-ASL.",
-            "hardware": "Spare smartphone or PC with a webcam.",
-            "install": "ollama run muse-glimmer",
-            "repo_url": "https://github.com/langchain-ai/langgraph",
-            "api_url": "https://example.com/api",
-            "license": "",
-            "local_deployable": True,
-        }
-    }
-
-    out = technical_fields(payload)
-
-    assert set(out) == {
-        "what_was_built_en",
-        "architecture_en",
-        "limitations_en",
-        "benchmarks_en",
-    }
-    # `hardware` is supplied above but is not translated: item_appendix.html never rendered
-    # it, so it was dropped with the other unpublished fields on 2026-08-24.
-    assert "hardware_en" not in out
-    assert out["what_was_built_en"].startswith("A minor version update")
-
-
-def test_technical_fields_skips_empty_values():
-    """A field the model could not ground stays out of the translation call."""
-    from apps.digest.llm import technical_fields
-
-    payload = {"technical": {"what_was_built": "Something", "architecture": "   "}}
-
-    assert technical_fields(payload) == {"what_was_built_en": "Something"}
-
-
-def test_technical_fields_handles_a_missing_block():
-    """An article with no technical block must not raise."""
-    from apps.digest.llm import technical_fields
-
-    assert technical_fields({}) == {}
-
-
-def test_technical_prose_reaches_the_translation_schema():
-    """The `_en` suffix is what makes the existing dynamic schema produce `_uz`."""
-    from apps.digest.llm import technical_fields, translation_schema_for
-
-    fields = technical_fields({"technical": {"benchmarks": "7-8% faster prefill"}})
-
-    assert set(translation_schema_for(fields)["properties"]) == {"benchmarks_uz"}
-
-
 def test_editorial_en_v2_schema_validation():
     """EditorialEn validates clean v2 prose fields while remaining backward-compatible."""
     v2_data = {
@@ -386,42 +300,19 @@ def test_editorial_en_v2_schema_validation():
     assert model.lead_en.startswith("EHang")
 
 
-def test_translation_schema_for_v2_fields():
-    """Dynamic translation schema derives matching _uz properties for all v2 fields."""
-    v2_en_fields = {
-        "lead_en": "Lead text",
-        "body_1_en": "Body 1 text",
-        "body_2_en": "Body 2 text",
-        "why_it_matters_en": "Why text",
-        "uzbekistan_application_en": "UZ text",
-    }
-    schema = llm.translation_schema_for(v2_en_fields)
-    expected = {
-        "lead_uz",
-        "body_1_uz",
-        "body_2_uz",
-        "why_it_matters_uz",
-        "uzbekistan_application_uz",
-    }
-    assert set(schema["properties"]) == expected
-    assert set(schema["required"]) == expected
-
-
 # --- v3 prompt and schema contracts -------------------------------------------
 
 
 def test_no_schema_mentions_the_link_anchor():
     from apps.digest.llm import (
-        COMMON_TRANSLATED_FIELDS,
         EDITORIAL_EN_SCHEMA,
-        TRANSLATION_SCHEMA,
+        EDITORIAL_UZ_SCHEMA,
     )
 
     assert "link_anchor_en" not in EDITORIAL_EN_SCHEMA["properties"]
     assert "link_anchor_en" not in EDITORIAL_EN_SCHEMA["required"]
-    assert "link_anchor_uz" not in TRANSLATION_SCHEMA["properties"]
-    assert "link_anchor_uz" not in TRANSLATION_SCHEMA["required"]
-    assert "link_anchor_en" not in COMMON_TRANSLATED_FIELDS
+    assert "link_anchor_uz" not in EDITORIAL_UZ_SCHEMA["properties"]
+    assert "link_anchor_uz" not in EDITORIAL_UZ_SCHEMA["required"]
 
 
 def test_editorial_en_schema_covers_the_appendix_template():
@@ -512,37 +403,6 @@ def test_the_second_example_teaches_the_no_number_case():
     )
 
 
-def test_translation_prompt_has_no_anchor_rules():
-    from apps.digest.llm import TRANSLATION_PROMPT
-
-    assert "link_anchor" not in TRANSLATION_PROMPT
-    assert "Link Anchor Translation" not in TRANSLATION_PROMPT
-
-
-def test_translation_prompt_does_not_force_empty_fields():
-    """v3 needs body_2_uz; v2 hard-coded it to an empty string."""
-    from apps.digest.llm import TRANSLATION_PROMPT
-
-    assert 'body_2_uz: ""' not in TRANSLATION_PROMPT
-
-
-def test_translation_prompt_examples_are_complete():
-    import json as _json
-    import re as _re
-
-    from apps.digest.llm import TRANSLATION_PROMPT
-
-    filled = TRANSLATION_PROMPT.format(fields="{}")
-    blocks = _re.findall(r"Chiquvchi JSON:\s*(\{.*?\n\})", filled, _re.DOTALL)
-    assert len(blocks) == 2, "both few-shot examples must be parseable"
-    for raw in blocks:
-        example = _json.loads(raw)
-        for key in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz"):
-            assert example.get(key), f"{key} missing or empty in a few-shot example"
-        assert "link_anchor_uz" not in example
-        assert "body_2_uz" not in example, "body_2 was removed from the contract"
-
-
 def test_editorial_schema_requires_headline_and_kicker():
     """The reference style carries a headline label and a closing sentence in every post."""
     from apps.digest.llm import EDITORIAL_EN_SCHEMA
@@ -566,31 +426,6 @@ def test_editorial_prompt_states_both_new_fields_and_their_word_cap():
     assert "kicker_en" in EDITORIAL_EN_PROMPT
     # Both are capped at 8 words; the cap must be stated, not implied.
     assert EDITORIAL_EN_PROMPT.count("8 words") >= 2
-
-
-def test_common_translated_fields_carry_headline_and_kicker():
-    """translation_schema_for derives _uz keys from this tuple, so membership is the switch."""
-    from apps.digest.llm import COMMON_TRANSLATED_FIELDS
-
-    assert "headline_en" in COMMON_TRANSLATED_FIELDS
-    assert "kicker_en" in COMMON_TRANSLATED_FIELDS
-
-
-def test_translation_schema_for_yields_headline_and_kicker():
-    from apps.digest.llm import translation_schema_for
-
-    schema = translation_schema_for({"headline_en": "x", "kicker_en": "y", "lead_en": "z"})
-    assert set(schema["properties"]) == {"headline_uz", "kicker_uz", "lead_uz"}
-    assert set(schema["required"]) == {"headline_uz", "kicker_uz", "lead_uz"}
-
-
-def test_translation_prompt_no_longer_forbids_a_closing_sentence():
-    """The prompt banned the kicker outright. The owner reversed that on 2026-08-24."""
-    from apps.digest.llm import TRANSLATION_PROMPT
-
-    assert "yakuniy izoh yoki xulosa jumlasi bilan tugatma" not in TRANSLATION_PROMPT
-    assert "kicker_uz" in TRANSLATION_PROMPT
-    assert "headline_uz" in TRANSLATION_PROMPT
 
 
 def test_triage_keep_rules_are_independent():

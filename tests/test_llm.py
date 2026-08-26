@@ -44,7 +44,7 @@ def _gateway(settings):
     settings.CLASSIFIER_PROVIDER = "gateway"
     settings.LLM_PROVIDER = "gateway"
     settings.EDITORIAL_EN_PROVIDER = "gateway"
-    settings.TRANSLATION_PROVIDER = "gateway"
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
     return settings
 
 
