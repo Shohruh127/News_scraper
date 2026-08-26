@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from io import StringIO
 
 import httpx
 import pytest
@@ -291,3 +292,49 @@ def test_eval_post_shapes_generates_both_variants(settings):
     assert "what the risk is and who it reaches" in prompts[1], "second is the shape"
     text = out.getvalue()
     assert "GENERAL" in text and "risk" in text
+
+
+@pytest.mark.django_db
+def test_seeding_does_not_re_enable_a_source_the_operator_switched_off():
+    """seed_sources runs on every deploy now, so it must not undo an operator decision.
+
+    Six specs carry `enabled: True`, and pipeline_stats ends its source-yield table by
+    telling the operator to switch off a source that publishes nothing. With `enabled` in
+    `defaults` that instruction survived exactly until the next deploy.
+    """
+    call_command("seed_sources", stdout=StringIO())
+    victim = Source.objects.get(name="techcrunch_ai")
+    assert victim.enabled is True, "fixture assumption: this spec ships enabled"
+
+    victim.enabled = False
+    victim.save(update_fields=["enabled"])
+
+    call_command("seed_sources", stdout=StringIO())
+
+    victim.refresh_from_db()
+    assert victim.enabled is False, "deploy re-enabled a source the operator disabled"
+
+
+@pytest.mark.django_db
+def test_seeding_still_applies_the_intended_enabled_to_a_new_source():
+    """Protecting the operator's choice must not mean every new source arrives disabled."""
+    call_command("seed_sources", stdout=StringIO())
+
+    assert Source.objects.get(name="techcrunch_ai").enabled is True
+    assert Source.objects.get(name="arxiv_cs_cr").enabled is False
+
+
+@pytest.mark.django_db
+def test_seeding_still_updates_what_the_code_owns():
+    """Only `enabled` is the operator's. A changed URL or priority must still land."""
+    call_command("seed_sources", stdout=StringIO())
+    src = Source.objects.get(name="openai")
+    src.priority = 1
+    src.url = "https://example.invalid/stale"
+    src.save(update_fields=["priority", "url"])
+
+    call_command("seed_sources", stdout=StringIO())
+
+    src.refresh_from_db()
+    assert src.priority == 90
+    assert src.url == "https://openai.com/news/rss.xml"

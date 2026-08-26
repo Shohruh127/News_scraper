@@ -1,4 +1,4 @@
-"""Create the eight M1 sources. Idempotent — safe to run repeatedly."""
+"""Create the news sources. Idempotent — safe to run repeatedly, and run on every deploy."""
 
 from django.core.management.base import BaseCommand
 
@@ -199,15 +199,30 @@ SOURCES = [
 ]
 
 
+#: `enabled` is set when a source is first created and never written again.
+#:
+#: The rest of a spec describes what a source *is* — where it lives, how it is read, what
+#: it counts for — and that belongs to the code. `enabled` describes what the operator has
+#: decided to do about it, and `pipeline_stats` ends its source-yield table by telling them
+#: to switch off a source that publishes nothing. Sending this command through deploy.sh
+#: with `enabled` in `defaults` would undo that decision on the next deploy, silently, for
+#: the six specs that carry `enabled: True`.
+OPERATOR_OWNED = ("enabled",)
+
+
 class Command(BaseCommand):
-    help = "Create or update the eight M1 sources."
+    help = "Create or update the news sources. Idempotent; never re-enables a disabled one."
 
     def handle(self, *args, **options):
         for spec in SOURCES:
             spec.setdefault("config", {})
+            # create_defaults carries the whole spec, so a new row still gets its intended
+            # `enabled`. defaults omits it, so an existing row keeps the operator's choice.
+            # Django applies one or the other, never both merged.
             obj, created = Source.objects.update_or_create(
                 name=spec["name"],
-                defaults={k: v for k, v in spec.items() if k != "name"},
+                create_defaults={k: v for k, v in spec.items() if k != "name"},
+                defaults={k: v for k, v in spec.items() if k != "name" and k not in OPERATOR_OWNED},
             )
             self.stdout.write(f"  {'created' if created else 'updated'}  {obj.name}")
         self.stdout.write(self.style.SUCCESS(f"{Source.objects.count()} sources total"))

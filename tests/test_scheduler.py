@@ -3,6 +3,9 @@
 from io import StringIO
 from unittest.mock import patch
 
+import pytest
+from django.core.management import call_command
+
 from apps.digest import llm
 from apps.digest.management.commands.run_pipeline import Command
 
@@ -70,3 +73,76 @@ def test_roundup_has_no_beat_entry():
 
     scheduled = {entry["task"] for entry in app.conf.beat_schedule.values()}
     assert "digest.publish_roundup" not in scheduled
+
+
+@pytest.mark.django_db
+def test_pruning_deletes_a_beat_entry_the_code_no_longer_has():
+    """DatabaseScheduler adds and updates rows; it never deletes one.
+
+    An entry removed from config/celery.py keeps firing from the database. This was a
+    manual `shell -c "...delete()"` step in the deploy sequence until deploy.sh grew a
+    call to prune_schedule.
+    """
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    cron = CrontabSchedule.objects.create(minute="0", hour="9")
+    PeriodicTask.objects.create(
+        name="publish-morning", task="digest.compose_and_publish", crontab=cron
+    )
+
+    call_command("prune_schedule", stdout=StringIO())
+
+    assert not PeriodicTask.objects.filter(name="publish-morning").exists()
+
+
+@pytest.mark.django_db
+def test_pruning_never_touches_celerys_own_entry():
+    """`celery.backend_cleanup` is not in app.conf.beat_schedule — Celery installs it.
+
+    "Delete every row the schedule does not name" would take it, and django_celery_results
+    rows would then grow with nothing to trim them.
+    """
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    cron = CrontabSchedule.objects.create(minute="0", hour="4")
+    PeriodicTask.objects.create(
+        name="celery.backend_cleanup", task="celery.backend_cleanup", crontab=cron
+    )
+
+    call_command("prune_schedule", stdout=StringIO())
+
+    assert PeriodicTask.objects.filter(name="celery.backend_cleanup").exists()
+
+
+@pytest.mark.django_db
+def test_pruning_keeps_the_entries_the_code_still_declares():
+    """A prune that emptied the schedule would pass the two tests above and stop the radar."""
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    from config.celery import app
+
+    cron = CrontabSchedule.objects.create(minute="30", hour="8")
+    for name in app.conf.beat_schedule:
+        PeriodicTask.objects.create(
+            name=name, task=app.conf.beat_schedule[name]["task"], crontab=cron
+        )
+
+    call_command("prune_schedule", stdout=StringIO())
+
+    assert PeriodicTask.objects.count() == len(app.conf.beat_schedule)
+
+
+@pytest.mark.django_db
+def test_dry_run_reports_without_deleting():
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    cron = CrontabSchedule.objects.create(minute="0", hour="9")
+    PeriodicTask.objects.create(
+        name="publish-morning", task="digest.compose_and_publish", crontab=cron
+    )
+
+    out = StringIO()
+    call_command("prune_schedule", "--dry-run", stdout=out)
+
+    assert PeriodicTask.objects.filter(name="publish-morning").exists()
+    assert "would delete" in out.getvalue()

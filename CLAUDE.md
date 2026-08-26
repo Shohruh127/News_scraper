@@ -34,28 +34,40 @@ your own changes, never a step to hand to the operator. Deploy sequence:
 ```bash
 git pull --ff-only
 sh ops/linux/deploy.sh --allow-publishing
-docker compose exec -T web python manage.py shell -c "from django_celery_beat.models import PeriodicTask; print(PeriodicTask.objects.exclude(task__in=['digest.fetch_all_sources','digest.triage_and_classify','digest.publish_next_item','digest.dispatch_worker_heartbeats']).delete())"
-docker compose restart beat
-sh ops/linux/health-check.sh
 ```
 
-That delete is not housekeeping. `DatabaseScheduler` adds and updates rows from the dict in
-`config/celery.py` and **never removes one for an entry deleted from the code**, so anything
-the schedule used to contain keeps firing from the database. Excluding the four task names
-that should be live deletes whatever else has accumulated — the old
-`digest.compose_and_publish` crontab that published an empty digest on 2026-08-21, and any
-renamed drip entry. Verify the survivors afterwards:
+That is the whole sequence. It used to carry a hand-written `PeriodicTask` delete, a
+`restart beat` and a separate health check; `deploy.sh` does all three now, because a manual
+step in a deploy is a step that eventually does not happen.
 
-```bash
-docker compose exec -T web python manage.py shell -c "from django_celery_beat.models import PeriodicTask; [print(t.name, t.task, t.crontab) for t in PeriodicTask.objects.all()]"
-```
+The delete was also wrong. It read
+`PeriodicTask.objects.exclude(task__in=[...four digest task names...]).delete()`, and
+`celery.backend_cleanup` — which Celery installs itself and which is not in
+`app.conf.beat_schedule` — is not one of those four. Running it deleted the only thing that
+trims `django_celery_results`. `prune_schedule` replaces it: it deletes rows whose task
+starts with `digest.` and whose name the current schedule does not have, so Celery's own
+entry is never a candidate.
 
 `deploy.sh` runs: clean-checkout check → compose config → DB backup → build → preflight →
-`up -d` → health wait. There is no separate migrate step: the one-shot `migrate` service runs
-first inside `up -d`, and every app service waits on it via `service_completed_successfully`, so
-no worker can start against an out-of-date schema. Preflight sits before all of that
+`up -d` → health wait → `seed_sources` → `prune_schedule` → `restart beat` →
+`runtime_health`. There is no separate migrate step: the one-shot `migrate` service runs
+first inside `up -d`, and every app service waits on it via `service_completed_successfully`,
+so no worker can start against an out-of-date schema. Preflight sits before all of that
 deliberately — a configuration error is found before the database is touched, and a failure
-leaves the running stack untouched.
+leaves the running stack untouched. The two management commands sit after the health gate
+because both need `web` answering, and both are idempotent.
+
+`seed_sources` runs on every deploy, so it must not overwrite an operational decision.
+`enabled` is applied through `create_defaults` — set when a source is first created, never
+written again — because `pipeline_stats` ends its source-yield table by telling the operator
+to switch off a source that publishes nothing, and six specs ship `enabled: True`. Everything
+else in a spec belongs to the code and is still updated in place.
+
+To inspect the live schedule without changing it:
+
+```bash
+docker compose exec -T web python manage.py prune_schedule --dry-run
+```
 
 ## Publishing is causal, not scheduled
 
