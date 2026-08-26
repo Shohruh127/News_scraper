@@ -43,7 +43,6 @@ def _gateway(settings):
     settings.GATEWAY_SMART_MODEL = "smart"
     settings.CLASSIFIER_PROVIDER = "gateway"
     settings.LLM_PROVIDER = "gateway"
-    settings.EDITORIAL_EN_PROVIDER = "gateway"
     settings.EDITORIAL_UZ_PROVIDER = "gateway"
     return settings
 

@@ -133,7 +133,6 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 LLM_MAX_CONCURRENCY = 2
 
 LLM_PROVIDER = env("LLM_PROVIDER", default="gateway")
-EDITORIAL_EN_PROVIDER = env("EDITORIAL_EN_PROVIDER", default=LLM_PROVIDER)
 #: The single-stage Uzbek editorial (2026-08-26 design). Defaults to LLM_PROVIDER like the
 #: two stages it replaces; CLASSIFIER_PROVIDER deliberately does not, because its volume is
 #: several hundred calls a day and must not move silently.

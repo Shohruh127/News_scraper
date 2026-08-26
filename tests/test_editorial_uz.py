@@ -412,3 +412,127 @@ def test_an_article_already_written_is_not_written_again(risk_article, settings)
     llm.analyse_for_digest_logic([risk_article.id])
 
     assert route.call_count == 1, "the second run must reuse the stored row"
+
+
+def test_a_real_boolean_still_survives_the_coercion():
+    """A validator that swallowed everything would silently report nothing as local."""
+    from apps.digest.llm import EditorialUz
+
+    for given, expected in ((True, True), ("true", True), (False, False), ("false", False)):
+        parsed = EditorialUz.model_validate(
+            {"headline_uz": "H", "technical": {"local_deployable": given}}
+        )
+        assert parsed.technical.local_deployable is expected, given
+
+
+def test_a_nonsense_local_deployable_is_still_an_error():
+    """Only blank is forgiven. Anything else is a model that misread the field."""
+    from pydantic import ValidationError
+
+    from apps.digest.llm import EditorialUz
+
+    with pytest.raises(ValidationError):
+        EditorialUz.model_validate({"technical": {"local_deployable": "maybe"}})
+
+
+def test_editorial_uz_schema_covers_the_appendix_template():
+    """A field the appendix renders but the schema cannot produce is dead ink."""
+    from pathlib import Path
+
+    from django.conf import settings as _settings
+
+    from apps.digest.llm import EDITORIAL_UZ_SCHEMA
+
+    template = Path(_settings.BASE_DIR) / "apps/digest/templates/digest/item_appendix.html"
+    rendered_vars = set(re.findall(r"{{\s*(\w+)", template.read_text(encoding="utf-8")))
+    technical_props = set(EDITORIAL_UZ_SCHEMA["properties"]["technical"]["properties"])
+    from_technical = {
+        "what_was_built",
+        "architecture",
+        "license",
+        "repo_url",
+        "api_url",
+        "install",
+        "benchmarks",
+        "limitations",
+    }
+    missing = (rendered_vars & from_technical) - technical_props
+    assert not missing, f"appendix renders {sorted(missing)} but the schema cannot produce them"
+    assert "local_deployable" in technical_props
+
+
+def test_editorial_uz_prompt_documents_every_technical_field():
+    """Schema and prompt must not drift: a field the prompt never names is never filled."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT, EDITORIAL_UZ_SCHEMA
+
+    for field in EDITORIAL_UZ_SCHEMA["properties"]["technical"]["properties"]:
+        assert field in EDITORIAL_UZ_PROMPT, f"prompt never mentions technical.{field}"
+
+
+@pytest.mark.django_db
+def test_classified_topic_reads_the_latest_classification(risk_article):
+    """Two classifications can exist after a re-run; the newest is the live one."""
+    from apps.digest import llm
+
+    for topic in ("frontier_models", "safety_security"):
+        Analysis.objects.create(
+            article=risk_article,
+            stage=Analysis.Stage.CLASSIFICATION,
+            model_tag="smart",
+            payload={
+                "primary_topic": topic,
+                "maturity": "live_product",
+                "novelty": 5,
+                "evidence": 5,
+                "production_readiness": 5,
+                "reason": "x",
+            },
+            latency_ms=1,
+        )
+
+    assert llm._classified_topic(risk_article) == "safety_security"
+    assert llm.shape_for(llm._classified_topic(risk_article)) == "risk"
+
+
+def test_an_unknown_topic_falls_back_to_the_general_shape():
+    """A Topic added later must degrade to today's behaviour, not raise."""
+    from apps.digest.llm import SHAPE_GENERAL, shape_for
+
+    assert shape_for("a_topic_invented_next_year") == SHAPE_GENERAL
+    assert shape_for(None) == SHAPE_GENERAL
+    assert shape_for("") == SHAPE_GENERAL
+
+
+def test_irrelevant_is_not_mapped():
+    """It never reaches the editorial stage; classification filters it."""
+    from apps.digest.llm import TOPIC_SHAPES
+    from apps.digest.models import Topic
+
+    assert Topic.IRRELEVANT.value not in TOPIC_SHAPES
+
+
+@respx.mock
+def test_strict_json_schema_is_requested_not_json_object(risk_article, settings):
+    """Measured 2026-08-17: json_object conformed 2/7 times on real articles because the
+    model invented its own keys. Ollama enforces the schema in the decoder; an
+    OpenAI-compatible endpoint only does so when strict mode is asked for explicitly."""
+    from apps.digest import llm
+
+    settings.LLM_PROVIDER = "mimo"
+    settings.EDITORIAL_UZ_PROVIDER = "mimo"
+    settings.MIMO_BASE_URL = "https://mimo.test/v1"
+    settings.MIMO_API_KEY = "k"
+
+    captured = {}
+
+    def capture(request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+
+    respx.post("https://mimo.test/v1/chat/completions").mock(side_effect=capture)
+    llm.editorial_chat(prompt="x", schema=llm.EDITORIAL_UZ_SCHEMA, num_predict=100)
+
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True

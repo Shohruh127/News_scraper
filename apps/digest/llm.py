@@ -125,25 +125,6 @@ class TechnicalDetails(BaseModel):
         return value
 
 
-class EditorialEn(BaseModel):
-    """English analysis. Verified independently of translation (ADR-005).
-
-    Four prose fields, and every one of them is published. Fields that were generated,
-    translated and then rendered nowhere — `why_it_matters_en`, `uzbekistan_application_en`,
-    `archetype`, `technical.hardware`, and the v1 `summary_en`/`leadership_en` — were removed
-    on 2026-08-24. They cost output tokens on both LLM calls and split the model's attention
-    across fields that never reached a reader.
-    """
-
-    headline_en: str = ""
-    lead_en: str = ""
-    body_1_en: str = ""
-    kicker_en: str = ""
-
-    technical: TechnicalDetails = Field(default_factory=TechnicalDetails)
-    evidence_level: str = Field(default="vendor_claim_only")
-
-
 class EditorialUz(BaseModel):
     """The published post, written in one call (2026-08-26 design).
 
@@ -160,43 +141,6 @@ class EditorialUz(BaseModel):
     technical: TechnicalDetails = Field(default_factory=TechnicalDetails)
     evidence_level: str = Field(default="vendor_claim_only")
 
-
-# --- Editorial: English analysis ---------------------------------------------
-# --- Editorial: English analysis (Stage 1: Fact Extraction) ------------------
-
-EDITORIAL_EN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "headline_en": {"type": "string"},
-        "lead_en": {"type": "string"},
-        "body_1_en": {"type": "string"},
-        "kicker_en": {"type": "string"},
-        "evidence_level": {
-            "type": "string",
-            "enum": ["vendor_claim_only", "multiple_evidence"],
-        },
-        "technical": {
-            "type": "object",
-            "properties": {
-                "what_was_built": {"type": "string"},
-                "architecture": {"type": "string"},
-                "license": {"type": "string"},
-                "repo_url": {"type": "string"},
-                "api_url": {"type": "string"},
-                "install": {"type": "string"},
-                "benchmarks": {"type": "string"},
-                "limitations": {"type": "string"},
-                "local_deployable": {"type": "boolean"},
-            },
-        },
-    },
-    "required": [
-        "headline_en",
-        "lead_en",
-        "body_1_en",
-        "kicker_en",
-    ],
-}
 
 #: The editorial instruction, chosen by the article's classified topic.
 #:
@@ -217,56 +161,6 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
 #: the time. A shape adds no structure: the same four fields are produced for every group and
 #: all four are always filled, so a group nobody hits is an unread dict entry.
 SHAPE_GENERAL = "general"
-
-SHAPE_BLOCKS: dict[str, str] = {
-    SHAPE_GENERAL: """An article states many facts. Pick the lead by this order, first match wins:
-  1. A named thing shipped or changed - and who shipped it.
-  2. A measured result - and who measured it.
-  3. A rule, policy or restriction - and who must comply with it.
-The lead is at most 18 words. If the article announces something with nothing shipped and
-nothing measured, say so plainly in the lead. Do not dress an announcement up as a release.""",
-    "release": """This is a release. The reader is deciding whether to use the thing.
-  lead_en    who shipped what (<= 18 words)
-  body_1_en  the number or specification that matters most - parameters, context window,
-             version, throughput, benchmark score (<= 20 words)
-  kicker_en  what the reader can now do that they could not before (<= 8 words)
-If nothing actually shipped and the article only announces an intention, say that plainly
-in the lead rather than dressing it up as a release.""",
-    "agent": """This is an agent, harness, framework or integration. Do NOT lead with the
-benchmark score; lead with the wiring - what talks to what, with what in between - because
-that is what tells the reader whether it fits their stack.
-  lead_en    what connects to what (<= 18 words)
-  body_1_en  the wiring itself. For a product: the transport, runtime or permission it
-             needs, and which hosts support it. For a harness or framework: the parts and
-             the loop between them. A score is not the wiring - name the part that earned
-             it. (<= 20 words)
-  kicker_en  what it replaces or removes the need for (<= 8 words)""",
-    "risk": """This is a risk or its mitigation. Do NOT lead with who published the advisory;
-lead with the risk itself, because that is what the reader needs first.
-  lead_en    what the risk is and who it reaches (<= 18 words)
-  body_1_en  its scope or mechanism - which versions, which models, what an attacker gets,
-             or how the mitigation works (<= 20 words)
-  kicker_en  what the reader should do about it (<= 8 words)""",
-    "research": """This is a finding. The question is not what shipped but how much the evidence
-supports the claim.
-  lead_en    what is being claimed, and by whom (<= 18 words)
-  body_1_en  how strong the evidence is - dataset, sample size, the baseline compared
-             against, whether code or weights exist today (<= 20 words)
-  kicker_en  what it changes if it holds (<= 8 words)
-Do not report a promised artifact as a shipped one.""",
-    "product": """This is a company shipping a product. The reader is deciding whether to try it,
-so price and availability decide more than a benchmark does.
-  lead_en    who launched what, and what it does (<= 18 words)
-  body_1_en  whether it is available today and what it costs - free tier, waitlist, pricing,
-             region limits (<= 20 words)
-  kicker_en  who it is useful to (<= 8 words)""",
-    "robotics": """This is physical embodiment. The reader's question is what the machine can
-actually do in the world.
-  lead_en    what the robot or system can physically do (<= 18 words)
-  body_1_en  the physical numbers - speed, payload, autonomy duration, success rate, and
-             where it was tested (<= 20 words)
-  kicker_en  what it means for real deployment (<= 8 words)""",
-}
 
 #: Topic -> shape. `irrelevant` is absent because it never reaches the editorial stage:
 #: classification drops it. Verified complete by test_every_topic_maps_to_a_shape.
@@ -369,7 +263,20 @@ EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["vendor_claim_only", "multiple_evidence"],
         },
-        "technical": EDITORIAL_EN_SCHEMA["properties"]["technical"],
+        "technical": {
+            "type": "object",
+            "properties": {
+                "what_was_built": {"type": "string"},
+                "architecture": {"type": "string"},
+                "license": {"type": "string"},
+                "repo_url": {"type": "string"},
+                "api_url": {"type": "string"},
+                "install": {"type": "string"},
+                "benchmarks": {"type": "string"},
+                "limitations": {"type": "string"},
+                "local_deployable": {"type": "boolean"},
+            },
+        },
     },
     "required": ["headline_uz", "lead_uz", "body_1_uz", "kicker_uz"],
 }
@@ -458,99 +365,6 @@ Chiquvchi JSON:
   "lead_uz": "Replit GPT-5.6 Luna asosidagi kodlash agentining bepul darajasini ochdi.",
   "body_1_uz": "Rejalashtirish va tajriba kod yoziladigan bir ish maydonida ishlaydi.",
   "kicker_uz": "Agentni sinash endi byudjet talab qilmaydi.",
-  "evidence_level": "vendor_claim_only",
-  "technical": {{
-    "what_was_built": "A free tier of a coding agent.",
-    "architecture": "", "license": "", "repo_url": "", "api_url": "", "install": "",
-    "benchmarks": "",
-    "limitations": "No pricing or usage limits were published.",
-    "local_deployable": false
-  }}
-}}
-
-ARTICLE
-Title: {title}
-Source: {source}
----
-{text}
-"""
-
-
-EDITORIAL_EN_PROMPT = """You are writing one Telegram post for a channel read by working
-AI engineers and technical decision-makers in Uzbekistan. They skim. Give them the fact,
-not the announcement. Return JSON only.
-
-## Shape
-A headline label plus EXACTLY THREE sentences: lead_en, body_1_en, kicker_en.
-One sentence per field. A field holding two sentences is wrong.
-
-## What this story needs
-The block below decides the content of the three sentences only. It does not change
-headline_en, which stays a plain label of what happened for every kind of story - never a
-claim about what matters. Where the block gives a word count, that count is the limit.
-
-{shape}
-
-## Output fields
-- headline_en: a short label naming what happened, at most 8 words. NOT a sentence and
-  NOT a summary - no final full stop, no verb required. 'Qwen 3.8 27B tops the
-  open-weight index' is right; 'Alibaba has released a new model today' is wrong.
-- lead_en: one complete sentence with a finite main verb, AT MOST 18 WORDS. Who did what,
-  chosen by the order above. A sentence, not a noun phrase and not a fragment; 'X is a
-  tool that does Y' is wrong. Do not end it with a particle or a dangling conjunction.
-  It must not repeat the headline - the headline names the event, the lead says who did it.
-- body_1_en: the single most specific verifiable fact the article states, AT MOST 20 WORDS.
-  A number, version, price or benchmark when the article gives one; the concrete mechanism
-  when it does not. NEVER invent a number, and never restate what the lead already said.
-  One fact, not a list of every condition it holds under.
-- kicker_en: one short closing remark, at most 8 words, saying what this changes for a
-  developer. No cliches, no hype, no restating the lead.
-- evidence_level: 'vendor_claim_only' or 'multiple_evidence'
-- technical: an object with what_was_built, architecture, license, repo_url, api_url,
-  install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
-  article. If the article does not state it, return an empty string - EXCEPT
-  local_deployable, which is a boolean: return false when the article does not say the
-  thing can be run locally. Never guess a URL, a licence name, or an install command -
-  these are published as live links.
-
-## Style rules
-1. NO FLUFF / NO HYPE: never use words like 'revolutionary', 'game-changer', 'powerful'.
-2. Prefer the specific to the general. 'cut CI time from 40 to 6 minutes' beats
-   'improved performance'.
-3. ONE SENTENCE PER FIELD.
-
-## Example 1 - a release, with numbers
-Input: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context,
-scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."
-Output JSON:
-{{
-  "headline_en": "Mistral-Large-2 ships with open weights",
-  "lead_en": "Mistral released Mistral-Large-2, an open-weight frontier model.",
-  "body_1_en": "The model has 123B parameters, a 128k context window, and scores 84% on MMLU.",
-  "kicker_en": "A frontier model without an API contract.",
-  "evidence_level": "vendor_claim_only",
-  "technical": {{
-    "what_was_built": "An open-weight large language model.",
-    "architecture": "123B parameters, 128k context window",
-    "license": "Apache-2.0",
-    "repo_url": "https://github.com/mistralai/mistral-large-2",
-    "api_url": "", "install": "", "benchmarks": "84% on MMLU", "limitations": "",
-    "local_deployable": true
-  }}
-}}
-
-## Example 2 - a product announcement, no numbers stated
-Note what body_1_en does here: the article gives no figure, so it names the mechanism
-instead. It does not invent one, and it does not repeat the lead.
-Input: "Replit is opening a free tier of its agent, powered by GPT-5.6 Luna. The free
-tier runs planning and experimentation in the same workspace where code is written. No
-pricing or usage limits were published."
-Output JSON:
-{{
-  "headline_en": "Replit opens a free agent tier",
-  "lead_en": "Replit opened a free tier of its coding agent, running on GPT-5.6 Luna.",
-  "body_1_en": "Planning and experimentation run in the same workspace as the code.",
-  "kicker_en": "Trying an agent no longer needs a budget.",
   "evidence_level": "vendor_claim_only",
   "technical": {{
     "what_was_built": "A free tier of a coding agent.",
@@ -997,13 +811,8 @@ def editorial_chat(
 ) -> ChatResult:
     """Dispatch an editorial call.
 
-    The two editorial stages are routed independently — see EDITORIAL_EN_PROVIDER and
-    TRANSLATION_PROVIDER. Triage and classification have their own switch via
-    classifier_chat.
-
-    `tier` matters: translation belongs on the fast tier. Measured 2026-08-17, the fast
-    model lost 0/7 numbers while the deep one garbled Uzbek in the first digest. Defaulting
-    every editorial call to the deep tier would send translation to the wrong one.
+    The single-stage Uzbek editorial is routed via EDITORIAL_UZ_PROVIDER.
+    Triage and classification have their own switch via classifier_chat.
     """
     return _dispatch(
         provider=provider or settings.LLM_PROVIDER,
@@ -1552,21 +1361,21 @@ def _editorial_call(
         model_cls.model_validate(retry.payload)
         result = _combine(first, retry)
 
-    # Post-check for empty lead_en in English editorial
-    if model_cls is EditorialEn and not result.payload.get("lead_en", "").strip():
-        log.warning("Empty lead_en in English editorial, retrying once.")
+    # Post-check for empty lead_uz in Uzbek editorial
+    if model_cls is EditorialUz and not result.payload.get("lead_uz", "").strip():
+        log.warning("Empty lead_uz in Uzbek editorial, retrying once.")
         recovery = (
-            f"{prompt}\n\nIMPORTANT: The 'lead_en' field was empty. "
-            "You must provide a non-empty 1-sentence lead with action verb link anchor."
+            f"{prompt}\n\nIMPORTANT: The 'lead_uz' field was empty. "
+            "You must provide a non-empty 1-sentence lead."
         )
         try:
             retry = editorial_chat(recovery, schema, max(num_predict, 2000), client, provider, tier)
             model_cls.model_validate(retry.payload)
-            if retry.payload.get("lead_en", "").strip():
+            if retry.payload.get("lead_uz", "").strip():
                 result = _combine(result, retry)
         except Exception as exc:
             # The failed attempt still cost tokens, but the provider raised before
             # reporting them, so there is nothing to add.
-            log.debug("lead_en recovery attempt failed: %s", exc)
+            log.debug("lead_uz recovery attempt failed: %s", exc)
 
     return result
