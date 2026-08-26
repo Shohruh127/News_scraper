@@ -148,7 +148,13 @@ TRANSLATION_NUM_PREDICT = env.int("TRANSLATION_NUM_PREDICT", default=2500)
 #: returned finish_reason "length" and an empty message, 3000 completed. An unused cap costs
 #: nothing (the model stops when it is done), a cap that is too small drops the article, so the
 #: default takes the generous side of that asymmetry.
-EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=4000)
+#:
+#: Raised 4000 -> 5000 on 2026-08-26. 4000 dropped one article of eight in that morning's run
+#: and one of seven in the first single-stage comparison, both with finish_reason "length".
+#: The single-stage prompt is the longer of the two — it carries the article, the class block
+#: and the Uzbek few-shot examples, and writes the post rather than notes — so it needs the
+#: larger budget, and the two-stage path loses nothing by sharing it.
+EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=5000)
 MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")
