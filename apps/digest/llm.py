@@ -144,6 +144,23 @@ class EditorialEn(BaseModel):
     evidence_level: str = Field(default="vendor_claim_only")
 
 
+class EditorialUz(BaseModel):
+    """The published post, written in one call (2026-08-26 design).
+
+    Replaces the EditorialEn -> Translation pair. The reader-facing fields are Uzbek; the
+    `technical` block stays English because it is copied verbatim from the article and
+    published as live links.
+    """
+
+    headline_uz: str = ""
+    lead_uz: str = ""
+    body_1_uz: str = ""
+    kicker_uz: str = ""
+
+    technical: TechnicalDetails = Field(default_factory=TechnicalDetails)
+    evidence_level: str = Field(default="vendor_claim_only")
+
+
 class Translation(BaseModel):
     """Uzbek rendering of the *_en fields. `technical` is not translated."""
 
@@ -348,6 +365,83 @@ qila oladi?"
              va qayerda sinalgani (<= 16 so'z)
   kicker_uz  bu haqiqiy joylashtirish uchun nimani anglatadi (<= 8 so'z)""",
 }
+
+
+EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "headline_uz": {"type": "string"},
+        "lead_uz": {"type": "string"},
+        "body_1_uz": {"type": "string"},
+        "kicker_uz": {"type": "string"},
+        "evidence_level": {
+            "type": "string",
+            "enum": ["vendor_claim_only", "multiple_evidence"],
+        },
+        "technical": EDITORIAL_EN_SCHEMA["properties"]["technical"],
+    },
+    "required": ["headline_uz", "lead_uz", "body_1_uz", "kicker_uz"],
+}
+
+
+EDITORIAL_UZ_PROMPT = """You are writing one Telegram post for a channel read by working
+AI engineers and technical decision-makers in Uzbekistan. They skim. Give them the fact,
+not the announcement.
+
+The four reader-facing fields are written in UZBEK (Latin script). The `technical` object
+is copied from the article and stays in ENGLISH. Return JSON only.
+
+## Shape
+A headline label plus EXACTLY THREE sentences: lead_uz, body_1_uz, kicker_uz.
+One sentence per field. A field holding two sentences is wrong.
+
+## What this story needs
+The block below decides the content of the three sentences only. It does not change
+headline_uz, which stays a plain label of what happened for every kind of story - never a
+claim about what matters. Where the block gives a word count, that count is the limit.
+
+{block}
+
+## Output fields
+- headline_uz: a short label naming what happened, AT MOST 8 UZBEK WORDS. NOT a sentence -
+  no final full stop, no verb required. Only the first word and proper nouns are
+  capitalised; English Title Case is wrong.
+- lead_uz: one complete Uzbek sentence with a finite verb, AT MOST 14 UZBEK WORDS. Who did
+  what. Do not end it with a particle such as 'ham' or 'esa'. It must not repeat the
+  headline.
+- body_1_uz: one Uzbek sentence, AT MOST 16 UZBEK WORDS. NEVER invent a number, and never
+  restate what the lead already said. One fact, not a list.
+- kicker_uz: one short Uzbek sentence, AT MOST 8 UZBEK WORDS, saying what this changes for
+  a developer. No cliches, no hype, no restating the lead.
+- evidence_level: 'vendor_claim_only' or 'multiple_evidence'
+- technical: an object with what_was_built, architecture, license, repo_url, api_url,
+  install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
+  article, in English. If the article does not state it, return an empty string - EXCEPT
+  local_deployable, which is a boolean: return false when the article does not say the
+  thing can be run locally. Never guess a URL, a licence name, or an install command -
+  these are published as live links.
+
+## Style rules
+1. NO FLUFF / NO HYPE: never use 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',
+   'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.
+2. Prefer the specific to the general.
+3. ONE SENTENCE PER FIELD.
+4. Keep every number, version and price exactly as the article states it.
+5. Model names, product names, company names, benchmark names and these terms stay in
+   English: model, API, agent, framework, benchmark, context, token, inference, latency,
+   prompt, repo, open-source, weights, open-weight, toolchain.
+6. Write literary Uzbek. Invented or broken words are forbidden. Never transliterate a
+   term that has a real Uzbek equivalent, and never calque one that should stay English.
+7. Plain text only: no markdown bold, no asterisks, no backticks, no list markers.
+
+%%EXAMPLES%%
+
+ARTICLE
+Title: {title}
+Source: {source}
+---
+{text}
+"""
 
 
 EDITORIAL_EN_PROMPT = """You are writing one Telegram post for a channel read by working

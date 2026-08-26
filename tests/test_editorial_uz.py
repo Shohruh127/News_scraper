@@ -53,3 +53,61 @@ def test_no_uzbek_block_redefines_the_headline():
 
     for key, block in UZ_BLOCKS.items():
         assert "headline_uz" not in block, f"{key} must not redefine the headline"
+
+
+def test_the_model_accepts_a_full_uzbek_payload():
+    from apps.digest.llm import EditorialUz
+
+    parsed = EditorialUz.model_validate(
+        {
+            "headline_uz": "Qwen ochiq model chiqardi",
+            "lead_uz": "Qwen jamoasi yangi modelni ochiq taqdim etdi.",
+            "body_1_uz": "Model 123B parametrga ega.",
+            "kicker_uz": "Shartnomasiz kuchli model.",
+            "technical": {"repo_url": "https://example.com/r", "local_deployable": ""},
+            "evidence_level": "vendor_claim_only",
+        }
+    )
+    assert parsed.headline_uz.startswith("Qwen")
+    assert parsed.technical.repo_url == "https://example.com/r"
+    # The blank-boolean coercion added 2026-08-26 must still apply on this model.
+    assert parsed.technical.local_deployable is False
+
+
+def test_each_uzbek_block_reaches_the_formatted_prompt():
+    """The archetype system failed for want of exactly this test: code present, prompt
+    never asking for what the code consumed, nothing comparing the two."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT, UZ_BLOCKS
+
+    for key, block in UZ_BLOCKS.items():
+        filled = EDITORIAL_UZ_PROMPT.format(block=block, title="T", source="S", text="X")
+        first_line = block.strip().splitlines()[0]
+        assert first_line in filled, f"{key} block did not reach the prompt"
+
+
+def test_the_prompt_scopes_the_block_to_the_three_sentences():
+    """The English agent block wrote the headline until an equivalent guard was added."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    guard = EDITORIAL_UZ_PROMPT.split("## What this story needs")[1].split("{block}")[0]
+    assert "three sentences only" in guard
+    assert "headline_uz" in guard
+
+
+def test_the_prompt_states_the_word_limits_in_the_field_definitions():
+    """Stated twice on purpose. This pins the second copy."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Style rules")[0]
+    assert "AT MOST 8 UZBEK WORDS" in fields
+    assert "AT MOST 14 UZBEK WORDS" in fields
+    assert "AT MOST 16 UZBEK WORDS" in fields
+
+
+def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
+    """MiMo returned '' for the boolean on 2026-08-26 because the prompt asked for it,
+    and the retry cost that article a second call."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Style rules")[0]
+    assert "EXCEPT" in rule and "local_deployable, which is a boolean" in rule
