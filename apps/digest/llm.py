@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import httpx
 from django.conf import settings
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model, field_validator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import artifacts, post_format, translation_gates
@@ -104,6 +104,25 @@ class TechnicalDetails(BaseModel):
     benchmarks: str = ""
     limitations: str = ""
     local_deployable: bool = False
+
+    @field_validator("local_deployable", mode="before")
+    @classmethod
+    def _blank_means_not_local(cls, value: Any) -> Any:
+        """An empty string here means the article did not say, which is `False`.
+
+        Measured 2026-08-26: MiMo returned `''` for this field on the same article in two
+        consecutive runs, and each time the ValidationError cost a second editorial call —
+        5346 input tokens for that article instead of 2682. The prompt had asked for it:
+        the `technical` instruction said to return an empty string for anything the article
+        omits, and that sentence covered the boolean too. The prompt now exempts this field;
+        this validator keeps a model that answers the old way from costing the retry.
+
+        Only blank is coerced. Pydantic already reads 'true'/'false'/'1'/'0', and anything
+        else is still a real error worth retrying.
+        """
+        if isinstance(value, str) and not value.strip():
+            return False
+        return value
 
 
 class EditorialEn(BaseModel):
@@ -299,8 +318,10 @@ claim about what matters. Where the block gives a word count, that count is the 
 - evidence_level: 'vendor_claim_only' or 'multiple_evidence'
 - technical: an object with what_was_built, architecture, license, repo_url, api_url,
   install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
-  article. If the article does not state it, return an empty string. Never guess a URL, a
-  licence name, or an install command - these are published as live links.
+  article. If the article does not state it, return an empty string - EXCEPT
+  local_deployable, which is a boolean: return false when the article does not say the
+  thing can be run locally. Never guess a URL, a licence name, or an install command -
+  these are published as live links.
 
 ## Style rules
 1. NO FLUFF / NO HYPE: never use words like 'revolutionary', 'game-changer', 'powerful'.

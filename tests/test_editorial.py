@@ -724,6 +724,51 @@ def test_the_agent_block_does_not_ask_for_a_benchmark_lead():
     assert "harness or framework" in SHAPE_BLOCKS["agent"], "must cover non-product agents"
 
 
+def test_a_blank_local_deployable_does_not_cost_a_retry():
+    """The one non-string field in `technical`, and models returned '' for it.
+
+    Measured 2026-08-26 on MiMo: '' raised ValidationError, `_editorial_call` retried, and
+    the article cost 5346 input tokens instead of 2682. Blank means the article did not
+    say, which is exactly the default.
+    """
+    from apps.digest.llm import EditorialEn
+
+    parsed = EditorialEn.model_validate({"headline_en": "H", "technical": {"local_deployable": ""}})
+    assert parsed.technical.local_deployable is False
+
+
+def test_a_real_boolean_still_survives_the_coercion():
+    """A validator that swallowed everything would silently report nothing as local."""
+    from apps.digest.llm import EditorialEn
+
+    for given, expected in ((True, True), ("true", True), (False, False), ("false", False)):
+        parsed = EditorialEn.model_validate({"technical": {"local_deployable": given}})
+        assert parsed.technical.local_deployable is expected, given
+
+
+def test_a_nonsense_local_deployable_is_still_an_error():
+    """Only blank is forgiven. Anything else is a model that misread the field."""
+    from pydantic import ValidationError
+
+    from apps.digest.llm import EditorialEn
+
+    with pytest.raises(ValidationError):
+        EditorialEn.model_validate({"technical": {"local_deployable": "maybe"}})
+
+
+def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
+    """The retry above was obedience, not malfunction — the prompt asked for ''.
+
+    One sentence told the model to return an empty string for any `technical` value the
+    article omits, and it covered the boolean too. Drop the exemption and the validator
+    added alongside it hides the cause instead of the cost.
+    """
+    from apps.digest.llm import EDITORIAL_EN_PROMPT
+
+    rule = EDITORIAL_EN_PROMPT.split("- technical:")[1].split("## Style rules")[0]
+    assert "EXCEPT" in rule and "local_deployable, which is a boolean" in rule
+
+
 @respx.mock
 def test_the_editorial_prompt_carries_the_shape_for_the_article_topic(article, settings):
     """A safety item must be written to the risk instruction, not the release one."""
