@@ -180,7 +180,7 @@ def risk_article(db):
         canonical_url="https://e.test/a",
         content_hash="uz_h1",
         title="A jailbreak bypasses the content filter",
-        extracted_text="Details of the jailbreak. " * 40,
+        extracted_text="Details of the jailbreak with 123B parameters and 128k context. " * 40,
         status=Article.Status.CLASSIFIED,
     )
     Analysis.objects.create(
@@ -314,3 +314,101 @@ def test_the_prompt_never_teaches_a_form_the_glossary_gate_forbids():
                 f"the prompt contains {stem!r}, the Uzbek rendering of {term!r} that "
                 f"check_glossary rejects. Rule 5 says this term stays in English."
             )
+
+
+@respx.mock
+def test_the_pipeline_makes_one_call_per_article(risk_article, settings):
+    """Two loops become one. The two-stage flow cost two calls per article."""
+    from apps.digest import llm
+    from apps.digest.models import Analysis
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    route = respx.post("http://gw.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+    )
+
+    created = llm.analyse_for_digest_logic([risk_article.id])
+
+    assert route.call_count == 1, "one call, not an editorial plus a translation"
+    assert len(created) == 1
+    assert created[0].stage == Analysis.Stage.EDITORIAL_UZ
+    stages = set(risk_article.analyses.values_list("stage", flat=True))
+    assert Analysis.Stage.EDITORIAL_EN not in stages, "no English row is written any more"
+
+
+@respx.mock
+def test_the_pipeline_strips_markdown_from_the_uzbek(risk_article, settings):
+    """The prompt forbids markdown and the old path stripped it anyway. Trusting the model
+    is how bold reached the channel wrongly enough that the owner removed it on 2026-08-24.
+    """
+    from apps.digest import llm
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    bolded = dict(UZ_PAYLOAD, lead_uz="**Qwen** jamoasi modelni ochiq taqdim etdi.")
+    respx.post("http://gw.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(bolded)}}]}
+        )
+    )
+
+    created = llm.analyse_for_digest_logic([risk_article.id])
+
+    assert "**" not in created[0].payload["lead_uz"]
+
+
+@respx.mock
+def test_a_gate_violation_retries_once_with_the_violation_named(risk_article, settings):
+    """The old path retried once with the violations appended. So does this one."""
+    from apps.digest import llm
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    invented = dict(UZ_PAYLOAD, body_1_uz="Model 999B parametrga ega.")
+    prompts = []
+
+    def capture(request):
+        body = json.loads(request.content)
+        prompts.append(body["messages"][0]["content"])
+        payload = invented if len(prompts) == 1 else UZ_PAYLOAD
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
+    created = llm.analyse_for_digest_logic([risk_article.id])
+
+    assert len(prompts) == 2, "one retry"
+    assert "999" in prompts[1], "the retry must name the violation it is fixing"
+    assert len(created) == 1
+
+
+@respx.mock
+def test_an_article_already_written_is_not_written_again(risk_article, settings):
+    """The old path skipped an article that already had a usable row. Losing that makes a
+    re-run pay for every article again."""
+    from apps.digest import llm
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    route = respx.post("http://gw.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+    )
+
+    llm.analyse_for_digest_logic([risk_article.id])
+    llm.analyse_for_digest_logic([risk_article.id])
+
+    assert route.call_count == 1, "the second run must reuse the stored row"

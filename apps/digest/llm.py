@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import httpx
 from django.conf import settings
-from pydantic import BaseModel, Field, ValidationError, create_model, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import artifacts, post_format, translation_gates
@@ -1534,10 +1534,12 @@ def analyse_for_digest_logic(
     article_ids: list[int],
     client: httpx.Client | None = None,
 ) -> list[Analysis]:
-    """Two-stage editorial: English analysis for all items, then translation for all.
+    """Read each article and write its Uzbek post in one call.
 
-    Batched by stage rather than per article, so the model loads once per stage. Returns
-    the translation analyses, since those are what rendering consumes.
+    Replaced the two-stage English-then-translate flow on 2026-08-26. That split let a
+    poor post be traced to comprehension or to translation, which was worth less than the
+    repair it prevented: translation received four English fields and never the article, so
+    it could render a badly chosen fact but never replace it.
     """
     articles = list(
         Article.objects.filter(id__in=article_ids)
@@ -1545,122 +1547,75 @@ def analyse_for_digest_logic(
         .prefetch_related("analyses")
     )
 
-    # --- Stage 1: English -----------------------------------------------------
-    en_by_article: dict[int, Analysis] = {}
-    for art in articles:
-        existing = (
-            art.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN).order_by("-created_at").first()
-        )
-        if existing and (existing.payload.get("lead_en") or existing.payload.get("summary_en")):
-            en_by_article[art.id] = existing
-            continue
-        try:
-            shape = shape_for(_classified_topic(art))
-            result = _editorial_call(
-                prompt=EDITORIAL_EN_PROMPT.format(
-                    shape=SHAPE_BLOCKS[shape],
-                    title=art.title,
-                    source=art.source.name if art.source else "",
-                    text=art.extracted_text[:8000],
-                ),
-                schema=EDITORIAL_EN_SCHEMA,
-                model_cls=EditorialEn,
-                num_predict=settings.EDITORIAL_NUM_PREDICT,
-                client=client,
-                provider=settings.EDITORIAL_EN_PROVIDER,
-            )
-            en_by_article[art.id] = _record_analysis(art, Analysis.Stage.EDITORIAL_EN, result)
-            log.info("English editorial done for article %s (shape=%s)", art.id, shape)
-        except Exception as exc:
-            log.error("English editorial failed for article %s (%s): %s", art.id, art.title, exc)
-
-    # --- Stage 2: translation -------------------------------------------------
     created: list[Analysis] = []
     for art in articles:
-        en = en_by_article.get(art.id)
-        if en is None:
-            continue
         existing = (
             art.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).order_by("-created_at").first()
         )
-        if existing and (existing.payload.get("lead_uz") or existing.payload.get("summary_uz")):
+        if existing and existing.payload.get("lead_uz"):
             created.append(existing)
             continue
+
         try:
-            fields = {
-                k: en.payload.get(k, "")
-                for k in COMMON_TRANSLATED_FIELDS
-                if isinstance(en.payload.get(k), str) and en.payload[k].strip()
-            }
-            fields.update(technical_fields(en.payload))
-            uz_schema = translation_schema_for(fields)
-            uz_model = create_model(
-                "TranslationDynamic",
-                **{k: (str, ...) for k in uz_schema["properties"]},
-            )
-            result = _editorial_call(
-                prompt=TRANSLATION_PROMPT.format(
-                    fields=json.dumps(fields, ensure_ascii=False, indent=2)
-                ),
-                schema=uz_schema,
-                model_cls=uz_model,
-                num_predict=settings.TRANSLATION_NUM_PREDICT,
-                client=client,
-                provider=settings.TRANSLATION_PROVIDER,
-                tier=TIER_FAST,
-            )
+            result = editorial_uz_for_article(art, client=client)
 
-            result = result._replace(payload=_normalize_uz_payload(result.payload))
-
-            # Translation quality gates (T1.16)
-            violations = translation_gates.validate_translation(fields, result.payload)
+            violations = translation_gates.validate_against_source(
+                article_title=art.title,
+                article_text=art.extracted_text or "",
+                uz_fields=result.payload,
+                technical=result.payload.get("technical"),
+            )
             if violations:
                 log.warning(
-                    "Translation gates failed for article %s: %s. Retrying once.",
-                    art.id,
-                    violations,
+                    "Uzbek gates failed for article %s: %s. Retrying once.", art.id, violations
                 )
-                fields_json = json.dumps(fields, ensure_ascii=False, indent=2)
-                retry_prompt = (
-                    f"{TRANSLATION_PROMPT.format(fields=fields_json)}\n\n"
-                    "IMPORTANT: Your previous output failed translation quality gates:\n"
-                    + "\n".join(f"- {v}" for v in violations)
-                    + "\nPlease fix these specific errors and return valid JSON."
-                )
-                try:
-                    retry = editorial_chat(
-                        prompt=retry_prompt,
-                        schema=uz_schema,
-                        num_predict=settings.TRANSLATION_NUM_PREDICT,
-                        client=client,
-                        provider=settings.TRANSLATION_PROVIDER,
-                        tier=TIER_FAST,
-                    )
-                    retry = retry._replace(payload=_normalize_uz_payload(retry.payload))
-                    uz_model.model_validate(retry.payload)
-                    retry_violations = translation_gates.validate_translation(fields, retry.payload)
-                    if retry_violations:
-                        log.error(
-                            "Translation gates failed permanently for article %s: %s.",
-                            art.id,
-                            retry_violations,
-                        )
-                        continue
-                    result = _combine(result, retry)
-                except Exception as exc:
-                    log.error(
-                        "Translation gate recovery failed for article %s: %s.",
-                        art.id,
-                        exc,
-                    )
-                    continue
+                result = _retry_editorial_uz(art, violations, result, client)
 
             created.append(_record_analysis(art, Analysis.Stage.EDITORIAL_UZ, result))
-            log.info("Uzbek translation done for article %s", art.id)
+            log.info("Uzbek post done for article %s", art.id)
         except Exception as exc:
-            log.error("Translation failed for article %s (%s): %s", art.id, art.title, exc)
+            log.error("Uzbek editorial failed for article %s (%s): %s", art.id, art.title, exc)
 
     return created
+
+
+def _retry_editorial_uz(art, violations, first, client):
+    """One retry naming the violations, then keep whichever attempt is clean.
+
+    A permanently failing article is dropped by compose_and_publish, which filters
+    candidates on a usable row; DIGEST_SELECT_MARGIN covers the hole.
+    """
+    block_key = shape_for(_classified_topic(art))
+    retry_prompt = (
+        EDITORIAL_UZ_PROMPT.format(
+            block=UZ_BLOCKS[block_key],
+            title=art.title,
+            source=art.source.name if art.source else "",
+            text=(art.extracted_text or "")[:8000],
+        )
+        + "\n\nIMPORTANT: your previous answer failed these checks:\n"
+        + "\n".join(f"- {v}" for v in violations)
+        + "\nFix exactly these and return valid JSON."
+    )
+    retry = _editorial_call(
+        prompt=retry_prompt,
+        schema=EDITORIAL_UZ_SCHEMA,
+        model_cls=EditorialUz,
+        num_predict=settings.EDITORIAL_NUM_PREDICT,
+        client=client,
+        provider=settings.EDITORIAL_UZ_PROVIDER,
+        tier=TIER_DEEP,
+    )
+    retry = retry._replace(payload=_normalize_uz_payload(retry.payload))
+    still = translation_gates.validate_against_source(
+        article_title=art.title,
+        article_text=art.extracted_text or "",
+        uz_fields=retry.payload,
+        technical=retry.payload.get("technical"),
+    )
+    if still:
+        log.error("Uzbek gates failed permanently for article %s: %s", art.id, still)
+    return _combine(first, retry)
 
 
 def editorial_uz_for_article(article: Article, client: httpx.Client | None = None) -> ChatResult:
@@ -1673,7 +1628,7 @@ def editorial_uz_for_article(article: Article, client: httpx.Client | None = Non
     which keeps the eval command from polluting the pipeline's data.
     """
     block_key = shape_for(_classified_topic(article))
-    return _editorial_call(
+    result = _editorial_call(
         prompt=EDITORIAL_UZ_PROMPT.format(
             block=UZ_BLOCKS[block_key],
             title=article.title,
@@ -1687,6 +1642,8 @@ def editorial_uz_for_article(article: Article, client: httpx.Client | None = Non
         provider=settings.EDITORIAL_UZ_PROVIDER,
         tier=TIER_DEEP,
     )
+    # The prompt forbids markdown; normalize mechanically rather than trusting the model.
+    return result._replace(payload=_normalize_uz_payload(result.payload))
 
 
 def _record_analysis(article, stage, result: ChatResult) -> Analysis:
