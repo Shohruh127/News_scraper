@@ -42,8 +42,7 @@ if settings.PUBLISHING_ENABLED:
 known = {"gateway", "mimo"}
 providers = {
     "LLM_PROVIDER": settings.LLM_PROVIDER,
-    "EDITORIAL_EN_PROVIDER": settings.EDITORIAL_EN_PROVIDER,
-    "TRANSLATION_PROVIDER": settings.TRANSLATION_PROVIDER,
+    "EDITORIAL_UZ_PROVIDER": settings.EDITORIAL_UZ_PROVIDER,
     "CLASSIFIER_PROVIDER": settings.CLASSIFIER_PROVIDER,
 }
 for name, value in providers.items():

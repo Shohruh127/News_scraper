@@ -294,7 +294,7 @@ def _item_data(item: DigestItem) -> dict:
     Shared by render_item_post and render_item_appendix so both templates see the
     same data shape and neither can drift out of sync.
     """
-    # Reader-facing text comes from the translation stage only (ADR-005).
+    # Reader-facing text and technical details come from the single-stage Uzbek editorial.
     uz = (
         item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
         .order_by("-created_at")

@@ -185,13 +185,12 @@ the gateway fronts the same local GPU models — `fast` is the 8B, `smart` the 3
 client bought nothing, and its model tags had quietly become the tier vocabulary for providers
 that never spoke to it.
 
-Four stages route independently, each accepting `gateway | mimo`:
+Stages route independently, each accepting `gateway | mimo`:
 
 | Setting | Stage | Default |
 |---|---|---|
 | `LLM_PROVIDER` | global fallback | `gateway` |
-| `EDITORIAL_EN_PROVIDER` | English analysis | inherits `LLM_PROVIDER` |
-| `TRANSLATION_PROVIDER` | Uzbek translation | inherits `LLM_PROVIDER` |
+| `EDITORIAL_UZ_PROVIDER` | single-stage Uzbek editorial | inherits `LLM_PROVIDER` |
 | `CLASSIFIER_PROVIDER` | triage + classification | `gateway` |
 
 - **The tier is said out loud.** `llm.TIER_FAST` / `llm.TIER_DEEP` are the only way a caller
@@ -202,9 +201,8 @@ Four stages route independently, each accepting `gateway | mimo`:
 - `CLASSIFIER_PROVIDER` deliberately does **not** inherit `LLM_PROVIDER`. These two stages make
   several hundred calls a day; inheriting would move that volume silently when the editorial
   provider changes. Any new provider setting must default to preserving current behaviour.
-- **Translation asks for the fast tier.** Measured 2026-08-17: the fast model lost 0/7 numbers and
-  kept the glossary, while the deep one garbled Uzbek in the first digest. Translation is a
-  constrained task, and a stronger model spends its extra freedom changing things.
+- **Uzbek editorial runs on the deep tier.** One call writes reader-facing Uzbek and extracts the
+  technical block directly.
 - The gateway addresses models by tier alias only; sending a real model name is a 404.
 - **`Analysis.model_digest` is now always empty, and `model_tag` records the tier alias, not the
   model.** Only Ollama exposed `/api/tags`. The gateway can repoint an alias silently — that is
@@ -263,18 +261,17 @@ Two things that follow:
   as `smart` does — the trap CLAUDE.md already documented for the editorial stage. The budget
   is a cap, not a cost; the saving is entirely on the input side.
 
-Token budgets, all verified live against the gateway on 2026-08-21 with the real prompts:
+Token budgets, all verified live against the gateway:
 
 | Stage | Budget | Tier | Verified |
 |---|---|---|---|
 | Triage | 1000 | fast | passes; 200 fails — see the triage section above |
 | Classification | 2000 | smart | passes, ~15-18s |
-| Editorial EN | `EDITORIAL_NUM_PREDICT`, default 4000 | smart | **1500 fails**, 3000 passes, ~50-70s |
-| Translation | `TRANSLATION_NUM_PREDICT`, default 2500 | fast | passes, ~25s |
+| Uzbek Editorial | `EDITORIAL_NUM_PREDICT`, default 5000 | smart | 4000 fails on long articles, 5000 passes, ~50-80s |
 
-The editorial budget was a hardcoded 1500, which is enough on MiMo and empties every
-article on the gateway. An unused cap costs nothing because the model stops when it is done, so
-these defaults deliberately take the generous side.
+The editorial budget was raised from 4000 to 5000 on 2026-08-26 to accommodate the single-stage
+prompt and reasoning tokens on the gateway. An unused cap costs nothing because the model stops
+when it is done.
 
 ## Token accounting
 

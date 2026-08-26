@@ -98,10 +98,11 @@ class Analysis(models.Model):
     class Stage(models.TextChoices):
         TRIAGE = "triage"
         CLASSIFICATION = "classification"
-        #: English analysis. Separated from translation so a bad summary can be traced
-        #: to either comprehension or translation, not to an ambiguous single step.
+        #: Legacy English analysis (two-stage flow, 2026-08-17 to 2026-08-26).
+        #: Retained so stored rows validate.
         EDITORIAL_EN = "editorial_en"
-        #: Uzbek translation of the *_en fields. `technical` stays English.
+        #: Single-stage Uzbek editorial (2026-08-26 design). Reader-facing fields are
+        #: Uzbek; the `technical` block stays English.
         EDITORIAL_UZ = "editorial_uz"
         #: Legacy single-step editorial (strategy C). Kept so old rows validate.
         EDITORIAL = "editorial"
