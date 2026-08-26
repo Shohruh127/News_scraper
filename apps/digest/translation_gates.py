@@ -76,6 +76,53 @@ def _carries_number(number: str, uz_numbers: set[str], uz_text: str) -> bool:
     return any(re.search(rf"\b{word}\b", lowered) for word in UZBEK_SMALL_NUMERALS.get(number, ()))
 
 
+#: English words for the small numbers, for the reverse-direction gate.
+#:
+#: The mirror of UZBEK_SMALL_NUMERALS and needed for the same reason. Against an article the
+#: gate asks whether a number in the Uzbek exists in the source, and English prose writes
+#: "two weeks" where the Uzbek writes "2 hafta". Without this the gate rejects a correct
+#: post — the shape of defect that cost article 11 its translation on 2026-08-24.
+ENGLISH_SMALL_NUMERALS = {
+    "1": ("one",),
+    "2": ("two",),
+    "3": ("three",),
+    "4": ("four",),
+    "5": ("five",),
+    "6": ("six",),
+    "7": ("seven",),
+    "8": ("eight",),
+    "9": ("nine",),
+    "10": ("ten",),
+}
+
+
+def check_numbers_against_source(article_text: str, uz_fields: dict) -> list[str]:
+    """Gate 1, reverse direction: every number the Uzbek states must be in the article.
+
+    The forward gate (check_numbers) catches a number lost in translation. This one also
+    catches a number the model invented, which is the objection CONTENT_SCHEMA.md section 7
+    raised against writing the post directly in Uzbek.
+
+    Keys starting with `headline` are exempt, as in the forward gate: a headline compresses
+    a figure away legitimately.
+    """
+    source_numbers = extract_numbers(article_text)
+    lowered_source = article_text.lower()
+
+    violations = []
+    for key, value in uz_fields.items():
+        if key.startswith("headline"):
+            continue
+        for number in extract_numbers(str(value)):
+            if number in source_numbers:
+                continue
+            words = ENGLISH_SMALL_NUMERALS.get(number, ())
+            if any(re.search(rf"\b{word}\b", lowered_source) for word in words):
+                continue
+            violations.append(f"Number not in the article: {number} (in {key})")
+    return violations
+
+
 def check_numbers(en_fields: dict, uz_fields: dict) -> list[str]:
     """Gate 1: every number in translated English fields must appear in Uzbek.
 

@@ -305,3 +305,48 @@ def test_the_body_is_not_exempt_from_the_number_gate():
     uz = {"body_1_uz": "Ko'chirish arzonroq tushdi."}
     violations = translation_gates.check_numbers(en, uz)
     assert violations and "12" in violations[0]
+
+
+def test_a_number_the_article_does_not_contain_is_a_violation():
+    """The reverse direction catches an invented number, which the forward one cannot."""
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    violations = check_numbers_against_source(
+        "The model has 123B parameters.",
+        {"body_1_uz": "Model 456B parametrga ega."},
+    )
+    assert violations, "456B is not in the article"
+
+
+def test_a_number_the_article_contains_passes():
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    assert not check_numbers_against_source(
+        "The model has 123B parameters and 128k context.",
+        {"body_1_uz": "Model 123B parametr va 128k kontekstga ega."},
+    )
+
+
+def test_an_english_word_number_in_the_article_covers_an_uzbek_digit():
+    """The article writes 'two weeks'; the Uzbek writes '2 hafta'. Both are correct.
+
+    This is the mirror of the 2026-08-24 defect, where 'ikki hafta' was rejected because
+    the English said '2'. Article 11 lost its translation permanently over it.
+    """
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    assert not check_numbers_against_source(
+        "The migration finished in two weeks.",
+        {"body_1_uz": "Ko'chirish 2 haftada yakunlandi."},
+    )
+
+
+def test_the_headline_is_exempt_from_the_source_number_gate():
+    """A headline legitimately compresses a figure away. Gating it killed a correct post
+    on 2026-08-24."""
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    assert not check_numbers_against_source(
+        "No figures here.",
+        {"headline_uz": "Migratsiya 2 haftada tugadi"},
+    )
