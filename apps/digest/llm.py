@@ -349,7 +349,7 @@ qilishim kerak?" deb o'qiydi. Kim e'lon qilgani bilan boshlama; xavfning o'zi bi
 quvvatlaydi".
   lead_uz    nima da'vo qilinyapti va kim tomonidan (<= 14 so'z)
   body_1_uz  dalil qanchalik kuchli - qaysi ma'lumot to'plami, nechta namuna, nima bilan
-             solishtirilgan, kod yoki vazn bugun bormi (<= 16 so'z)
+             solishtirilgan, kod yoki weights bugun bormi (<= 16 so'z)
   kicker_uz  bu tasdiqlansa nima o'zgaradi (<= 8 so'z)
 Va'da qilingan kodni chiqqan kod sifatida yozma.""",
     "product": """Bu - kompaniya mahsulot chiqardi. O'quvchi "sinab ko'ra olamanmi va
@@ -441,7 +441,7 @@ Maqola: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k conte
 scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."
 Chiquvchi JSON:
 {{
-  "headline_uz": "Mistral-Large-2 ochiq vazn bilan chiqdi",
+  "headline_uz": "Mistral-Large-2 open-weight modeli chiqdi",
   "lead_uz": "Mistral jamoasi 123B parametrli Mistral-Large-2 modelini ochiq taqdim etdi.",
   "body_1_uz": "Model 128k kontekstga ega va MMLU testida 84% natija ko'rsatdi.",
   "kicker_uz": "API shartnomasisiz kuchli model.",

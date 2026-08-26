@@ -282,3 +282,35 @@ def test_posting_is_refused_without_an_eval_channel(settings):
 
     with pytest.raises(CommandError, match="TELEGRAM_EVAL_CHANNEL_ID"):
         call_command("eval_editorial_uz", "--post", stdout=StringIO())
+
+
+def test_the_prompt_never_teaches_a_form_the_glossary_gate_forbids():
+    """A prompt that plants a calque and a gate that rejects it cannot both be right.
+
+    Measured 2026-08-26 on the live comparison: the RELIZ post was flagged twice for
+    'weights' rendered as 'vaznlar' and 'vaznlari'. Neither string is in the prompt — the
+    stem is. The example headline said "ochiq vazn" and the research block said "kod yoki
+    vazn", the model inflected the stem, and the gate rejected what the prompt taught.
+
+    Stems, not exact forms: CALQUES lists the inflected renderings a model produces, while
+    a prompt plants the uninflected root.
+    """
+    import re
+
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT, UZ_BLOCKS
+    from apps.digest.translation_gates import CALQUES
+
+    text = (EDITORIAL_UZ_PROMPT + " " + " ".join(UZ_BLOCKS.values())).lower()
+    suffixes = ("lari", "lar", "li")
+
+    for term, bad_forms in CALQUES.items():
+        for bad in bad_forms:
+            stem = bad.lower()
+            for suffix in suffixes:
+                if stem.endswith(suffix) and len(stem) - len(suffix) >= 4:
+                    stem = stem[: -len(suffix)]
+                    break
+            assert not re.search(rf"\b{re.escape(stem)}", text), (
+                f"the prompt contains {stem!r}, the Uzbek rendering of {term!r} that "
+                f"check_glossary rejects. Rule 5 says this term stays in English."
+            )
