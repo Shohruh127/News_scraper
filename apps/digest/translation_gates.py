@@ -286,3 +286,36 @@ def validate_translation(en_fields: dict, uz_fields: dict) -> list[str]:
         log.warning("Translation gate violation: %s", "; ".join(violations))
 
     return violations
+
+
+def validate_against_source(
+    article_title: str,
+    article_text: str,
+    uz_fields: dict,
+    technical: dict | None = None,
+) -> list[str]:
+    """Gates for the single-stage Uzbek editorial (2026-08-26 design).
+
+    The two-stage flow compares the Uzbek against four English fields. One stage has no such
+    fields, so the English side becomes the article itself — which is larger than the four
+    fields ever were, so the calque gate sees more terms, not fewer.
+
+    `validate_translation` above is untouched and still serves the two-stage flow. Phase 2
+    removes it.
+    """
+    english_source = {"title": article_title, "text": article_text}
+    if technical:
+        english_source.update({k: str(v) for k, v in technical.items()})
+
+    violations = []
+    violations.extend(check_numbers_against_source(article_text, uz_fields))
+    violations.extend(check_glossary(english_source, uz_fields))
+
+    uz_hl = uz_fields.get("headline_uz", "")
+    if article_title and uz_hl:
+        violations.extend(check_headline_case(article_title, uz_hl, en_context=article_text))
+
+    if violations:
+        log.warning("Uzbek gate violation: %s", "; ".join(violations))
+
+    return violations

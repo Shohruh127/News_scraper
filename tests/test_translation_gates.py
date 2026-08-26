@@ -350,3 +350,49 @@ def test_the_headline_is_exempt_from_the_source_number_gate():
         "No figures here.",
         {"headline_uz": "Migratsiya 2 haftada tugadi"},
     )
+
+
+def test_source_validation_runs_all_three_gates():
+    from apps.digest.translation_gates import validate_against_source
+
+    violations = validate_against_source(
+        article_title="A new framework ships",
+        article_text="A new framework ships with 123B parameters.",
+        uz_fields={
+            "headline_uz": "Yangi framework chiqdi",
+            "lead_uz": "Jamoa 456B parametrli freymvork chiqardi.",
+            "body_1_uz": "Batafsil ma'lumot yo'q.",
+            "kicker_uz": "Sinab ko'ring.",
+        },
+    )
+    joined = " ".join(violations)
+    assert "456" in joined, "the invented number must be caught"
+    assert "freymvork" in joined, "the calque must be caught"
+
+
+def test_source_validation_passes_a_clean_post():
+    from apps.digest.translation_gates import validate_against_source
+
+    assert not validate_against_source(
+        article_title="Mistral ships Mistral-Large-2",
+        article_text="Mistral released Mistral-Large-2 with 123B parameters.",
+        uz_fields={
+            "headline_uz": "Mistral-Large-2 chiqdi",
+            "lead_uz": "Mistral 123B parametrli modelni taqdim etdi.",
+            "body_1_uz": "Model ochiq vazn bilan tarqatiladi.",
+            "kicker_uz": "Shartnomasiz kuchli model.",
+        },
+    )
+
+
+def test_the_article_title_supplies_the_headline_vocabulary():
+    """check_headline_case returns early on an empty English headline, which would disable
+    the gate entirely after the merge. The article title is what keeps it alive."""
+    from apps.digest.translation_gates import validate_against_source
+
+    violations = validate_against_source(
+        article_title="Ollama ships a new runner",
+        article_text="Ollama ships a new runner today.",
+        uz_fields={"headline_uz": "Ollama Yangi Runner Chiqardi"},
+    )
+    assert violations, "English Title Case in the Uzbek headline must be caught"
