@@ -5,7 +5,7 @@ Rules:
 2. EXCLUDED_MATURITIES are strictly excluded from the digest.
 3. At most DIGEST_MAX_PER_TOPIC per topic, at most DIGEST_MAX_ITEMS total.
 4. Never pad: if only 2 items qualify, return a 2-item digest.
-5. Idempotency is enforced by the database unique constraint on Digest.digest_date.
+5. Composing twice fills an empty slot and never duplicates a block that already has items.
 """
 
 import logging
@@ -175,17 +175,30 @@ def compose_digest(
 ) -> Digest:
     """Compose digest and digest items for a specific date and edition.
 
-    A second call for the same date and edition will fail on the unique constraint.
+    An empty, unpublished digest for this slot is filled rather than refused. It used to
+    raise on the unique constraint, and `compose_and_publish` caught that, fetched the row
+    and returned it — with the candidates it had just paid for silently discarded.
+    Measured 2026-08-26: a stray `compose_and_publish` created an empty digest at 11:45,
+    and when the real cycle finished at 12:20 it had written five English analyses and five
+    Uzbek translations, dropped all five here, and published nothing. That is the
+    2026-08-21 failure in a different shape: 815002e stopped an empty digest being marked
+    PUBLISHED, but the slot still could not be refilled.
+
+    A digest that already has items is returned untouched. Adding to it would repost what
+    already went out, and a published one is a duplicate run — `compose_and_publish` guards
+    that case earlier as well.
     """
     if digest_date is None:
         digest_date = timezone.localdate()
 
     with transaction.atomic():
-        digest = Digest.objects.create(
+        digest, created = Digest.objects.get_or_create(
             digest_date=digest_date,
             edition=edition,
-            status=Digest.Status.COMPOSED,
+            defaults={"status": Digest.Status.COMPOSED},
         )
+        if not created and (digest.status == Digest.Status.PUBLISHED or digest.items.exists()):
+            return digest
 
         selected = candidates if candidates is not None else select_digest_candidates(digest_date)
         for pos, (article, _analysis, score, secondary_arts) in enumerate(selected, start=1):

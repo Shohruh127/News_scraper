@@ -374,17 +374,11 @@ def compose_and_publish(
 
             candidates = [c for c in candidates if c[0].id in translated][:max_items]
 
-        # Step 4: Compose Digest
-        try:
-            digest = ranking.compose_digest(target_date, edition=edition, candidates=candidates)
-
-        except IntegrityError:
-            log.warning(
-                "Digest for %s (%s) already exists. Using existing composed digest.",
-                target_date,
-                edition,
-            )
-            digest = Digest.objects.get(digest_date=target_date, edition=edition)
+        # Step 4: Compose Digest. compose_digest owns the already-exists case now: it fills
+        # an empty slot and leaves a slot that already has items alone. Catching
+        # IntegrityError here meant a re-run threw away every candidate it had just paid
+        # the editorial and translation stages for.
+        digest = ranking.compose_digest(target_date, edition=edition, candidates=candidates)
 
         # Step 5: Promote corroborated benchmark evidence when explicitly enabled.
         if settings.BENCHMARK_VERIFICATION_ENABLED:

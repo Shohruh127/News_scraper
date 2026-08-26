@@ -3,7 +3,6 @@
 from datetime import date, datetime, timedelta
 
 import pytest
-from django.db import IntegrityError
 from django.utils import timezone
 
 from apps.digest import ranking
@@ -171,12 +170,56 @@ def test_target_date_window_backfill(db, source):
     assert len(cands_later) == 0
 
 
-def test_compose_digest_idempotency_constraint(db, classified_articles):
+def test_composing_twice_does_not_duplicate_a_block(db, classified_articles):
+    """The invariant the old IntegrityError protected: never repost what already went out."""
     today = timezone.localdate()
-    ranking.compose_digest(today)
+    # compose_and_publish passes its candidates explicitly. Without them,
+    # select_digest_candidates already excludes anything sitting in a digest, so a second
+    # call adds nothing and the guard is never exercised — the first version of this test
+    # passed with the guard deleted.
+    candidates = ranking.select_digest_candidates(today)
+    assert candidates, "fixture must produce candidates"
 
-    with pytest.raises(IntegrityError):
-        ranking.compose_digest(today)
+    first = ranking.compose_digest(today, candidates=candidates)
+    positions = list(first.items.values_list("position", flat=True))
+    assert positions, "fixture must produce a non-empty block"
+
+    second = ranking.compose_digest(today, candidates=candidates)
+
+    assert second.pk == first.pk
+    assert list(second.items.values_list("position", flat=True)) == positions
+
+
+def test_an_empty_unpublished_slot_is_filled_not_refused(db, classified_articles):
+    """Measured 2026-08-26: this cost a whole edition.
+
+    A stray compose_and_publish created an empty digest while triage was still running.
+    The real cycle then paid for five English analyses and five Uzbek translations, hit
+    the unique constraint here, and discarded every one of them. Nothing published.
+    """
+    today = timezone.localdate()
+    empty = Digest.objects.create(
+        digest_date=today, edition=Digest.Edition.EVENING, status=Digest.Status.COMPOSED
+    )
+    assert not empty.items.exists()
+
+    filled = ranking.compose_digest(today)
+
+    assert filled.pk == empty.pk, "must reuse the slot, not fail on the constraint"
+    assert filled.items.exists(), "the candidates were dropped instead of composed"
+
+
+def test_a_published_slot_is_left_alone(db, classified_articles):
+    """Refilling a published digest would compose a second block over one already sent."""
+    today = timezone.localdate()
+    published = Digest.objects.create(
+        digest_date=today, edition=Digest.Edition.EVENING, status=Digest.Status.PUBLISHED
+    )
+
+    result = ranking.compose_digest(today)
+
+    assert result.pk == published.pk
+    assert not result.items.exists()
 
 
 def test_render_templates_snapshot(db, classified_articles):
