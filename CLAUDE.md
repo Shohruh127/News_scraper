@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 News Radar aggregates AI/engineering news from ~23 sources, scores and clusters it, writes an
 English editorial pass and an Uzbek translation with local and hosted LLMs, and publishes one
-Telegram post per selected item. Django 5 + Celery + Redis + PostgreSQL 17, deployed as a Docker
+Telegram post per selected item. Django 6 + Celery + Redis + PostgreSQL 17, deployed as a Docker
 Compose stack on a single server.
 
 ## Commands
@@ -160,6 +160,11 @@ or the old entry keeps firing from the database.
 `PeriodicTask.total_run_count` means beat *dispatched* the task. Whether a worker executed it is a
 separate question, answered by `django_celery_results.TaskResult` (`CELERY_RESULT_BACKEND` is
 `django-db`). A row stuck at `STARTED` is a task that began and never finished.
+
+That table only answers the question because `CELERY_RESULT_EXTENDED` is on. Without it a row
+carries an id, a status and a return value, and `task_name`, `task_args`, `task_kwargs` and
+`worker` all read `None` — you can see that something ran and not what. Measured 2026-08-26,
+while an unexplained `compose_and_publish` on `worker-publish` could not be attributed.
 
 ## LLM providers
 

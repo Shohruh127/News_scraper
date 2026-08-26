@@ -90,6 +90,13 @@ CELERY_BROKER_URL = env("REDIS_URL", default="redis://127.0.0.1:6380/0")
 CELERY_RESULT_BACKEND = "django-db"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+# Without this, a TaskResult row stores its id, status and return value and nothing else —
+# task_name, task_args, task_kwargs and worker all come back None. Measured 2026-08-26:
+# an unexplained compose_and_publish ran on worker-publish and the result backend could not
+# say which task it was, let alone who sent it or with what arguments. TRACK_STARTED above
+# is what makes a row appear while the task is still running; this is what makes the row
+# worth reading when it does.
+CELERY_RESULT_EXTENDED = True
 CELERY_TASK_ROUTES = {
     "digest.fetch_all_sources": {"queue": "fetch"},
     "digest.fetch_source": {"queue": "fetch"},

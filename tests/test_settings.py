@@ -174,6 +174,23 @@ def test_drip_tasks_are_routed_by_their_registered_names():
         assert name in app.tasks, f"{name} is routed but not registered"
 
 
+def test_task_results_record_which_task_they_belong_to():
+    """CLAUDE.md points at TaskResult to answer "did a worker actually run it".
+
+    Without result_extended a row carries its id, status and return value and nothing
+    else — task_name, task_args, task_kwargs and worker are all None, so the table cannot
+    answer the question it is documented to answer. Measured 2026-08-26 while trying to
+    identify an unexplained compose_and_publish.
+    """
+    from django.conf import settings as _settings
+
+    from config.celery import app
+
+    assert _settings.CELERY_RESULT_EXTENDED is True
+    # The Django setting only matters if Celery actually picks it up from the namespace.
+    assert app.conf.result_extended is True
+
+
 def test_no_test_can_reach_a_real_broker():
     """Pins the autouse fixture in conftest. Deleting it is silent without this.
 
