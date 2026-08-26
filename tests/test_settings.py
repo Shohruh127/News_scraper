@@ -172,3 +172,21 @@ def test_drip_tasks_are_routed_by_their_registered_names():
 
     for name in routes:
         assert name in app.tasks, f"{name} is routed but not registered"
+
+
+def test_no_test_can_reach_a_real_broker():
+    """Pins the autouse fixture in conftest. Deleting it is silent without this.
+
+    The default CELERY_BROKER_URL is the port docker-compose publishes the stack's redis
+    on, so before 2026-08-26 a dispatched task went to the live queue and the live worker
+    ran it against the live database.
+    """
+    from config.celery import app
+
+    assert app.conf.task_always_eager is True
+    # Proves it end to end: a dispatch returns a local result instead of a queued one.
+    from celery.result import EagerResult
+
+    from apps.digest import tasks
+
+    assert isinstance(tasks.record_heartbeat.delay("probe"), EagerResult)

@@ -6,6 +6,40 @@ from apps.digest.models import Analysis, Article, Digest, DigestItem, Source
 from tests.helpers import make_editorial
 
 
+@pytest.fixture(autouse=True)
+def _no_real_broker():
+    """Keep `.delay()` inside the test process. Autouse, because one call is enough.
+
+    `CELERY_BROKER_URL` defaults to redis://127.0.0.1:6380/0, which is the port
+    docker-compose publishes the stack's redis on. So a test that dispatched a task put a
+    real message on the real queue and the running worker executed it against the running
+    database — not the test one.
+
+    Measured 2026-08-26: `tests/test_llm.py` calls `tasks.triage_and_classify()` with no
+    arguments, so `trigger_publish_chain` took its default of True and fired
+    `compose_and_publish.delay(edition=None)`. Two full-suite runs put two of them on the
+    queue, and worker-publish composed a digest out of a half-classified backlog both
+    times. On the server the same call would reach the live channel.
+
+    Eager mode runs a dispatched task in this process against the test database, so a
+    test that fires one still exercises it and nothing leaves pytest. Exceptions stay
+    captured in the EagerResult rather than propagating, which is what `.delay()` did
+    before.
+    """
+    from config.celery import app
+
+    previous = app.conf.task_always_eager
+    # Assigning app.conf.broker_url does NOT work: broker_url resolves through
+    # config_from_object against Django settings on every read, so the assignment is
+    # ignored and the connection still points at the live queue. task_always_eager is read
+    # by apply_async itself and short-circuits before any broker connection is opened.
+    app.conf.task_always_eager = True
+    try:
+        yield
+    finally:
+        app.conf.task_always_eager = previous
+
+
 @pytest.fixture
 def source(db):
     return Source.objects.create(
