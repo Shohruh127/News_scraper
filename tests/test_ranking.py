@@ -507,3 +507,18 @@ def test_roundup_post_skips_items_that_failed_to_post(digest_with_two_items):
     html = ranking.render_roundup_post(digest_with_two_items)
     assert "1. " in html
     assert "2. " not in html
+
+
+@pytest.mark.django_db
+def test_the_appendix_reads_technical_from_the_uzbek_row(digest_with_item):
+    """The single-stage row carries the technical block; the English row is not written."""
+    from apps.digest import ranking
+    from apps.digest.models import Analysis
+
+    item = digest_with_item.items.first()
+    item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN).delete()
+    uz = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_UZ)
+    uz.payload = dict(uz.payload, technical={"repo_url": "https://example.com/only-here"})
+    uz.save(update_fields=["payload"])
+
+    assert "only-here" in ranking.render_item_appendix(item)

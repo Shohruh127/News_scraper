@@ -308,25 +308,28 @@ def _item_data(item: DigestItem) -> dict:
             f"'{item.article.title}') lacks editorial_uz with non-empty 'lead_uz' or 'summary_uz'."
         )
 
-    # English analysis for the technical appendix.
-    en = (
-        item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN)
-        .order_by("-created_at")
-        .first()
-    )
-    if not en:
-        raise ValueError(
-            f"DigestItem #{item.position} (article {item.article_id}: "
-            f"'{item.article.title}') lacks editorial_en analysis."
+    # Rows written before 2026-08-26 carry `technical` on the English analysis. The fallback
+    # is temporary: delete it once no EDITORIAL_EN-only article remains inside the 7-day
+    # verification window.
+    technical = uz_payload.get("technical")
+    evidence_level = uz_payload.get("evidence_level")
+    if technical is None or evidence_level is None:
+        en = (
+            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN)
+            .order_by("-created_at")
+            .first()
         )
-    en_payload = en.payload or {}
-    technical = en_payload.get("technical", {})
+        en_payload = en.payload if en else {}
+        if technical is None:
+            technical = en_payload.get("technical", {})
+        if evidence_level is None:
+            evidence_level = en_payload.get("evidence_level", "vendor_claim_only")
 
     cls = (
         item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
         .order_by("-created_at")
         .first()
-        or en
+        or uz
     )
 
     secondary_sources = [
@@ -337,8 +340,6 @@ def _item_data(item: DigestItem) -> dict:
         }
         for sec in item.secondary_articles.all()
     ]
-
-    evidence_level = en_payload.get("evidence_level", "vendor_claim_only")
 
     topic_str = str(cls.topic) if (cls and cls.topic) else "frontier_models"
     maturity_str = str(cls.maturity) if (cls and cls.maturity) else "live_product"

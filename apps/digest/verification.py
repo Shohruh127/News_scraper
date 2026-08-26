@@ -91,7 +91,20 @@ def cluster_has_independent_benchmark(primary: Article, secondary: Article) -> b
 def _latest_editorial(article: Article) -> Analysis | None:
     prefetched = getattr(article, "_verification_editorials", None)
     if prefetched is not None:
+        for a in prefetched:
+            if a.stage == Analysis.Stage.EDITORIAL_UZ and (a.payload or {}).get("technical"):
+                return a
+        for a in prefetched:
+            if a.stage == Analysis.Stage.EDITORIAL_EN:
+                return a
         return prefetched[0] if prefetched else None
+
+    # Rows written before 2026-08-26 carry `technical` on the English analysis. The fallback
+    # is temporary: delete it once no EDITORIAL_EN-only article remains inside the 7-day
+    # verification window.
+    uz = article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).order_by("-created_at").first()
+    if uz and (uz.payload or {}).get("technical"):
+        return uz
     return (
         article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN).order_by("-created_at").first()
     )
@@ -99,9 +112,12 @@ def _latest_editorial(article: Article) -> Analysis | None:
 
 def apply_cluster_evidence(digest: Digest) -> int:
     """Promote primary editorial evidence when a cluster has independent corroboration."""
-    editorial_qs = Analysis.objects.filter(stage=Analysis.Stage.EDITORIAL_EN).order_by(
-        "-created_at"
-    )
+    # Rows written before 2026-08-26 carry `technical` on the English analysis. The fallback
+    # is temporary: delete it once no EDITORIAL_EN-only article remains inside the 7-day
+    # verification window.
+    editorial_qs = Analysis.objects.filter(
+        stage__in=[Analysis.Stage.EDITORIAL_UZ, Analysis.Stage.EDITORIAL_EN]
+    ).order_by("-created_at")
     secondary_qs = Article.objects.prefetch_related(
         Prefetch("analyses", queryset=editorial_qs, to_attr="_verification_editorials")
     )
