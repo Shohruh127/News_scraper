@@ -286,6 +286,70 @@ def shape_for(topic: str | None) -> str:
     return TOPIC_SHAPES.get(topic or "", SHAPE_GENERAL)
 
 
+#: The Uzbek editorial instruction, chosen by the article's classified topic.
+#:
+#: Keyed by the same names as SHAPE_BLOCKS so `shape_for()` selects both and TOPIC_SHAPES
+#: stays the single topic map. Two maps would drift.
+#:
+#: Only the three sentence fields vary. `headline_uz` is a label of at most eight words and
+#: does not change with the kind of story — the English agent block leaked a thesis into the
+#: headline on 2026-08-26 precisely because it argued about what matters.
+#:
+#: The word counts are stated here as well as in the output-field definitions. The block is
+#: read first and wins; a limit stated only later arrives after the sentence is decided.
+UZ_BLOCKS: dict[str, str] = {
+    SHAPE_GENERAL: """Maqolada ko'p fakt bo'ladi. Lead'ni shu tartibda tanla, birinchi mos
+kelgani g'olib:
+  1. Nomi bor narsa chiqdi yoki o'zgardi - va kim chiqargani.
+  2. O'lchangan natija - va kim o'lchagani.
+  3. Qoida, siyosat yoki cheklov - va kimga tegishli ekani.
+Agar maqola faqat e'lon bo'lsa, hech narsa chiqmagan va o'lchanmagan bo'lsa - buni ochiq
+ayt. E'lonni relizga o'xshatib yozma.
+  lead_uz 14 so'z, body_1_uz 16 so'z, kicker_uz 8 so'z dan oshmasin.""",
+    "release": """Bu - yangi chiqqan model yoki vosita. O'quvchi bitta savolga javob
+qidiradi: "buni ishlatsam, menda nima yangilik bo'ladi?"
+  lead_uz    kim nimani chiqardi (<= 14 so'z)
+  body_1_uz  eng muhim raqam yoki xususiyat - parametr soni, kontekst hajmi, versiya,
+             tezlik, benchmark natijasi (<= 16 so'z)
+  kicker_uz  o'quvchi endi nima qila oladi, ilgari qila olmagan (<= 8 so'z)
+Agar hech narsa chiqmagan, faqat va'da qilingan bo'lsa - buni lead'da ochiq ayt.""",
+    "agent": """Bu - agent, harness, framework yoki integratsiya. O'quvchi "bu mening
+tizimimga tushadimi?" deb o'qiydi. Benchmark bali bilan boshlama; ulanish bilan boshla -
+nima nima bilan gaplashadi, orasida nima turadi.
+  lead_uz    nima nima bilan ulanadi (<= 14 so'z)
+  body_1_uz  ulanishning o'zi. Mahsulot bo'lsa: qaysi transport, runtime yoki ruxsat
+             kerak, qaysi hostlar qo'llab-quvvatlaydi. Harness yoki framework bo'lsa:
+             qismlari va ular orasidagi aylanma. Ball - ulanish emas; ballni keltirgan
+             qismni nomla. (<= 16 so'z)
+  kicker_uz  nimaning o'rnini bosadi yoki nimani keraksiz qiladi (<= 8 so'z)""",
+    "risk": """Bu - zaiflik yoki uni bartaraf etish. O'quvchi "menga tegadimi va nima
+qilishim kerak?" deb o'qiydi. Kim e'lon qilgani bilan boshlama; xavfning o'zi bilan boshla.
+  lead_uz    xavf nima va kimga tegadi (<= 14 so'z)
+  body_1_uz  qamrovi yoki mexanizmi - qaysi versiyalar, qaysi modellar, buzg'unchi nima
+             qo'lga kiritadi, yoki himoya qanday ishlaydi (<= 16 so'z)
+  kicker_uz  o'quvchi nima qilishi kerak (<= 8 so'z)""",
+    "research": """Bu - topilma. Savol "nima chiqdi" emas, "dalil da'voni qanchalik
+quvvatlaydi".
+  lead_uz    nima da'vo qilinyapti va kim tomonidan (<= 14 so'z)
+  body_1_uz  dalil qanchalik kuchli - qaysi ma'lumot to'plami, nechta namuna, nima bilan
+             solishtirilgan, kod yoki vazn bugun bormi (<= 16 so'z)
+  kicker_uz  bu tasdiqlansa nima o'zgaradi (<= 8 so'z)
+Va'da qilingan kodni chiqqan kod sifatida yozma.""",
+    "product": """Bu - kompaniya mahsulot chiqardi. O'quvchi "sinab ko'ra olamanmi va
+qanchaga?" deb o'qiydi. Bu yerda narx va mavjudlik benchmarkdan muhimroq.
+  lead_uz    kim nimani ishga tushirdi va u nima qiladi (<= 14 so'z)
+  body_1_uz  bugun mavjudmi va qancha turadi - bepul daraja, navbat, narx, hudud
+             cheklovi (<= 16 so'z)
+  kicker_uz  bu kimga foydali (<= 8 so'z)""",
+    "robotics": """Bu - jismoniy tizim. O'quvchining savoli: "mashina haqiqiy dunyoda nima
+qila oladi?"
+  lead_uz    robot yoki tizim jismonan nima qila oladi (<= 14 so'z)
+  body_1_uz  jismoniy raqamlar - tezlik, yuk, avtonom ishlash vaqti, muvaffaqiyat foizi,
+             va qayerda sinalgani (<= 16 so'z)
+  kicker_uz  bu haqiqiy joylashtirish uchun nimani anglatadi (<= 8 so'z)""",
+}
+
+
 EDITORIAL_EN_PROMPT = """You are writing one Telegram post for a channel read by working
 AI engineers and technical decision-makers in Uzbekistan. They skim. Give them the fact,
 not the announcement. Return JSON only.
