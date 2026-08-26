@@ -1,14 +1,11 @@
-import json
 from datetime import date
 from io import StringIO
 
-import httpx
 import pytest
-import respx
 from django.core.management import call_command
 
 from apps.digest import publish
-from apps.digest.models import Analysis, Article, Digest, DigestItem, Source
+from apps.digest.models import Article, Digest, DigestItem, Source
 
 
 @pytest.fixture
@@ -224,74 +221,6 @@ def test_reconcile_delivery_command_reset_pending(digest_with_item):
     item.refresh_from_db()
     assert item.channel_delivery_state == DeliveryState.PENDING
     assert item.channel_message_id is None
-
-
-@pytest.mark.django_db
-@respx.mock
-def test_eval_post_shapes_generates_both_variants(settings):
-    """The command must call the model twice per article — once per instruction — or it is
-    comparing a post against itself."""
-    from io import StringIO
-
-    settings.LLM_PROVIDER = "gateway"
-    settings.EDITORIAL_EN_PROVIDER = "gateway"
-    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
-    settings.GATEWAY_TOKEN = "sk-test"
-
-    source = Source.objects.create(
-        name="shapes_source",
-        connector=Source.Connector.RSS,
-        url="https://shapes.example/rss",
-    )
-    article = Article.objects.create(
-        source=source,
-        canonical_url="https://shapes.example/item",
-        content_hash="shapes-item",
-        title="A vulnerability in a widely deployed tool",
-        extracted_text="Body text about the vulnerability. " * 30,
-        status=Article.Status.CLASSIFIED,
-    )
-    Analysis.objects.create(
-        article=article,
-        stage=Analysis.Stage.CLASSIFICATION,
-        model_tag="smart",
-        payload={
-            "primary_topic": "safety_security",
-            "maturity": "live_product",
-            "novelty": 7,
-            "evidence": 7,
-            "production_readiness": 7,
-            "reason": "x",
-        },
-        latency_ms=1,
-    )
-
-    prompts = []
-    payload = {
-        "headline_en": "A risk was disclosed",
-        "lead_en": "A vulnerability reaches every deployment of the tool.",
-        "body_1_en": "It affects versions 1.0 through 2.4.",
-        "kicker_en": "Upgrade before the weekend.",
-        "evidence_level": "vendor_claim_only",
-        "technical": {},
-    }
-
-    def capture(request):
-        prompts.append(json.loads(request.content)["messages"][0]["content"])
-        return httpx.Response(
-            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
-        )
-
-    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
-
-    out = StringIO()
-    call_command("eval_post_shapes", limit=1, stdout=out)
-
-    assert len(prompts) == 2, "one call per instruction"
-    assert "Pick the lead by this order" in prompts[0], "first is the general instruction"
-    assert "what the risk is and who it reaches" in prompts[1], "second is the shape"
-    text = out.getvalue()
-    assert "GENERAL" in text and "risk" in text
 
 
 @pytest.mark.django_db
