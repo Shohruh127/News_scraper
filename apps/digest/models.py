@@ -1,6 +1,7 @@
 """Six models. Enum values come from docs/CONTENT_SCHEMA.md and must match it exactly."""
 
 from django.db import models
+from django.utils import timezone
 
 
 class Topic(models.TextChoices):
@@ -73,7 +74,15 @@ class Article(models.Model):
     canonical_url = models.URLField(max_length=1000, unique=True)
     content_hash = models.CharField(max_length=64, unique=True)
     title = models.CharField(max_length=500)
-    published_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    #: When the story was published, not when we downloaded it — `fetched_at` is that.
+    #:
+    #: Defaults to now for the same reason `extract.normalize` already did: a source that
+    #: publishes no dates (an HTML listing) still has to be storable, and an undated item
+    #: reads as fresh because we cannot date it. Moving the fallback here means every
+    #: writer gets it, not only the extraction path. Ranking windows on this column since
+    #: 2026-08-26, so a row that reached the database undated would otherwise be either
+    #: permanently eligible or permanently invisible depending on how the query is written.
+    published_at = models.DateTimeField(default=timezone.now, null=True, blank=True, db_index=True)
     fetched_at = models.DateTimeField(auto_now_add=True)
     language = models.CharField(max_length=10, blank=True)
     extracted_text = models.TextField()

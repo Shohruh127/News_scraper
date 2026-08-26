@@ -212,7 +212,15 @@ POST_MAX_SENTENCES = env.int("POST_MAX_SENTENCES", default=3)
 # --- Ingestion --------------------------------------------------------------
 USER_AGENT = "news-radar/0.1 (+daily AI digest)"
 ARTICLE_MIN_CHARS = 400
-ARTICLE_MAX_AGE_DAYS = 7
+#: How old a story may be and still reach a digest, measured on `published_at`.
+#:
+#: 7 -> 2 on 2026-08-26, at the owner's request: week-old items were reaching the channel.
+#: Two days is the shortest window the supply supports. Measured the same day on a fresh
+#: fetch of 197 stored articles: 129 of them (65%) were published within two days and 56
+#: (28%) within one, against a morning run whose 202 articles yielded 8 candidates — about
+#: 17% survive triage, classification and the maturity exclusions. Two days leaves roughly
+#: 22 candidates for a block that needs 8; one day leaves about 9, which is the edge.
+ARTICLE_MAX_AGE_DAYS = env.int("ARTICLE_MAX_AGE_DAYS", default=2)
 SOURCE_DEGRADED_AFTER = 3
 
 # --- Evening pipeline lock ---------------------------------------------------

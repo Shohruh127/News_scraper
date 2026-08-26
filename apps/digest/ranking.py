@@ -110,14 +110,26 @@ def select_digest_candidates(
     max_per_topic = getattr(settings, "DIGEST_MAX_PER_TOPIC", 2)
     max_per_subject = getattr(settings, "DIGEST_MAX_PER_SUBJECT", 1)
 
-    # Query classified articles strictly excluding already published articles
+    # Query classified articles strictly excluding already published articles.
+    #
+    # The window is on `published_at`, not `fetched_at`. `fetched_at` records when we
+    # downloaded the item, which equals its age only while the pipeline has been running
+    # steadily. After `docker compose down -v` the whole backlog is re-fetched at once,
+    # every `fetched_at` becomes today, and a window on it excludes nothing. Measured
+    # 2026-08-26 on a fresh database: 197 stored articles carried publication dates
+    # spanning a full week and all 197 sat inside the window.
+    #
+    # `published_at` is never null — extraction falls back to `now` for an undated item
+    # and flags `meta["date_missing"]`, so an HTML listing without dates always reads as
+    # fresh. That is deliberate: we cannot date it, and refusing it would silently drop
+    # every source that publishes no dates.
     articles = (
         Article.objects.filter(
             status=Article.Status.CLASSIFIED,
             digestitem__isnull=True,
             secondary_in_digest_items__isnull=True,
-            fetched_at__gte=cutoff,
-            fetched_at__lte=end_of_day,
+            published_at__gte=cutoff,
+            published_at__lte=end_of_day,
         )
         .select_related("source")
         .prefetch_related("analyses")

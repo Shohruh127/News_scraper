@@ -143,6 +143,10 @@ def test_target_date_window_backfill(db, source):
         title="Backfill Old Article",
         extracted_text="Text " * 50,
         status=Article.Status.CLASSIFIED,
+        # The window is on published_at since 2026-08-26. fetched_at is set alongside it
+        # so the test still says what it used to: a backfill run for an old date must find
+        # a story from that date, whenever it happened to be downloaded.
+        published_at=target_dt,
     )
     Article.objects.filter(id=art.id).update(fetched_at=target_dt)
 
@@ -522,3 +526,80 @@ def test_the_appendix_reads_technical_from_the_uzbek_row(digest_with_item):
     uz.save(update_fields=["payload"])
 
     assert "only-here" in ranking.render_item_appendix(item)
+
+
+def _classified(source, slug, title, topic, published_at, fetched_at):
+    """One classified article, deliberately unlike any other this helper makes.
+
+    Three separate mechanisms will quietly collapse two similar articles into one and make
+    a date test pass for the wrong reason, and the first two drafts of the test below hit
+    two of them: subject_key() reduces a URL to its host and DIGEST_MAX_PER_SUBJECT is 1,
+    and clustering merges near-identical titles into a primary plus secondaries. Distinct
+    hosts, distinct titles, distinct text and distinct topics keep the date the only
+    variable.
+    """
+    art = Article.objects.create(
+        source=source,
+        canonical_url=f"https://{slug}.example.com/story",
+        content_hash=f"h_{slug}",
+        title=title,
+        extracted_text=f"{title}. " * 40,
+        status=Article.Status.CLASSIFIED,
+        published_at=published_at,
+    )
+    # fetched_at is auto_now_add, so it has to be written back.
+    Article.objects.filter(pk=art.pk).update(fetched_at=fetched_at)
+    Analysis.objects.create(
+        article=art,
+        stage=Analysis.Stage.CLASSIFICATION,
+        model_tag="smart",
+        payload={
+            "primary_topic": topic,
+            "maturity": "live_product",
+            "novelty": 8,
+            "evidence": 8,
+            "production_readiness": 8,
+            "reason": "r",
+        },
+        latency_ms=100,
+    )
+    return art
+
+
+def test_ranking_selects_on_publication_date_not_fetch_date(db, source, settings):
+    """An old article fetched today must not enter today's digest.
+
+    The window filtered `fetched_at`, which records when we downloaded the item, not when
+    it was published. The two agree in steady state and diverge completely after a
+    `docker compose down -v`: everything is re-fetched at once, every `fetched_at` becomes
+    today, and the filter stops excluding anything.
+
+    Measured 2026-08-26 on a fresh database: 197 stored articles carried publication dates
+    spanning a full week, and every one of them was inside the window.
+    """
+    settings.ARTICLE_MAX_AGE_DAYS = 2
+    now = timezone.now()
+
+    fresh = _classified(
+        source,
+        "fresh",
+        "Qwen ships an open-weight reasoning model",
+        "frontier_models",
+        published_at=now - timedelta(hours=6),
+        fetched_at=now,
+    )
+    stale = _classified(
+        source,
+        "stale",
+        "A robot arm folds laundry in a Tokyo warehouse",
+        "robotics",
+        published_at=now - timedelta(days=6),
+        fetched_at=now,
+    )
+
+    selected = ranking.select_digest_candidates(timezone.localdate())
+
+    picked = {a.id for a, _analysis, _score, _secondary in selected}
+    merged = {x.id for _a, _an, _s, secondary in selected for x in secondary}
+    assert fresh.id in picked, "a six-hour-old article belongs in today's digest"
+    assert stale.id not in picked | merged, "published six days ago, fetched today"
