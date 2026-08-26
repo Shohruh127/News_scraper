@@ -178,6 +178,13 @@ EDITORIAL_EN_SCHEMA: dict[str, Any] = {
 #: block or the few-shot examples — those stay in the base prompt so six copies cannot drift
 #: apart.
 #:
+#: The word counts are stated twice on purpose — here and in `## Output fields`. Measured
+#: 2026-08-26: the risk block asked for "what the risk is and who it reaches" and produced a
+#: 24-word lead against an 18-word cap. The content instruction sits before the field bullets
+#: and wins, so the limit has to sit where the sentence is being decided. Keep the two copies
+#: equal; `test_every_shape_block_states_its_word_limits` checks they are present, not that
+#: they agree.
+#:
 #: This is not the archetype system removed on 2026-08-24. That one added output structure
 #: (`*_details` blocks, six templates) with no data behind it — `license` was populated 0% of
 #: the time. A shape adds no structure: the same four fields are produced for every group and
@@ -189,46 +196,49 @@ SHAPE_BLOCKS: dict[str, str] = {
   1. A named thing shipped or changed - and who shipped it.
   2. A measured result - and who measured it.
   3. A rule, policy or restriction - and who must comply with it.
-If the article announces something with nothing shipped and nothing measured, say so
-plainly in the lead. Do not dress an announcement up as a release.""",
+The lead is at most 18 words. If the article announces something with nothing shipped and
+nothing measured, say so plainly in the lead. Do not dress an announcement up as a release.""",
     "release": """This is a release. The reader is deciding whether to use the thing.
-  lead_en    who shipped what
+  lead_en    who shipped what (<= 18 words)
   body_1_en  the number or specification that matters most - parameters, context window,
-             version, throughput, benchmark score
-  kicker_en  what the reader can now do that they could not before
+             version, throughput, benchmark score (<= 20 words)
+  kicker_en  what the reader can now do that they could not before (<= 8 words)
 If nothing actually shipped and the article only announces an intention, say that plainly
 in the lead rather than dressing it up as a release.""",
-    "agent": """This is an agent, protocol or integration. The reader is deciding whether it fits
-their stack, and the deciding fact is what it talks to - not a benchmark score.
-  lead_en    what connects to what
-  body_1_en  how it is deployed and what it requires - transport, runtime, permissions,
-             which hosts or clients support it
-  kicker_en  what it replaces or removes the need for""",
+    "agent": """This is an agent, harness, framework or integration. Do NOT lead with the
+benchmark score; lead with the wiring - what talks to what, with what in between - because
+that is what tells the reader whether it fits their stack.
+  lead_en    what connects to what (<= 18 words)
+  body_1_en  the wiring itself. For a product: the transport, runtime or permission it
+             needs, and which hosts support it. For a harness or framework: the parts and
+             the loop between them. A score is not the wiring - name the part that earned
+             it. (<= 20 words)
+  kicker_en  what it replaces or removes the need for (<= 8 words)""",
     "risk": """This is a risk or its mitigation. Do NOT lead with who published the advisory;
 lead with the risk itself, because that is what the reader needs first.
-  lead_en    what the risk is and who it reaches
+  lead_en    what the risk is and who it reaches (<= 18 words)
   body_1_en  its scope or mechanism - which versions, which models, what an attacker gets,
-             or how the mitigation works
-  kicker_en  what the reader should do about it""",
+             or how the mitigation works (<= 20 words)
+  kicker_en  what the reader should do about it (<= 8 words)""",
     "research": """This is a finding. The question is not what shipped but how much the evidence
 supports the claim.
-  lead_en    what is being claimed, and by whom
+  lead_en    what is being claimed, and by whom (<= 18 words)
   body_1_en  how strong the evidence is - dataset, sample size, the baseline compared
-             against, whether code or weights exist today
-  kicker_en  what it changes if it holds
+             against, whether code or weights exist today (<= 20 words)
+  kicker_en  what it changes if it holds (<= 8 words)
 Do not report a promised artifact as a shipped one.""",
     "product": """This is a company shipping a product. The reader is deciding whether to try it,
 so price and availability decide more than a benchmark does.
-  lead_en    who launched what, and what it does
+  lead_en    who launched what, and what it does (<= 18 words)
   body_1_en  whether it is available today and what it costs - free tier, waitlist, pricing,
-             region limits
-  kicker_en  who it is useful to""",
+             region limits (<= 20 words)
+  kicker_en  who it is useful to (<= 8 words)""",
     "robotics": """This is physical embodiment. The reader's question is what the machine can
 actually do in the world.
-  lead_en    what the robot or system can physically do
+  lead_en    what the robot or system can physically do (<= 18 words)
   body_1_en  the physical numbers - speed, payload, autonomy duration, success rate, and
-             where it was tested
-  kicker_en  what it means for real deployment""",
+             where it was tested (<= 20 words)
+  kicker_en  what it means for real deployment (<= 8 words)""",
 }
 
 #: Topic -> shape. `irrelevant` is absent because it never reaches the editorial stage:
@@ -266,6 +276,10 @@ A headline label plus EXACTLY THREE sentences: lead_en, body_1_en, kicker_en.
 One sentence per field. A field holding two sentences is wrong.
 
 ## What this story needs
+The block below decides the content of the three sentences only. It does not change
+headline_en, which stays a plain label of what happened for every kind of story - never a
+claim about what matters. Where the block gives a word count, that count is the limit.
+
 {shape}
 
 ## Output fields

@@ -679,6 +679,51 @@ def test_only_the_three_sentence_fields_vary():
         assert "headline_en" not in block, f"{shape} must not redefine the headline"
 
 
+def test_every_shape_block_states_its_word_limits():
+    """The block is read before the field bullets, so it has to carry the limits itself.
+
+    Measured 2026-08-26: the risk block produced a 24-word lead against the 18-word cap
+    stated further down the prompt. A block written later without the counts would repeat
+    that silently — nothing else in the suite would notice a long lead.
+    """
+    from apps.digest.llm import SHAPE_BLOCKS, SHAPE_GENERAL
+
+    for shape, block in SHAPE_BLOCKS.items():
+        if shape == SHAPE_GENERAL:
+            # The general block instructs the lead only; it has no field table to annotate.
+            assert "at most 18 words" in block
+            continue
+        for cap in ("<= 18 words", "<= 20 words", "<= 8 words"):
+            assert cap in block, f"{shape} block does not state {cap}"
+
+
+def test_the_prompt_scopes_the_shape_block_to_the_three_sentences():
+    """The agent block leaked into the headline until this guard was added.
+
+    On 2026-08-26 its opening line argued that the harness matters more than the model,
+    and the model wrote that argument as the headline instead of a label naming the event.
+    The guard lives in the base prompt because the blocks may not mention headline_en.
+    """
+    from apps.digest.llm import EDITORIAL_EN_PROMPT
+
+    guard = EDITORIAL_EN_PROMPT.split("## What this story needs")[1].split("{shape}")[0]
+    assert "three sentences only" in guard
+    assert "headline_en" in guard
+
+
+def test_the_agent_block_does_not_ask_for_a_benchmark_lead():
+    """Rewritten 2026-08-26: it used to say the deciding fact is 'not a benchmark score'.
+
+    Phrased as a claim about what matters, the model echoed it as a thesis headline. The
+    risk block's negative is scoped by naming the field — 'Do NOT lead with' — and never
+    leaked, so the agent block now uses the same form.
+    """
+    from apps.digest.llm import SHAPE_BLOCKS
+
+    assert "Do NOT lead with" in SHAPE_BLOCKS["agent"]
+    assert "harness or framework" in SHAPE_BLOCKS["agent"], "must cover non-product agents"
+
+
 @respx.mock
 def test_the_editorial_prompt_carries_the_shape_for_the_article_topic(article, settings):
     """A safety item must be written to the risk instruction, not the release one."""
