@@ -3,13 +3,11 @@
 Acceptance criteria from REMAINING_WORK.md:
 1. 15 items produce 15 distinct channel_message_id values.
 2. A failure on item 8 leaves items 1-7 sent and the digest FAILED.
-3. Each item's appendix matches its own post and not a neighbour's.
-4. Kill switch leaves digest COMPOSED with no message IDs.
+3. Kill switch leaves digest COMPOSED with no message IDs.
 """
 
 import json
 from datetime import date
-from html import unescape
 
 import httpx
 import pytest
@@ -162,7 +160,6 @@ def test_publish_kill_switch_suppresses_network(db, digest_1, settings):
     settings.PUBLISHING_ENABLED = False
     settings.TELEGRAM_BOT_TOKEN = "dummy_token"
     settings.TELEGRAM_CHANNEL_ID = "-100123456"
-    settings.TELEGRAM_GROUP_ID = "-100654321"
 
     res = publish.publish_digest(digest_1)
     assert res.get("suppressed") is True
@@ -200,7 +197,6 @@ def test_15_items_produce_15_distinct_channel_message_ids(db, digest_15, setting
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
     settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = ""  # No group to simplify this test
 
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
@@ -235,7 +231,6 @@ def test_publishing_twice_posts_each_item_once(db, digest_15, settings, monkeypa
     """The defect this guards: 61 of 82 live channel messages had no database record."""
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
-    settings.TELEGRAM_GROUP_ID = ""
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
     counter = iter(range(600, 700))
@@ -269,7 +264,6 @@ def test_a_partly_published_digest_resumes_instead_of_restarting(db, digest_15, 
     """An item whose send failed is the only one a second run may post."""
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
-    settings.TELEGRAM_GROUP_ID = ""
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
     DigestItem.objects.filter(digest=digest_15, position__gt=3).delete()
@@ -295,7 +289,6 @@ def test_republish_overrides_the_guard(db, digest_15, settings):
     """The one escape hatch: a post deleted by hand can be sent again, on purpose."""
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
-    settings.TELEGRAM_GROUP_ID = ""
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
     DigestItem.objects.filter(digest=digest_15, position__gt=1).delete()
@@ -314,41 +307,6 @@ def test_republish_overrides_the_guard(db, digest_15, settings):
     assert route.call_count == 1
     item.refresh_from_db()
     assert item.channel_message_id == 800
-
-
-@respx.mock
-def test_a_missing_appendix_alerts_but_leaves_the_digest_published(
-    db, digest_15, settings, monkeypatch
-):
-    """Every post landed. A missing auto-forward is a degraded post, not a failed digest.
-
-    Marking it FAILED is what invited the re-runs that put 61 untracked messages in the channel.
-    """
-    settings.PUBLISHING_ENABLED = True
-    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
-    settings.TELEGRAM_GROUP_ID = "-100222222"
-    settings.TELEGRAM_ADMIN_CHAT_ID = "999888777"
-    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
-
-    counter = iter(range(500, 600))
-    respx.post(f"{base_tg}/sendMessage").mock(
-        side_effect=lambda request: httpx.Response(
-            200, json={"ok": True, "result": {"message_id": next(counter)}}
-        )
-    )
-    monkeypatch.setattr(publish, "find_group_forward_message_id", lambda _msg_id: None)
-    DigestItem.objects.filter(digest=digest_15, position__gt=2).delete()
-
-    res = publish.publish_digest(digest_15)
-
-    assert res["items_sent"] == 2
-    assert res["items_failed"] == 0
-    assert len(res["appendix_failures"]) == 2
-    assert res["status"] == Digest.Status.PUBLISHED
-
-    digest_15.refresh_from_db()
-    assert digest_15.status == Digest.Status.PUBLISHED
-    assert digest_15.published_at is not None
 
 
 @respx.mock
@@ -393,7 +351,6 @@ def test_publish_digest_refreshes_item_from_db_before_send(db, digest_15, settin
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
     settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = ""
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
     DigestItem.objects.filter(digest=digest_15, position__gt=2).delete()
@@ -424,7 +381,6 @@ def test_failure_on_item_8_leaves_1_through_7_sent_digest_failed(db, digest_15, 
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
     settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_ADMIN_CHAT_ID = "999888777"
 
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
@@ -467,79 +423,29 @@ def test_failure_on_item_8_leaves_1_through_7_sent_digest_failed(db, digest_15, 
 
 
 @respx.mock
-def test_each_items_appendix_matches_its_own_post(db, digest_15, settings, monkeypatch):
-    """T1.14 acceptance: each item's appendix replies to its own auto-forwarded post."""
+def test_publish_digest_live_success_single_item(db, digest_1, settings):
+    """A single item creates only the channel post, never a Discussion reply."""
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
     settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = "-100222222"
 
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
-    # Track sendMessage calls to verify appendix reply_to targets
-    send_calls = []
-    msg_counter = iter(range(2001, 2100))
-
-    def send_handler(request):
-        import json
-
-        data = json.loads(request.content.decode())
-        mid = next(msg_counter)
-        send_calls.append({**data, "_msg_id": mid})
-        return httpx.Response(
-            200,
-            json={"ok": True, "result": {"message_id": mid}},
-        )
-
-    respx.post(f"{base_tg}/sendMessage").mock(side_effect=send_handler)
-
-    monkeypatch.setattr(
-        publish,
-        "find_group_forward_message_id",
-        lambda channel_message_id: channel_message_id + 3000,
-    )
-    # Use only 3 items for this test to keep it manageable
-    DigestItem.objects.filter(digest=digest_15, position__gt=3).delete()
-
-    res = publish.publish_digest(digest_15)
-    assert res["items_sent"] == 3
-
-    # Verify each appendix reply_to_message_id refers to a unique forward
-    reply_calls = [c for c in send_calls if c.get("reply_to_message_id")]
-    assert len(reply_calls) == 3, f"Expected 3 appendix replies, got {len(reply_calls)}"
-
-    reply_to_ids = [c["reply_to_message_id"] for c in reply_calls]
-    assert len(set(reply_to_ids)) == 3, (
-        f"Each appendix must reply to its own forward: {reply_to_ids}"
-    )
-
-
-@respx.mock
-def test_publish_digest_live_success_single_item(db, digest_1, settings, monkeypatch):
-    """Backwards compatibility: single-item digest publishes correctly."""
-    settings.PUBLISHING_ENABLED = True
-    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
-    settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = "-100222222"
-
-    base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
-
-    respx.post(f"{base_tg}/sendMessage").mock(
+    route = respx.post(f"{base_tg}/sendMessage").mock(
         side_effect=[
             httpx.Response(200, json={"ok": True, "result": {"message_id": 501}}),
-            httpx.Response(200, json={"ok": True, "result": {"message_id": 502}}),
         ]
     )
 
-    monkeypatch.setattr(publish, "find_group_forward_message_id", lambda _channel_message_id: 777)
     res = publish.publish_digest(digest_1)
     assert res["items_sent"] == 1
     assert res["status"] == Digest.Status.PUBLISHED
     assert res["suppressed"] is False
+    assert route.call_count == 1
 
     item = DigestItem.objects.get(digest=digest_1)
     assert item.channel_message_id == 501
-    assert item.group_message_id == 502
+    assert item.group_message_id is None
 
 
 @respx.mock
@@ -621,68 +527,6 @@ def test_a_failed_alert_is_not_recorded_as_sent(db, settings):
 
 
 @pytest.mark.django_db
-def test_appendix_prefers_uzbek_and_falls_back_to_english(digest_item_factory):
-    """A stored digest from before this change still renders, in English.
-
-    `_item_data` prefers the `_uz` value. Old payloads have none, so they fall back rather
-    than rendering blank labels.
-    """
-    item = digest_item_factory(archetype="release", detail={})
-
-    en = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
-    en.payload["technical"] = {
-        "what_was_built": "An English sentence",
-        "limitations": "An English limitation",
-        "local_deployable": True,
-    }
-    en.save(update_fields=["payload"])
-
-    html = ranking.render_item_appendix(item)
-    assert "An English sentence" in html
-
-    uz = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_UZ)
-    uz.payload["what_was_built_uz"] = "O'zbekcha jumla"
-    uz.save(update_fields=["payload"])
-
-    html = ranking.render_item_appendix(item)
-    assert "O'zbekcha jumla" in unescape(html)
-    assert "An English sentence" not in html
-    assert "An English limitation" in html
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize(
-    ("evidence_level", "label"),
-    [
-        ("vendor_claim_only", "Asosiy manba da'vosi"),
-        ("multiple_evidence", "Bir nechta manbada mos benchmark raqami"),
-    ],
-)
-def test_appendix_renders_accurate_evidence_label(digest_item_factory, evidence_level, label):
-    item = digest_item_factory(archetype="release", detail={})
-    en = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
-    en.payload["evidence_level"] = evidence_level
-    en.save(update_fields=["payload"])
-
-    html = ranking.render_item_appendix(item)
-
-    assert label in unescape(html)
-
-
-@pytest.mark.django_db
-def test_appendix_unknown_evidence_level_falls_back_to_vendor_label(digest_item_factory):
-    item = digest_item_factory(archetype="release", detail={})
-    en = item.article.analyses.get(stage=Analysis.Stage.EDITORIAL_EN)
-    en.payload.pop("evidence_level")
-    en.save(update_fields=["payload"])
-
-    html = ranking.render_item_appendix(item)
-
-    assert "Asosiy manba da'vosi" in unescape(html)
-    assert "Bir nechta manbada mos benchmark raqami" not in unescape(html)
-
-
-@pytest.mark.django_db
 @respx.mock
 def test_send_photo_payload_structure(settings):
     settings.PUBLISHING_ENABLED = True
@@ -738,7 +582,6 @@ def test_publish_digest_v2_with_valid_image_sends_photo(digest_item_factory, set
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
     settings.POST_FORMAT_V2_ENABLED = True
 
@@ -770,7 +613,6 @@ def test_publish_digest_v2_photo_400_falls_back_to_text(digest_item_factory, set
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
     settings.POST_FORMAT_V2_ENABLED = True
 
@@ -806,7 +648,6 @@ def test_publish_digest_v2_without_image_sends_text_with_disabled_preview(
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
     settings.POST_FORMAT_V2_ENABLED = True
 
@@ -839,7 +680,6 @@ def test_publish_digest_500_sets_unknown_and_alerts_admin(digest_item_factory, s
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
     settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
 
     item = digest_item_factory(archetype="release", detail={})
@@ -877,7 +717,6 @@ def test_publish_digest_timeout_sets_unknown_and_alerts_admin(digest_item_factor
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
     settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
 
     item = digest_item_factory(archetype="release", detail={})
@@ -911,7 +750,6 @@ def test_publish_digest_unknown_state_skipped_on_rerun(digest_item_factory, sett
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
     settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
 
     item = digest_item_factory(archetype="release", detail={})
@@ -943,7 +781,6 @@ def test_publish_digest_stale_sending_promoted_to_unknown(digest_item_factory, s
     settings.TELEGRAM_BOT_TOKEN = "test_token"
     settings.TELEGRAM_CHANNEL_ID = "-100channel"
     settings.TELEGRAM_ADMIN_CHAT_ID = "12345"
-    settings.TELEGRAM_GROUP_ID = ""
     settings.TELEGRAM_SEND_DELAY = 0
 
     item = digest_item_factory(archetype="release", detail={})

@@ -17,11 +17,7 @@ def make_editorial(
     local_deployable=True,
     model_tag="mimo-v2.5",
 ):
-    """Create the two editorial analyses a renderable DigestItem needs (ADR-005).
-
-    Rendering reads `editorial_uz` for reader-facing Uzbek and `editorial_en` for the
-    technical appendix, so a test that creates only one of them renders a half-built post.
-    """
+    """Create the editorial analyses used by digest and verification tests."""
     en = Analysis.objects.create(
         article=article,
         stage=Analysis.Stage.EDITORIAL_EN,

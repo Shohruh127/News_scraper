@@ -85,7 +85,6 @@ def test_send_item_view_success(digest_item, admin_user, settings):
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:BOT-TOKEN"
     settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = ""
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
     respx.post(f"{base_tg}/sendMessage").mock(
@@ -143,7 +142,6 @@ def test_send_selected_items_action(digest_item, admin_user, settings):
     settings.PUBLISHING_ENABLED = True
     settings.TELEGRAM_BOT_TOKEN = "123456:BOT-TOKEN"
     settings.TELEGRAM_CHANNEL_ID = "-100111111"
-    settings.TELEGRAM_GROUP_ID = ""
     base_tg = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
 
     respx.post(f"{base_tg}/sendMessage").mock(

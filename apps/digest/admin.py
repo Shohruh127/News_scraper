@@ -119,7 +119,6 @@ class DigestItemInline(admin.TabularInline):
         "score",
         "channel_delivery_state",
         "channel_message_id",
-        "group_message_id",
         "sent_as_photo",
         "channel_delivery_error",
         "channel_delivery_attempted_at",
@@ -176,7 +175,6 @@ class DigestItemAdmin(admin.ModelAdmin):
         "position",
         "score",
         "channel_message_id",
-        "group_message_id",
         "sent_as_photo",
         "channel_delivery_state",
         "channel_delivery_error",
@@ -247,16 +245,11 @@ class DigestItemAdmin(admin.ModelAdmin):
                 level=messages.WARNING,
             )
         elif res.get("success"):
-            app_info = (
-                f" (Group appendix msg {res['group_message_id']})"
-                if res.get("group_message_id")
-                else ""
-            )
             ch_msg = res.get("channel_message_id")
             self.message_user(
                 request,
                 f"Item #{item.position} (ID {item.id}) successfully sent to Telegram "
-                f"(Channel msg {ch_msg}){app_info}.",
+                f"(Channel msg {ch_msg}).",
                 level=messages.SUCCESS,
             )
         elif res.get("status") == "skipped":

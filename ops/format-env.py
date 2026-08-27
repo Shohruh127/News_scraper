@@ -102,9 +102,7 @@ BLOCKS = [
         [
             "TELEGRAM_BOT_TOKEN",
             "TELEGRAM_CHANNEL_ID",
-            "TELEGRAM_GROUP_ID",
             "TELEGRAM_ADMIN_CHAT_ID",
-            "TELEGRAM_FORWARD_TTL",
             "TELEGRAM_LINK_PREVIEW",
         ],
         [],

@@ -39,9 +39,18 @@ class Command(BaseCommand):
         parser.add_argument(
             "--days", type=int, default=7, help="Window of classified articles (default 7)."
         )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            default=0,
+            help="Number of article comparisons to run; 0 means one per class (default).",
+        )
 
     def handle(self, *args, **options):
         from django.conf import settings
+
+        if options["limit"] < 0:
+            raise CommandError("--limit must be 0 or a positive integer.")
 
         channel = getattr(settings, "TELEGRAM_EVAL_CHANNEL_ID", "")
         if options["post"] and not channel:
@@ -50,7 +59,7 @@ class Command(BaseCommand):
                 "server so an eval run cannot reach the live channel."
             )
 
-        picked = self._one_article_per_class(options["days"])
+        picked = self._one_article_per_class(options["days"], options["limit"])
         missing = [k for k in UZ_LABELS if k not in picked]
         if missing:
             self.stdout.write(
@@ -62,13 +71,14 @@ class Command(BaseCommand):
         for n, (block_key, article) in enumerate(picked.items(), start=1):
             self._compare(n, block_key, article, post_to=channel if options["post"] else None)
 
-    def _one_article_per_class(self, days: int) -> dict[str, Article]:
+    def _one_article_per_class(self, days: int, limit: int = 0) -> dict[str, Article]:
         from datetime import timedelta
 
         from django.utils import timezone
 
         since = timezone.now() - timedelta(days=days)
         picked: dict[str, Article] = {}
+        target_count = min(limit, len(UZ_LABELS)) if limit else len(UZ_LABELS)
         candidates = (
             Article.objects.filter(
                 analyses__stage=Analysis.Stage.CLASSIFICATION, fetched_at__gte=since
@@ -81,7 +91,7 @@ class Command(BaseCommand):
         for article in candidates:
             key = llm.shape_for(llm._classified_topic(article))
             picked.setdefault(key, article)
-            if len(picked) == len(UZ_LABELS):
+            if len(picked) == target_count:
                 break
         return picked
 

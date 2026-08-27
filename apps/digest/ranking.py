@@ -303,10 +303,9 @@ def render_roundup_post(digest: Digest) -> str:
 def _item_data(item: DigestItem) -> dict:
     """Build the template context for a single DigestItem.
 
-    Shared by render_item_post and render_item_appendix so both templates see the
-    same data shape and neither can drift out of sync.
+    The context contains only fields used by the channel post renderer.
     """
-    # Reader-facing text and technical details come from the single-stage Uzbek editorial.
+    # Reader-facing text comes from the single-stage Uzbek editorial.
     uz = (
         item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
         .order_by("-created_at")
@@ -319,23 +318,6 @@ def _item_data(item: DigestItem) -> dict:
             f"DigestItem #{item.position} (article {item.article_id}: "
             f"'{item.article.title}') lacks editorial_uz with non-empty 'lead_uz' or 'summary_uz'."
         )
-
-    # Rows written before 2026-08-26 carry `technical` on the English analysis. The fallback
-    # is temporary: delete it once no EDITORIAL_EN-only article remains inside the 7-day
-    # verification window.
-    technical = uz_payload.get("technical")
-    evidence_level = uz_payload.get("evidence_level")
-    if technical is None or evidence_level is None:
-        en = (
-            item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_EN)
-            .order_by("-created_at")
-            .first()
-        )
-        en_payload = en.payload if en else {}
-        if technical is None:
-            technical = en_payload.get("technical", {})
-        if evidence_level is None:
-            evidence_level = en_payload.get("evidence_level", "vendor_claim_only")
 
     cls = (
         item.article.analyses.filter(stage=Analysis.Stage.CLASSIFICATION)
@@ -370,20 +352,6 @@ def _item_data(item: DigestItem) -> dict:
         "lead_uz": lead_uz,
         "body_1_uz": uz_payload.get("body_1_uz", ""),
         "kicker_uz": uz_payload.get("kicker_uz", ""),
-        # Technical appendix. Prose comes from the translation when it exists and from the
-        # English otherwise, so digests stored before appendix translation still render.
-        # URLs and the install command are never translated.
-        "what_was_built": uz_payload.get("what_was_built_uz")
-        or technical.get("what_was_built", ""),
-        "architecture": uz_payload.get("architecture_uz") or technical.get("architecture", ""),
-        "benchmarks": uz_payload.get("benchmarks_uz") or technical.get("benchmarks", ""),
-        "limitations": uz_payload.get("limitations_uz") or technical.get("limitations", ""),
-        "license": technical.get("license", ""),
-        "repo_url": technical.get("repo_url", ""),
-        "api_url": technical.get("api_url", ""),
-        "install": technical.get("install", ""),
-        "local_deployable": technical.get("local_deployable", False),
-        "evidence_level": evidence_level,
         # Clustering
         "secondary_sources": secondary_sources,
         "score": item.score,
@@ -398,10 +366,3 @@ def render_item_post(item: DigestItem) -> str:
     max_chars = getattr(settings, "POST_MAX_CHARS", 700)
     max_sentences = getattr(settings, "POST_MAX_SENTENCES", 4)
     return post_format.render_item_post_v2(data, max_chars=max_chars, max_sentences=max_sentences)
-
-
-def render_item_appendix(item: DigestItem) -> str:
-    """Render a single technical appendix for one news item."""
-    rendered = render_to_string("digest/item_appendix.html", _item_data(item))
-    lines = [line.strip() for line in rendered.splitlines() if line.strip()]
-    return "\n".join(lines)

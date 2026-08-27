@@ -4,10 +4,7 @@ Rules (T1.7, T1.9):
 1. No aiogram in M1 — Celery tasks are synchronous, sendMessage is plain HTTP POST.
 2. Kill switch: when settings.PUBLISHING_ENABLED is False, compose and store but send nothing.
    Leaves digest status as COMPOSED, writes no message IDs, sets no published_at.
-3. Technical appendix is posted as a reply to the auto-forwarded message in the linked group.
-   Missing forward marks digest as FAILED, alerts admin, and stops.
-4. Forward matching requires origin channel matching TELEGRAM_CHANNEL_ID and message ID.
-5. Degraded-source alerts are delivered to TELEGRAM_ADMIN_CHAT_ID.
+3. Degraded-source alerts are delivered to TELEGRAM_ADMIN_CHAT_ID.
 """
 
 import logging
@@ -25,7 +22,6 @@ from django.utils import timezone
 
 from . import media, ranking
 from .models import DeliveryState, Digest, DigestItem
-from .telegram_updates import wait_for_group_forward
 
 log = logging.getLogger(__name__)
 
@@ -131,24 +127,6 @@ def send_photo(
     finally:
         if close_client:
             client.close()
-
-
-def find_group_forward_message_id(
-    channel_message_id: int,
-    client=None,
-    max_retries: int = 4,
-    retry_delay: float = 1.5,
-) -> int | None:
-    """Find the bot's Redis handoff for one channel post."""
-    if not getattr(settings, "PUBLISHING_ENABLED", False):
-        return None
-    return wait_for_group_forward(
-        getattr(settings, "TELEGRAM_CHANNEL_ID", ""),
-        channel_message_id,
-        client=client,
-        max_retries=max_retries,
-        retry_delay=retry_delay,
-    )
 
 
 def edit_message(
@@ -258,11 +236,11 @@ def publish_digest_item(
     *,
     republish: bool = False,
 ) -> dict:
-    """Publish a single DigestItem as a channel post with its optional group appendix.
+    """Publish a single DigestItem as a channel post.
 
     Respects PUBLISHING_ENABLED kill switch.
     Handles per-item locking, format rendering, image/photo extraction and fallback,
-    Telegram rate limits/timeouts, error handling, state updating, and group appendix reply.
+    Telegram rate limits/timeouts, error handling, and state updating.
     """
     if not getattr(settings, "PUBLISHING_ENABLED", False):
         log.info(
@@ -275,23 +253,19 @@ def publish_digest_item(
             "item_id": item.id,
             "position": item.position,
             "channel_message_id": None,
-            "group_message_id": None,
             "sent_as_photo": False,
             "error": "Suppressed by kill switch (PUBLISHING_ENABLED is False)",
-            "appendix_error": None,
             "suppressed": True,
         }
 
     channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
     if not channel_id:
         raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
-    group_id = getattr(settings, "TELEGRAM_GROUP_ID", "")
 
     try:
         item.refresh_from_db(
             fields=[
                 "channel_message_id",
-                "group_message_id",
                 "channel_delivery_state",
                 "channel_delivery_error",
             ]
@@ -312,10 +286,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": item.channel_message_id,
-                "group_message_id": item.group_message_id,
                 "sent_as_photo": item.sent_as_photo,
                 "error": None,
-                "appendix_error": None,
                 "suppressed": False,
             }
 
@@ -330,10 +302,8 @@ def publish_digest_item(
             "item_id": item.id,
             "position": item.position,
             "channel_message_id": None,
-            "group_message_id": None,
             "sent_as_photo": False,
             "error": "ambiguous delivery state: unknown",
-            "appendix_error": None,
             "suppressed": False,
         }
 
@@ -358,10 +328,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": "stale sending promoted to unknown",
-                "appendix_error": None,
                 "suppressed": False,
             }
 
@@ -382,10 +350,8 @@ def publish_digest_item(
             "item_id": item.id,
             "position": item.position,
             "channel_message_id": None,
-            "group_message_id": None,
             "sent_as_photo": False,
             "error": f"render: {exc}",
-            "appendix_error": None,
             "suppressed": False,
         }
 
@@ -399,10 +365,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": "Item not found during lock",
-                "appendix_error": None,
                 "suppressed": False,
             }
         if locked.channel_delivery_state == DeliveryState.SENT and not republish:
@@ -412,10 +376,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": locked.channel_message_id,
-                "group_message_id": locked.group_message_id,
                 "sent_as_photo": locked.sent_as_photo,
                 "error": None,
-                "appendix_error": None,
                 "suppressed": False,
             }
         if locked.channel_delivery_state == DeliveryState.UNKNOWN and not republish:
@@ -425,10 +387,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": "ambiguous delivery state: unknown",
-                "appendix_error": None,
                 "suppressed": False,
             }
         locked.channel_delivery_state = DeliveryState.SENDING
@@ -542,10 +502,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": f"timeout/network error: {exc}",
-                "appendix_error": None,
                 "suppressed": False,
             }
 
@@ -574,10 +532,8 @@ def publish_digest_item(
                     "item_id": item.id,
                     "position": item.position,
                     "channel_message_id": None,
-                    "group_message_id": None,
                     "sent_as_photo": False,
                     "error": f"telegram 5xx: {exc}",
-                    "appendix_error": None,
                     "suppressed": False,
                 }
             else:
@@ -599,10 +555,8 @@ def publish_digest_item(
                     "item_id": item.id,
                     "position": item.position,
                     "channel_message_id": None,
-                    "group_message_id": None,
                     "sent_as_photo": False,
                     "error": f"HTTP {status_code}: {exc}",
-                    "appendix_error": None,
                     "suppressed": False,
                 }
 
@@ -624,10 +578,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": f"unexpected error: {exc}",
-                "appendix_error": None,
                 "suppressed": False,
             }
 
@@ -647,10 +599,8 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": "publish failed: no message_id",
-                "appendix_error": None,
                 "suppressed": False,
             }
 
@@ -676,49 +626,10 @@ def publish_digest_item(
                 "item_id": item.id,
                 "position": item.position,
                 "channel_message_id": None,
-                "group_message_id": None,
                 "sent_as_photo": False,
                 "error": "Suppressed by kill switch",
-                "appendix_error": None,
                 "suppressed": True,
             }
-
-        # --- Group appendix ---
-        grp_msg_id = None
-        appendix_error = None
-        if group_id and ch_msg_id:
-            send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
-            if send_delay > 0:
-                time.sleep(min(send_delay / 2, 1.5))
-            fwd_id = find_group_forward_message_id(ch_msg_id)
-            if fwd_id:
-                try:
-                    appendix_html = ranking.render_item_appendix(item)
-                except ValueError as exc:
-                    log.error("Appendix render failed for item #%s: %s", item.position, exc)
-                    appendix_error = f"appendix render: {exc}"
-                else:
-                    try:
-                        res_comment = send_message(
-                            chat_id=group_id,
-                            text=appendix_html,
-                            reply_to_message_id=fwd_id,
-                            client=client,
-                        )
-                        grp_msg_id = res_comment.get("result", {}).get("message_id")
-                        if grp_msg_id:
-                            item.group_message_id = grp_msg_id
-                            item.save(update_fields=["group_message_id"])
-                    except Exception as exc:
-                        log.error("Appendix send failed for item #%s: %s", item.position, exc)
-                        appendix_error = f"appendix send: {exc}"
-            else:
-                log.warning(
-                    "Auto-forward not found for item #%s (channel_msg %s)",
-                    item.position,
-                    ch_msg_id,
-                )
-                appendix_error = f"forward not found for msg {ch_msg_id}"
 
         return {
             "success": True,
@@ -726,10 +637,8 @@ def publish_digest_item(
             "item_id": item.id,
             "position": item.position,
             "channel_message_id": ch_msg_id,
-            "group_message_id": grp_msg_id,
             "sent_as_photo": sent_as_photo,
             "error": None,
-            "appendix_error": appendix_error,
             "suppressed": False,
         }
     finally:
@@ -779,12 +688,10 @@ def publish_digest(
     *,
     republish: bool = False,
 ) -> dict:
-    """Publish each digest item as its own channel post with its own group appendix.
+    """Publish each digest item as its own channel post.
 
     Per-item publishing (T1.14):
     - Each DigestItem gets its own sendMessage → its own channel_message_id.
-    - Each post's auto-forward in the linked group is found, and a per-item appendix is
-      sent as a reply → its own group_message_id.
     - Partial failure: if any item fails, the digest is marked FAILED and the admin alert
       names the failed items. Already-sent posts are NOT rolled back.
     - A small delay between sends respects Telegram's rate limit (~20 msg/min to a channel).
@@ -808,7 +715,6 @@ def publish_digest(
             "items_skipped": 0,
             "items_failed": 0,
             "failed_items": [],
-            "appendix_failures": [],
             "suppressed": True,
         }
 
@@ -848,7 +754,6 @@ def publish_digest(
             "items_skipped": 0,
             "items_failed": 0,
             "failed_items": [],
-            "appendix_failures": [],
             "suppressed": False,
             "locked": True,
         }
@@ -875,12 +780,11 @@ def publish_digest(
     sent_count = 0
     skipped_count = 0
     failed_items: list[str] = []
-    appendix_failures: list[str] = []
 
     send_delay = getattr(settings, "TELEGRAM_SEND_DELAY", 3.0)
     try:
         for idx, item in enumerate(items):
-            # Rate-limit: configurable delay between sends (20 msg/min budget shared with appendix)
+            # Rate-limit: configurable delay between channel sends.
             if idx > 0 and send_delay > 0:
                 time.sleep(send_delay)
 
@@ -895,9 +799,6 @@ def publish_digest(
                 failed_items.append(f"#{item.position} ({res_item.get('error', 'failed')})")
             elif res_item["status"] == "suppressed":
                 pass
-
-            if res_item.get("appendix_error"):
-                appendix_failures.append(f"#{item.position} ({res_item['appendix_error']})")
 
     finally:
         if close_client:
@@ -928,15 +829,6 @@ def publish_digest(
     else:
         log.info("Digest %s published: %s items posted", digest.digest_date, sent_count)
 
-    if appendix_failures:
-        appendix_msg = (
-            f"Digest {digest.digest_date}: every post was delivered, but "
-            f"{len(appendix_failures)} appendix message(s) were not: "
-            f"{', '.join(appendix_failures)}. Check that the bot service is running."
-        )
-        send_admin_alert(appendix_msg)
-        log.warning(appendix_msg)
-
     return {
         "digest_id": digest.id,
         "digest_date": str(digest.digest_date),
@@ -944,7 +836,6 @@ def publish_digest(
         "items_skipped": skipped_count,
         "items_failed": len(failed_items),
         "failed_items": failed_items,
-        "appendix_failures": appendix_failures,
         "status": digest.status,
         "suppressed": False,
     }

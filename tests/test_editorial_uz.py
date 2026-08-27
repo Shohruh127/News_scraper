@@ -46,9 +46,9 @@ def test_every_uzbek_block_states_its_word_limits():
 
     for key, block in UZ_BLOCKS.items():
         if key == SHAPE_GENERAL:
-            assert "14 so'z" in block and "16 so'z" in block and "8 so'z" in block
+            assert "18 so'z" in block and "22 so'z" in block and "12 so'z" in block
             continue
-        for cap in ("<= 14 so'z", "<= 16 so'z", "<= 8 so'z"):
+        for cap in ("<= 18 so'z", "<= 22 so'z", "<= 12 so'z"):
             assert cap in block, f"{key} block does not state {cap}"
 
 
@@ -107,10 +107,11 @@ def test_the_prompt_states_the_word_limits_in_the_field_definitions():
     """Stated twice on purpose. This pins the second copy."""
     from apps.digest.llm import EDITORIAL_UZ_PROMPT
 
-    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Style rules")[0]
+    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Plain-language rules")[0]
     assert "AT MOST 8 UZBEK WORDS" in fields
-    assert "AT MOST 14 UZBEK WORDS" in fields
-    assert "AT MOST 16 UZBEK WORDS" in fields
+    assert "AT MOST 18 UZBEK WORDS" in fields
+    assert "AT MOST 22 UZBEK WORDS" in fields
+    assert "AT MOST 12 UZBEK WORDS" in fields
 
 
 def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
@@ -118,8 +119,41 @@ def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
     and the retry cost that article a second call."""
     from apps.digest.llm import EDITORIAL_UZ_PROMPT
 
-    rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Style rules")[0]
+    rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Plain-language rules")[0]
     assert "EXCEPT" in rule and "local_deployable, which is a boolean" in rule
+
+
+def test_the_prompt_targets_the_full_mixed_audience():
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    prompt = EDITORIAL_UZ_PROMPT.lower()
+    assert "pms" in prompt
+    assert "engineers" in prompt
+    assert "technical leaders" in prompt
+    assert "non-technical leaders" in prompt
+    assert "first read" in prompt
+
+
+def test_the_prompt_contains_plain_language_translations_for_observed_jargon():
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    assert "inference engine -> modelni ishga tushiruvchi dastur" in EDITORIAL_UZ_PROMPT
+    assert "arbitrary code execution -> ruxsatsiz kodni ishga tushirish" in EDITORIAL_UZ_PROMPT
+    assert "retrieval -> kerakli ma'lumotni qidirib topish" in EDITORIAL_UZ_PROMPT
+
+
+def test_the_prompt_forces_school_graduate_plainness_for_internal_technical_names():
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT, UZ_BLOCKS
+
+    prompt = EDITORIAL_UZ_PROMPT.lower()
+    risk_block = UZ_BLOCKS["risk"].lower()
+    assert "smart 18-year-old" in prompt
+    assert "google" in prompt
+    assert "internal implementation" in prompt
+    assert "qemu/kvm" in risk_block
+    assert "libslirp" in risk_block
+    assert "0-day" in risk_block
+    assert "oddiyroq umumiy ibora" in risk_block
 
 
 def _example_payloads():
@@ -144,7 +178,7 @@ def test_the_examples_obey_the_limits_they_teach():
     """A model copies a shown example over a stated rule, so an example that breaks the
     cap teaches the model to break it. Measured 2026-08-26: the shape block's content
     instruction beat a limit stated later in the prompt."""
-    caps = {"headline_uz": 8, "lead_uz": 14, "body_1_uz": 16, "kicker_uz": 8}
+    caps = {"headline_uz": 8, "lead_uz": 18, "body_1_uz": 22, "kicker_uz": 12}
     for payload in _example_payloads():
         for field, cap in caps.items():
             words = len(payload[field].split())
@@ -284,6 +318,25 @@ def test_posting_is_refused_without_an_eval_channel(settings):
 
     with pytest.raises(CommandError, match="TELEGRAM_EVAL_CHANNEL_ID"):
         call_command("eval_editorial_uz", "--post", stdout=StringIO())
+
+
+def test_eval_command_limit_selects_one_article(risk_article):
+    from apps.digest.management.commands.eval_editorial_uz import Command
+
+    picked = Command()._one_article_per_class(days=1, limit=1)
+
+    assert len(picked) == 1
+    assert next(iter(picked.values())).pk == risk_article.pk
+
+
+def test_eval_command_rejects_negative_limit():
+    from io import StringIO
+
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError, match="--limit must be"):
+        call_command("eval_editorial_uz", "--limit", "-1", stdout=StringIO())
 
 
 def test_the_prompt_never_teaches_a_form_the_glossary_gate_forbids():
@@ -435,32 +488,6 @@ def test_a_nonsense_local_deployable_is_still_an_error():
 
     with pytest.raises(ValidationError):
         EditorialUz.model_validate({"technical": {"local_deployable": "maybe"}})
-
-
-def test_editorial_uz_schema_covers_the_appendix_template():
-    """A field the appendix renders but the schema cannot produce is dead ink."""
-    from pathlib import Path
-
-    from django.conf import settings as _settings
-
-    from apps.digest.llm import EDITORIAL_UZ_SCHEMA
-
-    template = Path(_settings.BASE_DIR) / "apps/digest/templates/digest/item_appendix.html"
-    rendered_vars = set(re.findall(r"{{\s*(\w+)", template.read_text(encoding="utf-8")))
-    technical_props = set(EDITORIAL_UZ_SCHEMA["properties"]["technical"]["properties"])
-    from_technical = {
-        "what_was_built",
-        "architecture",
-        "license",
-        "repo_url",
-        "api_url",
-        "install",
-        "benchmarks",
-        "limitations",
-    }
-    missing = (rendered_vars & from_technical) - technical_props
-    assert not missing, f"appendix renders {sorted(missing)} but the schema cannot produce them"
-    assert "local_deployable" in technical_props
 
 
 def test_editorial_uz_prompt_documents_every_technical_field():

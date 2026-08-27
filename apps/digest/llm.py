@@ -199,56 +199,57 @@ def shape_for(topic: str | None) -> str:
 #:
 #: The word counts are stated here as well as in the output-field definitions. The block is
 #: read first and wins; a limit stated only later arrives after the sentence is decided.
+#: The limits are deliberately wider than the old 14/16/8 contract: a short explanation is
+#: more useful to a mixed audience than a compressed sentence full of English jargon.
 UZ_BLOCKS: dict[str, str] = {
-    SHAPE_GENERAL: """Maqolada ko'p fakt bo'ladi. Lead'ni shu tartibda tanla, birinchi mos
+    SHAPE_GENERAL: """Bu postni PM, dasturchi va texnik bo'lmagan rahbar bir xil tushunsin.
+Maqolada ko'p fakt bo'ladi. Lead'ni shu tartibda tanla, birinchi mos
 kelgani g'olib:
   1. Nomi bor narsa chiqdi yoki o'zgardi - va kim chiqargani.
   2. O'lchangan natija - va kim o'lchagani.
   3. Qoida, siyosat yoki cheklov - va kimga tegishli ekani.
 Agar maqola faqat e'lon bo'lsa, hech narsa chiqmagan va o'lchanmagan bo'lsa - buni ochiq
-ayt. E'lonni relizga o'xshatib yozma.
-  lead_uz 14 so'z, body_1_uz 16 so'z, kicker_uz 8 so'z dan oshmasin.""",
-    "release": """Bu - yangi chiqqan model yoki vosita. O'quvchi bitta savolga javob
-qidiradi: "buni ishlatsam, menda nima yangilik bo'ladi?"
-  lead_uz    kim nimani chiqardi (<= 14 so'z)
-  body_1_uz  eng muhim raqam yoki xususiyat - parametr soni, kontekst hajmi, versiya,
-             tezlik, benchmark natijasi (<= 16 so'z)
-  kicker_uz  o'quvchi endi nima qila oladi, ilgari qila olmagan (<= 8 so'z)
-Agar hech narsa chiqmagan, faqat va'da qilingan bo'lsa - buni lead'da ochiq ayt.""",
-    "agent": """Bu - agent, harness, framework yoki integratsiya. O'quvchi "bu mening
-tizimimga tushadimi?" deb o'qiydi. Benchmark bali bilan boshlama; ulanish bilan boshla -
-nima nima bilan gaplashadi, orasida nima turadi.
-  lead_uz    nima nima bilan ulanadi (<= 14 so'z)
-  body_1_uz  ulanishning o'zi. Mahsulot bo'lsa: qaysi transport, runtime yoki ruxsat
-             kerak, qaysi hostlar qo'llab-quvvatlaydi. Harness yoki framework bo'lsa:
-             qismlari va ular orasidagi aylanma. Ball - ulanish emas; ballni keltirgan
-             qismni nomla. (<= 16 so'z)
-  kicker_uz  nimaning o'rnini bosadi yoki nimani keraksiz qiladi (<= 8 so'z)""",
-    "risk": """Bu - zaiflik yoki uni bartaraf etish. O'quvchi "menga tegadimi va nima
-qilishim kerak?" deb o'qiydi. Kim e'lon qilgani bilan boshlama; xavfning o'zi bilan boshla.
-  lead_uz    xavf nima va kimga tegadi (<= 14 so'z)
-  body_1_uz  qamrovi yoki mexanizmi - qaysi versiyalar, qaysi modellar, buzg'unchi nima
-             qo'lga kiritadi, yoki himoya qanday ishlaydi (<= 16 so'z)
-  kicker_uz  o'quvchi nima qilishi kerak (<= 8 so'z)""",
-    "research": """Bu - topilma. Savol "nima chiqdi" emas, "dalil da'voni qanchalik
-quvvatlaydi".
-  lead_uz    nima da'vo qilinyapti va kim tomonidan (<= 14 so'z)
-  body_1_uz  dalil qanchalik kuchli - qaysi ma'lumot to'plami, nechta namuna, nima bilan
-             solishtirilgan, kod yoki weights bugun bormi (<= 16 so'z)
-  kicker_uz  bu tasdiqlansa nima o'zgaradi (<= 8 so'z)
-Va'da qilingan kodni chiqqan kod sifatida yozma.""",
-    "product": """Bu - kompaniya mahsulot chiqardi. O'quvchi "sinab ko'ra olamanmi va
-qanchaga?" deb o'qiydi. Bu yerda narx va mavjudlik benchmarkdan muhimroq.
-  lead_uz    kim nimani ishga tushirdi va u nima qiladi (<= 14 so'z)
-  body_1_uz  bugun mavjudmi va qancha turadi - bepul daraja, navbat, narx, hudud
-             cheklovi (<= 16 so'z)
-  kicker_uz  bu kimga foydali (<= 8 so'z)""",
-    "robotics": """Bu - jismoniy tizim. O'quvchining savoli: "mashina haqiqiy dunyoda nima
-qila oladi?"
-  lead_uz    robot yoki tizim jismonan nima qila oladi (<= 14 so'z)
-  body_1_uz  jismoniy raqamlar - tezlik, yuk, avtonom ishlash vaqti, muvaffaqiyat foizi,
-             va qayerda sinalgani (<= 16 so'z)
-  kicker_uz  bu haqiqiy joylashtirish uchun nimani anglatadi (<= 8 so'z)""",
+ayt. E'lonni natija sifatida ko'rsatma.
+  lead_uz 18 so'zdan oshmasin, body_1_uz 22 so'zdan oshmasin, kicker_uz 12 so'zdan oshmasin.""",
+    "release": """Bu - yangi model yoki vosita. Avval oddiy tilda nima chiqqani va bu nima
+uchun kerakligini ayt. Keraksiz arxitektura tafsilotlarini qoldirma.
+  lead_uz    kim nimani chiqardi va u nima uchun kerak (<= 18 so'z)
+  body_1_uz  eng muhim raqam, imkoniyat yoki cheklov; benchmark bo'lsa, uni test deb
+             tushuntir (<= 22 so'z)
+  kicker_uz  manbada aniq aytilgan foyda; bunday fakt bo'lmasa bo'sh qoldir (<= 12 so'z)
+Faqat reja yoki va'da bo'lsa, uni tayyor mahsulot deb yozma.""",
+    "agent": """Bu - topshiriqni o'zi bajaradigan AI dastur yoki boshqa dasturga ulanish.
+O'quvchi PM ham, dasturchi ham birinchi o'qishda nima bo'lganini tushunsin.
+  lead_uz    nima yaratildi va u qanday vazifani bajaradi (<= 18 so'z)
+  body_1_uz  kim bilan ishlashi yoki qanday ishlashi; atamani faqat qisqa izoh bilan
+             ber (<= 22 so'z)
+  kicker_uz  manbada aniq ko'rsatilgan amaliy foyda; bo'lmasa bo'sh qoldir (<= 12 so'z)""",
+    "risk": """Bu - zaiflik yoki undan himoyalanish usuli. Uni aqlli, lekin dasturlashni bilmaydigan
+18 yoshli o'quvchiga tushuntirganday yoz. Xavfni oddiy tilda ayt; ichki mexanizmni
+faqat o'quvchi uchun zarur bo'lsa qoldir.
+Reader-facing fieldsda QEMU/KVM, libslirp va 0-day kabi ichki nomlarni izohsiz yozma.
+Bunday nomlar faqat mexanizm tafsiloti bo'lsa, ularni technical ichida qoldir va postda
+oddiyroq umumiy iborani ishlat: "virtual mashina dasturlaridagi xavfsizlik xatosi" yoki
+"hali tuzatilmagan yangi xato". Har bir gap Google qidirmasdan tushunilishi kerak.
+  lead_uz    xavf nima va kimga ta'sir qiladi (<= 18 so'z)
+  body_1_uz  hujumchi nimaga erishadi yoki qanday sharoitda xavf tug'iladi (<= 22 so'z)
+  kicker_uz  manba aniq tavsiya qilgan chorani yoz; tavsiya bo'lmasa bo'sh qoldir (<= 12 so'z)""",
+    "research": """Bu - tadqiqot natijasi yoki da'vo. Texnik usul nomini takrorlashdan ko'ra,
+natija nimani ko'rsatganini oddiy tilda tushuntir.
+  lead_uz    kim nimani aniqladi yoki da'vo qildi (<= 18 so'z)
+  body_1_uz  natija qaysi test, ma'lumot yoki taqqoslashga tayanganini ayt (<= 22 so'z)
+  kicker_uz  manbada aniq ko'rsatilgan ta'sir; aks holda bo'sh qoldir (<= 12 so'z)
+Va'da qilingan kodni tayyor vosita sifatida yozma.""",
+    "product": """Bu - kompaniya mahsuloti yoki xizmatidagi o'zgarish. Oddiy tilda u nima
+qilishi, kim foydalanishi va bugun mavjud yoki mavjud emasligini ayt.
+  lead_uz    kim nimani ishga tushirdi va u nima qiladi (<= 18 so'z)
+  body_1_uz  mavjudlik, narx, limit yoki foydalanuvchiga kerak bo'ladigan bitta fakt (<= 22 so'z)
+  kicker_uz  manbada aniq ko'rsatilgan foydalanuvchi; bo'lmasa bo'sh qoldir (<= 12 so'z)""",
+    "robotics": """Bu - haqiqiy dunyoda ishlaydigan robot yoki jismoniy tizim. O'quvchi
+mashina nima qila olishini va bu qayerda sinalganini tushunsin.
+  lead_uz    robot yoki tizim nima qila oladi (<= 18 so'z)
+  body_1_uz  eng muhim tezlik, yuk, vaqt yoki sinov sharoitini oddiy tilda ayt (<= 22 so'z)
+  kicker_uz  manbada aniq ko'rsatilgan joylashtirish foydasi; bo'lmasa bo'sh qoldir (<= 12 so'z)""",
 }
 
 
@@ -282,16 +283,20 @@ EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
 }
 
 
-EDITORIAL_UZ_PROMPT = """You are writing one Telegram post for a channel read by working
-AI engineers and technical decision-makers in Uzbekistan. They skim. Give them the fact,
-not the announcement.
+EDITORIAL_UZ_PROMPT = """You are writing one Telegram post for a mixed audience in
+Uzbekistan: PMs, engineers, technical leaders, non-technical leaders and interested
+readers. Everyone must understand the post on the first read. Give them the fact, not the
+announcement, and explain the value without making the language childish.
 
 The four reader-facing fields are written in UZBEK (Latin script). The `technical` object
-is copied from the article and stays in ENGLISH. Return JSON only.
+is copied from the article and stays in ENGLISH for internal use only; it is not published
+separately. If a benchmark, limitation or availability fact matters to the reader, put it
+in an Uzbek field; otherwise omit it. Return JSON only.
 
 ## Shape
-A headline label plus EXACTLY THREE sentences: lead_uz, body_1_uz, kicker_uz.
-One sentence per field. A field holding two sentences is wrong.
+A headline label plus up to THREE reader-facing sentences: lead_uz, body_1_uz, kicker_uz.
+Use one sentence per non-empty field. `kicker_uz` may be an empty string when the article
+does not state a clear practical impact. A field holding two sentences is wrong.
 
 ## What this story needs
 The block below decides the content of the three sentences only. It does not change
@@ -304,13 +309,14 @@ claim about what matters. Where the block gives a word count, that count is the 
 - headline_uz: a short label naming what happened, AT MOST 8 UZBEK WORDS. NOT a sentence -
   no final full stop, no verb required. Only the first word and proper nouns are
   capitalised; English Title Case is wrong.
-- lead_uz: one complete Uzbek sentence with a finite verb, AT MOST 14 UZBEK WORDS. Who did
+- lead_uz: one complete Uzbek sentence with a finite verb, AT MOST 18 UZBEK WORDS. Who did
   what. Do not end it with a particle such as 'ham' or 'esa'. It must not repeat the
   headline.
-- body_1_uz: one Uzbek sentence, AT MOST 16 UZBEK WORDS. NEVER invent a number, and never
+- body_1_uz: one Uzbek sentence, AT MOST 22 UZBEK WORDS. NEVER invent a number, and never
   restate what the lead already said. One fact, not a list.
-- kicker_uz: one short Uzbek sentence, AT MOST 8 UZBEK WORDS, saying what this changes for
-  a developer. No cliches, no hype, no restating the lead.
+- kicker_uz: one short Uzbek sentence, AT MOST 12 UZBEK WORDS, or an empty string. State a
+  practical impact only when the article supports it. Never invent advice, benefits or a
+  recommendation just to fill this field.
 - evidence_level: 'vendor_claim_only' or 'multiple_evidence'
 - technical: an object with what_was_built, architecture, license, repo_url, api_url,
   install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
@@ -319,18 +325,51 @@ claim about what matters. Where the block gives a word count, that count is the 
   thing can be run locally. Never guess a URL, a licence name, or an install command -
   these are published as live links.
 
-## Style rules
+## Plain-language rules
 1. NO FLUFF / NO HYPE: never use 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',
    'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.
-2. Prefer the specific to the general.
-3. ONE SENTENCE PER FIELD.
-4. Keep every number, version and price exactly as the article states it.
-5. Model names, product names, company names, benchmark names and these terms stay in
-   English: model, API, agent, framework, benchmark, context, token, inference, latency,
-   prompt, repo, open-source, weights, open-weight, toolchain.
-6. Write literary Uzbek. Invented or broken words are forbidden. Never transliterate a
-   term that has a real Uzbek equivalent, and never calque one that should stay English.
-7. Plain text only: no markdown bold, no asterisks, no backticks, no list markers.
+2. PLAINNESS GATE: write as if explaining the news to a smart 18-year-old who has never
+   worked in technology. Every reader-facing sentence must be understandable without
+   Google. If a term would require a search, explain it in familiar Uzbek or remove it.
+3. Prefer the specific to the general, but remove details that do not help a non-specialist
+   understand what changed.
+4. Use plain, natural Uzbek. Do not stack English technical terms in one sentence.
+5. If a technical term is essential, explain it briefly in familiar words on first use.
+   If it is not essential, paraphrase it or leave it out.
+6. Do NOT put raw internal implementation, library, protocol, infrastructure or exploit
+   names in reader-facing fields. If such a name is only a mechanism detail, keep it in
+   `technical` and use a simpler general phrase in the post. Product names, model names,
+   company names, APIs, programming languages, versions, URLs and official standards may
+   stay exact when they are necessary to identify the news.
+7. Keep company names, product names, model names, APIs, programming languages, versions,
+   URLs and official standard names exact. Translate ordinary technical prose into Uzbek.
+8. Use these plain-language equivalents when the source contains them:
+   - state-of-the-art -> eng yuqori natija
+   - virtual machine / VM -> kompyuter ichidagi alohida muhit
+   - 0-day / zero-day -> hali tuzatilmagan yangi xato
+   - exploit -> xatodan foydalanish
+   - isolation -> alohida ajratib qo'yish
+   - inference engine -> modelni ishga tushiruvchi dastur
+   - arbitrary code execution -> ruxsatsiz kodni ishga tushirish
+   - retrieval -> kerakli ma'lumotni qidirib topish
+   - shared space -> umumiy ma'lumot maydoni
+   - structure-aware fuzzing -> tuzilmani hisobga oladigan avtomatik xato qidiruvi
+   - generation-based fuzzer -> kod variantlarini yaratib tekshiruvchi vosita
+   - runtime -> ishlash muhiti
+   - host -> asosiy kompyuter
+   - self-service -> mutaxassis yordamisiz ishlaydigan
+   - non-engineer -> dasturchi bo'lmagan xodim
+   - benchmark -> standart test
+   - open-source -> ochiq kodli
+   Do not output the English phrase when the plain Uzbek equivalent is clear.
+9. Keep every number, version, price and claim status exactly as the article states it.
+10. Never turn a description into advice. Only include a recommendation when the source
+   explicitly makes it.
+11. Plain text only: no markdown bold, no asterisks, no backticks, no list markers.
+
+Before returning JSON, silently rewrite any reader-facing sentence that contains an
+unexplained internal name or a word an ordinary school graduate would not understand.
+Keep the exact internal name only inside `technical`.
 
 ## Namunalar
 
@@ -342,7 +381,7 @@ Chiquvchi JSON:
   "headline_uz": "Mistral-Large-2 open-weight modeli chiqdi",
   "lead_uz": "Mistral jamoasi 123B parametrli Mistral-Large-2 modelini ochiq taqdim etdi.",
   "body_1_uz": "Model 128k kontekstga ega va MMLU testida 84% natija ko'rsatdi.",
-  "kicker_uz": "API shartnomasisiz kuchli model.",
+  "kicker_uz": "Model ochiq parametrlar bilan berildi.",
   "evidence_level": "vendor_claim_only",
   "technical": {{
     "what_was_built": "An open-weight large language model.",
@@ -364,7 +403,7 @@ Chiquvchi JSON:
   "headline_uz": "Replit bepul agent darajasini ochdi",
   "lead_uz": "Replit GPT-5.6 Luna asosidagi kodlash agentining bepul darajasini ochdi.",
   "body_1_uz": "Rejalashtirish va tajriba kod yoziladigan bir ish maydonida ishlaydi.",
-  "kicker_uz": "Agentni sinash endi byudjet talab qilmaydi.",
+  "kicker_uz": "Agentni bepul sinab ko'rish mumkin.",
   "evidence_level": "vendor_claim_only",
   "technical": {{
     "what_was_built": "A free tier of a coding agent.",
