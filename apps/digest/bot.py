@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
+
 def create_dispatcher() -> Dispatcher:
     """Create the heartbeat bot dispatcher without group-message handlers."""
     return Dispatcher()
