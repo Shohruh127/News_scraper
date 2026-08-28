@@ -281,6 +281,103 @@ def test_a_third_example_teaches_the_plain_style_on_a_robotics_story():
     assert "cross-embodiment" in robot["technical"]["what_was_built"].lower()
 
 
+def _draft_result():
+    from apps.digest.llm import ChatResult
+
+    return ChatResult(
+        payload={
+            "headline_uz": "Filtr chetlab o'tildi",
+            "lead_uz": "Model 123B parametr bilan filtrni chetlab o'tdi.",
+            "body_1_uz": "Hujum 128k kontekst oynasida sinalgan.",
+            "kicker_uz": "",
+            "evidence_level": "vendor_claim_only",
+            "technical": {"what_was_built": "A jailbreak of the content filter."},
+        },
+        latency_ms=100,
+        model_tag="smart",
+        input_tokens=100,
+        output_tokens=50,
+    )
+
+
+def test_the_simplify_prompt_names_the_measured_defects():
+    """The rewrite pass exists because of measured failures, each pinned in the prompt:
+    the Turkish calque ("atlat...") the 2026-08-28 fast-tier probe produced, invented
+    praise adjectives, impersonal kickers, and product names surviving as jargon. Company
+    names stay - readers know NVIDIA; it is COMPASS that stalls them."""
+    from apps.digest.llm import SIMPLIFY_UZ_PROMPT
+
+    low = SIMPLIFY_UZ_PROMPT.lower()
+    assert "maktab o'quvchisi" in low
+    assert "atlat" in low
+    assert "dastur" in low and "model" in low
+    assert "kompaniya nomi" in low
+    for cap in ("8", "18", "22", "12"):
+        assert cap in low
+
+
+def test_simplify_keeps_the_draft_when_the_rewrite_breaks_a_gate(risk_article, monkeypatch):
+    """The polish step must never cost a post: a rewrite that invents a number is thrown
+    away and the caller keeps the draft."""
+    from apps.digest import llm as llm_mod
+
+    draft = _draft_result()
+
+    def fake_call(**kwargs):
+        bad = dict(draft.payload)
+        bad["lead_uz"] = "Model 99% hollarda filtrni chetlab o'tdi."
+        return llm_mod.ChatResult(bad, 5, "smart", 10, 5)
+
+    monkeypatch.setattr(llm_mod, "_editorial_call", fake_call)
+    assert llm_mod._simplify_editorial_uz(risk_article, draft, None) is None
+
+
+def test_simplify_overwrites_text_and_preserves_technical_and_cost(risk_article, monkeypatch):
+    """Reader-facing fields come from the rewrite; `technical` is copied from the draft
+    rather than trusted to survive a round trip; the Analysis row reports both calls."""
+    from apps.digest import llm as llm_mod
+
+    draft = _draft_result()
+
+    def fake_call(**kwargs):
+        return llm_mod.ChatResult(
+            {
+                "headline_uz": "Filtr aylanib o'tildi",
+                "lead_uz": "Dastur 123B parametr bilan filtrdan o'tib ketdi.",
+                "body_1_uz": "Sinov 128k kontekstda o'tkazildi.",
+                "kicker_uz": "",
+                "evidence_level": "vendor_claim_only",
+                "technical": {"what_was_built": "MANGLED BY THE MODEL"},
+            },
+            latency_ms=200,
+            model_tag="smart-2",
+            input_tokens=30,
+            output_tokens=7,
+        )
+
+    monkeypatch.setattr(llm_mod, "_editorial_call", fake_call)
+    out = llm_mod._simplify_editorial_uz(risk_article, draft, None)
+
+    assert out is not None
+    assert out.payload["lead_uz"] == "Dastur 123B parametr bilan filtrdan o'tib ketdi."
+    assert out.payload["technical"] == {"what_was_built": "A jailbreak of the content filter."}
+    assert out.input_tokens == 130 and out.output_tokens == 57
+    assert out.latency_ms == 300
+
+
+def test_the_pipeline_prefers_the_simplified_post(risk_article, monkeypatch):
+    """analyse_for_digest_logic stores the rewrite when it exists, the draft when not."""
+    from apps.digest import llm as llm_mod
+
+    draft = _draft_result()
+    simp = draft._replace(payload={**draft.payload, "lead_uz": "Oddiy gap."})
+
+    monkeypatch.setattr(llm_mod, "editorial_uz_for_article", lambda art, client=None: draft)
+    monkeypatch.setattr(llm_mod, "_simplify_editorial_uz", lambda art, first, client: simp)
+    rows = llm_mod.analyse_for_digest_logic([risk_article.id])
+    assert rows[0].payload["lead_uz"] == "Oddiy gap."
+
+
 UZ_PAYLOAD = {
     "headline_uz": "Qwen ochiq model chiqardi",
     "lead_uz": "Qwen jamoasi 123B parametrli modelni ochiq taqdim etdi.",
@@ -457,8 +554,10 @@ def test_the_prompt_never_teaches_a_form_the_glossary_gate_forbids():
 
 
 @respx.mock
-def test_the_pipeline_makes_one_call_per_article(risk_article, settings):
-    """Two loops become one. The two-stage flow cost two calls per article."""
+def test_the_pipeline_makes_a_draft_and_a_rewrite_call_per_article(risk_article, settings):
+    """Draft plus the language-only rewrite (2026-08-28). The count is pinned so a third
+    call cannot creep in unnoticed - the old two-stage flow died precisely because its
+    second call worked blind, and the rewrite is allowed only because it does not."""
     from apps.digest import llm
     from apps.digest.models import Analysis
 
@@ -474,7 +573,7 @@ def test_the_pipeline_makes_one_call_per_article(risk_article, settings):
 
     created = llm.analyse_for_digest_logic([risk_article.id])
 
-    assert route.call_count == 1, "one call, not an editorial plus a translation"
+    assert route.call_count == 2, "the draft call and the rewrite call, nothing more"
     assert len(created) == 1
     assert created[0].stage == Analysis.Stage.EDITORIAL_UZ
     stages = set(risk_article.analyses.values_list("stage", flat=True))
@@ -527,8 +626,9 @@ def test_a_gate_violation_retries_once_with_the_violation_named(risk_article, se
     respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
     created = llm.analyse_for_digest_logic([risk_article.id])
 
-    assert len(prompts) == 2, "one retry"
+    assert len(prompts) == 3, "one retry, then the rewrite"
     assert "999" in prompts[1], "the retry must name the violation it is fixing"
+    assert "maktab o'quvchisi".lower() in prompts[2].lower(), "the last call is the rewrite"
     assert len(created) == 1
 
 
@@ -551,7 +651,7 @@ def test_an_article_already_written_is_not_written_again(risk_article, settings)
     llm.analyse_for_digest_logic([risk_article.id])
     llm.analyse_for_digest_logic([risk_article.id])
 
-    assert route.call_count == 1, "the second run must reuse the stored row"
+    assert route.call_count == 2, "the second run must reuse the stored row, not pay again"
 
 
 def test_a_real_boolean_still_survives_the_coercion():

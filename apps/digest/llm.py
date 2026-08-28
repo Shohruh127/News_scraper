@@ -471,6 +471,35 @@ Source: {source}
 {text}
 """
 
+#: The second editorial pass: language only, one job per call. Measured 2026-08-28: three
+#: prompt iterations never moved the drafting call off its translator register, while a
+#: separate rewrite with no other job matched the reference the stakeholders had produced
+#: by hand. Each guard below pins a defect the fast-tier probe of this pass produced: a
+#: Turkish calque ("atlatgan"), an invented praise adjective ("va yaxshiroq"), an
+#: impersonal kicker ("...mumkin."), a weakened meaning, and product names kept as jargon.
+SIMPLIFY_UZ_PROMPT = """Quyida bitta Telegram posti JSON ko'rinishida. Uni XUDDI SHU JSON
+tuzilmasida qayta yoz. Bitta vazifa: postni MAKTAB O'QUVCHISI ham birinchi o'qishda
+tushunadigan oddiy, og'zaki o'zbek tilida ayt.
+
+- Har bir fakt va raqam aynan qoladi. Yangi fakt, baho yoki maslahat qo'shilmaydi:
+  manbada bo'lmagan sifat ("yaxshiroq", "zo'r") yozilmaydi, ma'no yumshatilmaydi
+  ("vazifasini bajaradi" degani "ishini ko'rsatadi" emas).
+- Mahsulot yoki model nomini yozma - o'rniga u nima ekanini oddiy ayt: dastur, model,
+  vosita, sayt. Kompaniya nomi qoladi (NVIDIA, OpenAI kabi). O'quvchiga nom emas,
+  narsaning o'zi kerak.
+- Faqat o'zbek so'zlari: turkcha yoki ruscha so'z ishlatma ("atlatdi" emas -
+  "chetlab o'tdi").
+- kicker_uz kim endi nima qila olishini aytadi - egasiz "mumkin." bilan tugamaydi.
+- headline_uz hook bo'lib qoladi, 8 so'zgacha; lead_uz 18; body_1_uz 22; kicker_uz 12
+  so'zgacha. Har maydon bitta jumla.
+- "technical" maydonini aynan nusxala.
+
+Faqat JSON qaytar.
+
+POST:
+{post_json}
+"""
+
 
 #: Triage asks one question and returns one answer. It used to request the full
 #: CLASSIFICATION_SCHEMA — topic, maturity and three 1-10 scores — from an 8000-character
@@ -1332,12 +1361,78 @@ def analyse_for_digest_logic(
                 )
                 result = _retry_editorial_uz(art, violations, result, client)
 
+            simplified = _simplify_editorial_uz(art, result, client)
+            if simplified is not None:
+                result = simplified
+
             created.append(_record_analysis(art, Analysis.Stage.EDITORIAL_UZ, result))
             log.info("Uzbek post done for article %s", art.id)
         except Exception as exc:
             log.error("Uzbek editorial failed for article %s (%s): %s", art.id, art.title, exc)
 
     return created
+
+
+def _simplify_editorial_uz(article, first: ChatResult, client=None) -> ChatResult | None:
+    """Second pass: rewrite the draft for a school-age reader. Language only.
+
+    Returns None whenever the rewrite cannot be trusted - a raise, or a gate violation
+    against the article - and the caller then publishes the draft. The polish step must
+    never cost a post.
+
+    Reader-facing fields come from the rewrite; `technical` and `evidence_level` are
+    copied from the draft rather than trusted to survive a round trip through the model.
+    Cost is folded with `_combine` so the Analysis row reports both calls.
+    """
+    post_json = json.dumps(
+        {
+            k: first.payload.get(k)
+            for k in (
+                "headline_uz",
+                "lead_uz",
+                "body_1_uz",
+                "kicker_uz",
+                "evidence_level",
+                "technical",
+            )
+        },
+        ensure_ascii=False,
+        indent=1,
+    )
+    try:
+        rewritten = _editorial_call(
+            prompt=SIMPLIFY_UZ_PROMPT.format(post_json=post_json),
+            schema=EDITORIAL_UZ_SCHEMA,
+            model_cls=EditorialUz,
+            num_predict=settings.EDITORIAL_NUM_PREDICT,
+            client=client,
+            provider=settings.EDITORIAL_UZ_PROVIDER,
+            tier=TIER_DEEP,
+        )
+    except Exception as exc:
+        log.warning("Simplify pass failed for article %s; keeping the draft: %s", article.id, exc)
+        return None
+
+    merged = dict(first.payload)
+    normalized = _normalize_uz_payload(rewritten.payload)
+    for field in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz"):
+        merged[field] = normalized.get(field) or merged.get(field)
+
+    violations = translation_gates.validate_against_source(
+        article_title=article.title,
+        article_text=article.extracted_text or "",
+        uz_fields=merged,
+        technical=merged.get("technical"),
+    )
+    if violations:
+        log.warning(
+            "Simplify pass broke gates for article %s; keeping the draft: %s",
+            article.id,
+            violations,
+        )
+        return None
+
+    return _combine(first, rewritten._replace(payload=merged))
 
 
 def _retry_editorial_uz(art, violations, first, client):
