@@ -170,6 +170,44 @@ def test_the_prompt_states_the_sentence_structure_rules():
     assert "who can now do what" in lowered
 
 
+def test_the_prompt_defines_the_headline_as_an_honest_hook():
+    """2026-08-28: stakeholders chose the SMM voice, so the headline is a hook, not a
+    label. The hook stays honest - the live probe of the raw SMM prompt turned "internal
+    research models" into "maxfiy modeli", so the contract must say the tease cannot
+    outrun the article."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Plain-language rules")[0]
+    low = fields.lower()
+    assert "hook" in low
+    assert "must not promise" in low
+    assert "plain label" not in EDITORIAL_UZ_PROMPT
+
+
+def test_the_prompt_carries_the_conversational_voice():
+    """The formal register was measured flat by the channel's readers; the voice rules are
+    part of the contract, and one example must teach the question-hook shape."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    low = EDITORIAL_UZ_PROMPT.lower()
+    assert "conversational" in low
+    assert "eng qizig'i" in low
+    assert "-ayotganligini" in low
+    payloads = _example_payloads()
+    assert any(p["headline_uz"].rstrip().endswith("?") for p in payloads)
+
+
+def test_the_prompt_pins_facts_under_the_louder_voice():
+    """Measured 2026-08-28: the SMM persona alone rewrote "internal research models" as
+    "maxfiy modeli" and stretched a kicker past its cap. The louder the voice, the harder
+    the prompt must pin every adjective to the article."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    low = EDITORIAL_UZ_PROMPT.lower()
+    assert "never the facts" in low
+    assert "maxfiy" in low
+
+
 def _example_payloads():
     """Every JSON object under the examples heading, parsed."""
     import json
