@@ -32,13 +32,14 @@ All operational work happens on the server, in the project checkout. Local runs 
 your own changes, never a step to hand to the operator. Deploy sequence:
 
 ```bash
-git pull --ff-only
-sh ops/linux/deploy.sh --allow-publishing
+sh ops/linux/update.sh --allow-publishing
 ```
 
-That is the whole sequence. It used to carry a hand-written `PeriodicTask` delete, a
-`restart beat` and a separate health check; `deploy.sh` does all three now, because a manual
-step in a deploy is a step that eventually does not happen.
+That is the whole sequence: `update.sh` is `git pull --ff-only` followed by `deploy.sh`,
+flags passed through. It used to be two commands, and before that the deploy carried a
+hand-written `PeriodicTask` delete, a `restart beat` and a separate health check;
+everything folded into one command for the same reason each time - a manual step in a
+deploy is a step that eventually does not happen.
 
 The delete was also wrong. It read
 `PeriodicTask.objects.exclude(task__in=[...four digest task names...]).delete()`, and
