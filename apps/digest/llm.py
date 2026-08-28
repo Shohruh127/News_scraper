@@ -1332,8 +1332,9 @@ def _retry_editorial_uz(art, violations, first, client):
 def editorial_uz_for_article(article: Article, client: httpx.Client | None = None) -> ChatResult:
     """Read the article and write the Uzbek post in one call (2026-08-26 design).
 
-    Phase 1: nothing calls this from the pipeline. `analyse_for_digest_logic` still runs the
-    two-stage flow, so this can be measured against it before anything is replaced.
+    `analyse_for_digest_logic` is the pipeline's only caller. This was introduced beside
+    the two-stage English-then-translate flow so the two could be measured against each
+    other; that flow was removed on 2026-08-26, leaving this the single editorial path.
 
     No Analysis row is written here. The caller decides whether the result is worth storing,
     which keeps the eval command from polluting the pipeline's data.
