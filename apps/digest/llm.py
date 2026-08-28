@@ -366,6 +366,21 @@ claim about what matters. Where the block gives a word count, that count is the 
 10. Never turn a description into advice. Only include a recommendation when the source
    explicitly makes it.
 11. Plain text only: no markdown bold, no asterisks, no backticks, no list markers.
+12. NAMED ACTOR: every reader-facing sentence says who does what. The subject is a company,
+   a team, a product or the reader - never an abstract noun performing an abstract action.
+   'COMPASS tizimi chiqdi' -> 'NVIDIA COMPASS tizimini chiqardi'.
+13. NO NOUN CHAINS: never stack a noun on a noun on a noun. Say what the thing does with a
+   verb instead. 'robotni moslashtiruvchi maxsus dasturiy ta'minot' -> 'robotni yangi
+   muhitga moslashishga o'rgatadi'.
+14. VERB, NOT VERBAL NOUN: prefer a finite verb to a noun built out of one.
+   'moslashtirish imkonini beradi' -> 'moslashadi'. 'o'rgatish uchun ish oqimi' ->
+   'o'rgatadigan tizim'.
+15. kicker_uz says WHO CAN NOW DO WHAT, with the beneficiary as the subject.
+   'Bu tezroq moslashtirish imkonini beradi' -> 'Natijada robotlar yangi joylarda tezroq
+   ishlashni o'rganadi'.
+16. When a mechanism term still needs explaining after rules 5-8, and the reader
+   understands what happened without it, LEAVE IT OUT. One fact fewer and fully understood
+   beats one fact more that stalls the reader. The term stays in `technical`.
 
 Before returning JSON, silently rewrite any reader-facing sentence that contains an
 unexplained internal name or a word an ordinary school graduate would not understand.
@@ -381,7 +396,7 @@ Chiquvchi JSON:
   "headline_uz": "Mistral-Large-2 open-weight modeli chiqdi",
   "lead_uz": "Mistral jamoasi 123B parametrli Mistral-Large-2 modelini ochiq taqdim etdi.",
   "body_1_uz": "Model 128k kontekstga ega va MMLU testida 84% natija ko'rsatdi.",
-  "kicker_uz": "Model ochiq parametrlar bilan berildi.",
+  "kicker_uz": "Dasturchilar modelni o'z serverida ishlata oladi.",
   "evidence_level": "vendor_claim_only",
   "technical": {{
     "what_was_built": "An open-weight large language model.",
@@ -403,13 +418,36 @@ Chiquvchi JSON:
   "headline_uz": "Replit bepul agent darajasini ochdi",
   "lead_uz": "Replit GPT-5.6 Luna asosidagi kodlash agentining bepul darajasini ochdi.",
   "body_1_uz": "Rejalashtirish va tajriba kod yoziladigan bir ish maydonida ishlaydi.",
-  "kicker_uz": "Agentni bepul sinab ko'rish mumkin.",
+  "kicker_uz": "Dasturchilar endi agentni bepul sinab ko'radi.",
   "evidence_level": "vendor_claim_only",
   "technical": {{
     "what_was_built": "A free tier of a coding agent.",
     "architecture": "", "license": "", "repo_url": "", "api_url": "", "install": "",
     "benchmarks": "",
     "limitations": "No pricing or usage limits were published.",
+    "local_deployable": false
+  }}
+}}
+
+Misol 3 - robototexnika, mexanizm nomlari tushirilgan. Maqola "cross-embodiment",
+"residual policy" va "Isaac Sim" deb ataydi; postda ularning biri ham yo'q. 16-qoida:
+o'quvchi voqeani ularsiz tushunadi, shuning uchun ular faqat `technical` ichida qoladi.
+Diqqat qil: har jumlaning aniq egasi bor va kicker robotning o'zini ega qilib oladi.
+Maqola: "NVIDIA's COMPASS is an agent-based workflow for cross-embodiment robot
+navigation. It distils a pre-trained foundation model into a residual policy that adapts
+a robot to a new environment. It runs on Isaac Lab 3.0 and Isaac Sim 6.0."
+Chiquvchi JSON:
+{{
+  "headline_uz": "NVIDIA robotlar uchun COMPASS tizimini chiqardi",
+  "lead_uz": "NVIDIA robotlarni yangi joyda yo'l topishga o'rgatadigan COMPASS tizimini yaratdi.",
+  "body_1_uz": "Tizim tayyor sun'iy intellekt modelini yangi robotga moslashtiradi.",
+  "kicker_uz": "Natijada robotlar yangi joylarda tezroq ishlashni o'rganadi.",
+  "evidence_level": "vendor_claim_only",
+  "technical": {{
+    "what_was_built": "An agent-based workflow for cross-embodiment robot navigation.",
+    "architecture": "Distils a pre-trained foundation model into a residual policy.",
+    "license": "", "repo_url": "", "api_url": "", "install": "",
+    "benchmarks": "", "limitations": "Runs on Isaac Lab 3.0 and Isaac Sim 6.0.",
     "local_deployable": false
   }}
 }}

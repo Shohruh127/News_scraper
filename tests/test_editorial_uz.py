@@ -156,6 +156,20 @@ def test_the_prompt_forces_school_graduate_plainness_for_internal_technical_name
     assert "oddiyroq umumiy ibora" in risk_block
 
 
+def test_the_prompt_states_the_sentence_structure_rules():
+    """Vocabulary rules alone do not produce plain Uzbek. Measured 2026-08-28: the model
+    obeyed every glossary line and still wrote 'moslashtirish imkonini beradi' and
+    'moslashtiruvchi maxsus dasturiy ta'minot'. Those are structures, not words, so the
+    rules that forbid them have to talk about how a sentence is built."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+
+    rules = EDITORIAL_UZ_PROMPT.split("## Plain-language rules")[1].split("## Namunalar")[0]
+    lowered = rules.lower()
+    assert "named actor" in lowered
+    assert "verbal noun" in lowered
+    assert "who can now do what" in lowered
+
+
 def _example_payloads():
     """Every JSON object under the examples heading, parsed."""
     import json
@@ -171,7 +185,7 @@ def _example_payloads():
 def test_the_examples_are_valid_json():
     """A previous prompt shipped examples with real newlines inside string values."""
     payloads = _example_payloads()
-    assert len(payloads) == 2, "two examples"
+    assert len(payloads) == 3, "three examples"
 
 
 def test_the_examples_obey_the_limits_they_teach():
@@ -194,6 +208,39 @@ def test_the_examples_are_one_sentence_each():
             assert len(sents) == 1, f"{field} must be exactly one sentence"
             assert payload[field].rstrip().endswith("."), f"{field} must end with a full stop"
         assert not payload["headline_uz"].endswith("."), "the headline is a label"
+
+
+def test_the_example_kickers_name_who_can_now_do_what():
+    """Rule 15 only binds if the examples obey it, because a model copies a shown example
+    over a stated rule. Both shipped kickers hid the beneficiary behind an impersonal
+    verb - 'Model ochiq parametrlar bilan berildi', 'Agentni bepul sinab ko'rish mumkin' -
+    and so taught the very shape rule 15 forbids."""
+    impersonal = ("mumkin.", "berildi.", "beriladi.", "qilinadi.", "imkonini beradi.")
+    for payload in _example_payloads():
+        kicker = payload["kicker_uz"]
+        if not kicker:
+            continue
+        assert not kicker.endswith(impersonal), (
+            f"kicker '{kicker}' hides the beneficiary behind an impersonal verb"
+        )
+
+
+def test_a_third_example_teaches_the_plain_style_on_a_robotics_story():
+    """Rules 12-16 came from a robotics post (measured 2026-08-28) whose every sentence
+    obeyed the glossary and still read as noun-chain prose. The example that shows the
+    repair has to ship with the rule, because the model copies what it is shown."""
+    payloads = _example_payloads()
+    assert len(payloads) == 3, "three examples"
+
+    robot = payloads[2]
+    assert "robot" in robot["lead_uz"].lower(), "the third example is the robotics story"
+    # The article names the mechanism; rule 16 keeps it out of the reader-facing fields.
+    reader_text = " ".join(
+        robot[f] for f in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz")
+    ).lower()
+    for mechanism in ("cross-embodiment", "residual", "isaac", "workflow"):
+        assert mechanism not in reader_text, f"'{mechanism}' belongs in technical only"
+    assert "cross-embodiment" in robot["technical"]["what_was_built"].lower()
 
 
 UZ_PAYLOAD = {
