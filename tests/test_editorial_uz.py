@@ -6,7 +6,6 @@ this path now, so these tests do touch the pipeline.
 """
 
 import json
-import re
 
 import httpx
 import pytest
@@ -107,7 +106,7 @@ def test_the_prompt_states_the_word_limits_in_the_field_definitions():
     """Stated twice on purpose. This pins the second copy."""
     from apps.digest.llm import EDITORIAL_UZ_PROMPT
 
-    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Plain-language rules")[0]
+    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Rules")[0]
     assert "AT MOST 8 UZBEK WORDS" in fields
     assert "AT MOST 18 UZBEK WORDS" in fields
     assert "AT MOST 22 UZBEK WORDS" in fields
@@ -119,7 +118,7 @@ def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
     and the retry cost that article a second call."""
     from apps.digest.llm import EDITORIAL_UZ_PROMPT
 
-    rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Plain-language rules")[0]
+    rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Rules")[0]
     assert "EXCEPT" in rule and "local_deployable, which is a boolean" in rule
 
 
@@ -132,14 +131,6 @@ def test_the_prompt_targets_the_full_mixed_audience():
     assert "technical leaders" in prompt
     assert "non-technical leaders" in prompt
     assert "first read" in prompt
-
-
-def test_the_prompt_contains_plain_language_translations_for_observed_jargon():
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    assert "inference engine -> modelni ishga tushiruvchi dastur" in EDITORIAL_UZ_PROMPT
-    assert "arbitrary code execution -> ruxsatsiz kodni ishga tushirish" in EDITORIAL_UZ_PROMPT
-    assert "retrieval -> kerakli ma'lumotni qidirib topish" in EDITORIAL_UZ_PROMPT
 
 
 def test_the_prompt_forces_school_graduate_plainness_for_internal_technical_names():
@@ -156,18 +147,23 @@ def test_the_prompt_forces_school_graduate_plainness_for_internal_technical_name
     assert "oddiyroq umumiy ibora" in risk_block
 
 
-def test_the_prompt_states_the_sentence_structure_rules():
-    """Vocabulary rules alone do not produce plain Uzbek. Measured 2026-08-28: the model
-    obeyed every glossary line and still wrote 'moslashtirish imkonini beradi' and
-    'moslashtiruvchi maxsus dasturiy ta'minot'. Those are structures, not words, so the
-    rules that forbid them have to talk about how a sentence is built."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+def test_the_sentence_structure_rules_live_with_the_rewrite():
+    """The structure rules were born in the drafting prompt (measured 2026-08-28: glossary
+    obeyed, register unmoved) and moved to the rewrite the same day, when three prompt
+    iterations showed that one call cannot both select facts and hold a register. The
+    draft prompt must stay free of them - squeezing both jobs into one prompt moved
+    neither - and the rewrite must carry them."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
 
-    rules = EDITORIAL_UZ_PROMPT.split("## Plain-language rules")[1].split("## Namunalar")[0]
+    slow = SIMPLIFY_UZ_PROMPT.lower()
+    assert "egasi aniq" in slow
+    assert "ot zanjiri" in slow
+    assert "kim endi nima qila olishini" in slow
+
+    rules = EDITORIAL_UZ_PROMPT.split("## Rules")[1].split("ARTICLE")[0]
     lowered = rules.lower()
-    assert "named actor" in lowered
-    assert "verbal noun" in lowered
-    assert "who can now do what" in lowered
+    assert "named actor" not in lowered
+    assert "verbal noun" not in lowered
 
 
 def test_the_prompt_defines_the_headline_as_an_honest_hook():
@@ -177,7 +173,7 @@ def test_the_prompt_defines_the_headline_as_an_honest_hook():
     outrun the article."""
     from apps.digest.llm import EDITORIAL_UZ_PROMPT
 
-    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Plain-language rules")[0]
+    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Rules")[0]
     low = fields.lower()
     assert "hook" in low
     assert "must not promise" in low
@@ -186,15 +182,13 @@ def test_the_prompt_defines_the_headline_as_an_honest_hook():
 
 def test_the_prompt_carries_the_conversational_voice():
     """The formal register was measured flat by the channel's readers; the voice rules are
-    part of the contract, and one example must teach the question-hook shape."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
+    part of the contract."""
+    from apps.digest.llm import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
 
-    low = EDITORIAL_UZ_PROMPT.lower()
-    assert "conversational" in low
-    assert "eng qizig'i" in low
-    assert "-ayotganligini" in low
-    payloads = _example_payloads()
-    assert any(p["headline_uz"].rstrip().endswith("?") for p in payloads)
+    assert "conversational" in EDITORIAL_UZ_PROMPT.lower()
+    slow = SIMPLIFY_UZ_PROMPT.lower()
+    assert "eng qizig'i" in slow
+    assert "-ayotganligini" in slow
 
 
 def test_the_prompt_pins_facts_under_the_louder_voice():
@@ -206,79 +200,6 @@ def test_the_prompt_pins_facts_under_the_louder_voice():
     low = EDITORIAL_UZ_PROMPT.lower()
     assert "never the facts" in low
     assert "maxfiy" in low
-
-
-def _example_payloads():
-    """Every JSON object under the examples heading, parsed."""
-    import json
-
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    section = EDITORIAL_UZ_PROMPT.split("## Namunalar")[1].split("ARTICLE")[0]
-    # The prompt doubles its braces for str.format; undo that before parsing.
-    section = section.replace("{{", "{").replace("}}", "}")
-    return [json.loads(m) for m in re.findall(r"\{\s*\"headline_uz\".*?\n\}", section, re.S)]
-
-
-def test_the_examples_are_valid_json():
-    """A previous prompt shipped examples with real newlines inside string values."""
-    payloads = _example_payloads()
-    assert len(payloads) == 3, "three examples"
-
-
-def test_the_examples_obey_the_limits_they_teach():
-    """A model copies a shown example over a stated rule, so an example that breaks the
-    cap teaches the model to break it. Measured 2026-08-26: the shape block's content
-    instruction beat a limit stated later in the prompt."""
-    caps = {"headline_uz": 8, "lead_uz": 18, "body_1_uz": 22, "kicker_uz": 12}
-    for payload in _example_payloads():
-        for field, cap in caps.items():
-            words = len(payload[field].split())
-            assert words <= cap, f"{field} example is {words} words, cap is {cap}"
-
-
-def test_the_examples_are_one_sentence_each():
-    """Three sentences total is the whole post contract."""
-
-    for payload in _example_payloads():
-        for field in ("lead_uz", "body_1_uz", "kicker_uz"):
-            sents = [s for s in re.split(r"(?<=[.!?])\s+", payload[field].strip()) if s.strip()]
-            assert len(sents) == 1, f"{field} must be exactly one sentence"
-            assert payload[field].rstrip().endswith("."), f"{field} must end with a full stop"
-        assert not payload["headline_uz"].endswith("."), "the headline is a label"
-
-
-def test_the_example_kickers_name_who_can_now_do_what():
-    """Rule 15 only binds if the examples obey it, because a model copies a shown example
-    over a stated rule. Both shipped kickers hid the beneficiary behind an impersonal
-    verb - 'Model ochiq parametrlar bilan berildi', 'Agentni bepul sinab ko'rish mumkin' -
-    and so taught the very shape rule 15 forbids."""
-    impersonal = ("mumkin.", "berildi.", "beriladi.", "qilinadi.", "imkonini beradi.")
-    for payload in _example_payloads():
-        kicker = payload["kicker_uz"]
-        if not kicker:
-            continue
-        assert not kicker.endswith(impersonal), (
-            f"kicker '{kicker}' hides the beneficiary behind an impersonal verb"
-        )
-
-
-def test_a_third_example_teaches_the_plain_style_on_a_robotics_story():
-    """Rules 12-16 came from a robotics post (measured 2026-08-28) whose every sentence
-    obeyed the glossary and still read as noun-chain prose. The example that shows the
-    repair has to ship with the rule, because the model copies what it is shown."""
-    payloads = _example_payloads()
-    assert len(payloads) == 3, "three examples"
-
-    robot = payloads[2]
-    assert "robot" in robot["lead_uz"].lower(), "the third example is the robotics story"
-    # The article names the mechanism; rule 16 keeps it out of the reader-facing fields.
-    reader_text = " ".join(
-        robot[f] for f in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz")
-    ).lower()
-    for mechanism in ("cross-embodiment", "residual", "isaac", "workflow"):
-        assert mechanism not in reader_text, f"'{mechanism}' belongs in technical only"
-    assert "cross-embodiment" in robot["technical"]["what_was_built"].lower()
 
 
 def _draft_result():
@@ -850,4 +771,4 @@ def test_an_article_with_no_classification_gets_the_general_block(settings):
     respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
     llm.analyse_for_digest_logic([article.id])
 
-    assert "Maqolada ko'p fakt bo'ladi" in prompts[0]
+    assert "birinchi mos kelgani g'olib" in prompts[0]

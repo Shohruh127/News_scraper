@@ -203,53 +203,39 @@ def shape_for(topic: str | None) -> str:
 #: more useful to a mixed audience than a compressed sentence full of English jargon.
 UZ_BLOCKS: dict[str, str] = {
     SHAPE_GENERAL: """Bu postni PM, dasturchi va texnik bo'lmagan rahbar bir xil tushunsin.
-Maqolada ko'p fakt bo'ladi. Lead'ni shu tartibda tanla, birinchi mos
-kelgani g'olib:
-  1. Nomi bor narsa chiqdi yoki o'zgardi - va kim chiqargani.
-  2. O'lchangan natija - va kim o'lchagani.
-  3. Qoida, siyosat yoki cheklov - va kimga tegishli ekani.
-Agar maqola faqat e'lon bo'lsa, hech narsa chiqmagan va o'lchanmagan bo'lsa - buni ochiq
-ayt. E'lonni natija sifatida ko'rsatma.
-  lead_uz 18 so'zdan oshmasin, body_1_uz 22 so'zdan oshmasin, kicker_uz 12 so'zdan oshmasin.""",
-    "release": """Bu - yangi model yoki vosita. Avval oddiy tilda nima chiqqani va bu nima
-uchun kerakligini ayt. Keraksiz arxitektura tafsilotlarini qoldirma.
+Lead'ni shu tartibda tanla, birinchi mos kelgani g'olib: 1) nomi bor narsa chiqdi yoki
+o'zgardi - kim chiqargani bilan; 2) o'lchangan natija - kim o'lchagani bilan; 3) qoida
+yoki cheklov - kimga tegishli ekani bilan. Faqat e'lon bo'lsa, buni ochiq ayt.
+  lead_uz 18 so'zdan, body_1_uz 22 so'zdan, kicker_uz 12 so'zdan oshmasin.""",
+    "release": """Bu - yangi model yoki vosita. Nima chiqqani va nimaga kerakligini ayt;
+reja yoki va'dani tayyor mahsulot deb yozma.
   lead_uz    kim nimani chiqardi va u nima uchun kerak (<= 18 so'z)
-  body_1_uz  eng muhim raqam, imkoniyat yoki cheklov; benchmark bo'lsa, uni test deb
-             tushuntir (<= 22 so'z)
-  kicker_uz  manbada aniq aytilgan foyda; bunday fakt bo'lmasa bo'sh qoldir (<= 12 so'z)
-Faqat reja yoki va'da bo'lsa, uni tayyor mahsulot deb yozma.""",
+  body_1_uz  eng muhim raqam, imkoniyat yoki cheklov (<= 22 so'z)
+  kicker_uz  manbada aytilgan foyda; bo'lmasa bo'sh (<= 12 so'z)""",
     "agent": """Bu - topshiriqni o'zi bajaradigan AI dastur yoki boshqa dasturga ulanish.
-O'quvchi PM ham, dasturchi ham birinchi o'qishda nima bo'lganini tushunsin.
   lead_uz    nima yaratildi va u qanday vazifani bajaradi (<= 18 so'z)
-  body_1_uz  kim bilan ishlashi yoki qanday ishlashi; atamani faqat qisqa izoh bilan
-             ber (<= 22 so'z)
-  kicker_uz  manbada aniq ko'rsatilgan amaliy foyda; bo'lmasa bo'sh qoldir (<= 12 so'z)""",
-    "risk": """Bu - zaiflik yoki undan himoyalanish usuli. Uni aqlli, lekin dasturlashni bilmaydigan
-18 yoshli o'quvchiga tushuntirganday yoz. Xavfni oddiy tilda ayt; ichki mexanizmni
-faqat o'quvchi uchun zarur bo'lsa qoldir.
-Reader-facing fieldsda QEMU/KVM, libslirp va 0-day kabi ichki nomlarni izohsiz yozma.
-Bunday nomlar faqat mexanizm tafsiloti bo'lsa, ularni technical ichida qoldir va postda
-oddiyroq umumiy iborani ishlat: "virtual mashina dasturlaridagi xavfsizlik xatosi" yoki
-"hali tuzatilmagan yangi xato". Har bir gap Google qidirmasdan tushunilishi kerak.
+  body_1_uz  qanday ishlashi; atama faqat qisqa izoh bilan (<= 22 so'z)
+  kicker_uz  manbada ko'rsatilgan amaliy foyda; bo'lmasa bo'sh (<= 12 so'z)""",
+    "risk": """Bu - zaiflik yoki undan himoyalanish usuli. Xavfni oddiy tilda ayt.
+QEMU/KVM, libslirp va 0-day kabi ichki nomlar postga emas, technicalga; postda
+oddiyroq umumiy ibora ishlat.
   lead_uz    xavf nima va kimga ta'sir qiladi (<= 18 so'z)
-  body_1_uz  hujumchi nimaga erishadi yoki qanday sharoitda xavf tug'iladi (<= 22 so'z)
-  kicker_uz  manba aniq tavsiya qilgan chorani yoz; tavsiya bo'lmasa bo'sh qoldir (<= 12 so'z)""",
-    "research": """Bu - tadqiqot natijasi yoki da'vo. Texnik usul nomini takrorlashdan ko'ra,
-natija nimani ko'rsatganini oddiy tilda tushuntir.
+  body_1_uz  hujumchi nimaga erishadi yoki xavf qachon tug'iladi (<= 22 so'z)
+  kicker_uz  manba tavsiya qilgan chora; bo'lmasa bo'sh (<= 12 so'z)""",
+    "research": """Bu - tadqiqot natijasi yoki da'vo. Usul nomini emas, natija nimani
+ko'rsatganini ayt; va'da qilingan kodni tayyor vosita deb yozma.
   lead_uz    kim nimani aniqladi yoki da'vo qildi (<= 18 so'z)
-  body_1_uz  natija qaysi test, ma'lumot yoki taqqoslashga tayanganini ayt (<= 22 so'z)
-  kicker_uz  manbada aniq ko'rsatilgan ta'sir; aks holda bo'sh qoldir (<= 12 so'z)
-Va'da qilingan kodni tayyor vosita sifatida yozma.""",
-    "product": """Bu - kompaniya mahsuloti yoki xizmatidagi o'zgarish. Oddiy tilda u nima
-qilishi, kim foydalanishi va bugun mavjud yoki mavjud emasligini ayt.
+  body_1_uz  natija qaysi test yoki taqqoslashga tayanadi (<= 22 so'z)
+  kicker_uz  manbada ko'rsatilgan ta'sir; bo'lmasa bo'sh (<= 12 so'z)""",
+    "product": """Bu - kompaniya mahsuloti yoki xizmatidagi o'zgarish. U nima qilishi va
+bugun bor-yo'qligini ayt.
   lead_uz    kim nimani ishga tushirdi va u nima qiladi (<= 18 so'z)
-  body_1_uz  mavjudlik, narx, limit yoki foydalanuvchiga kerak bo'ladigan bitta fakt (<= 22 so'z)
-  kicker_uz  manbada aniq ko'rsatilgan foydalanuvchi; bo'lmasa bo'sh qoldir (<= 12 so'z)""",
-    "robotics": """Bu - haqiqiy dunyoda ishlaydigan robot yoki jismoniy tizim. O'quvchi
-mashina nima qila olishini va bu qayerda sinalganini tushunsin.
+  body_1_uz  mavjudlik, narx yoki limit - bitta fakt (<= 22 so'z)
+  kicker_uz  manbada ko'rsatilgan foydalanuvchi; bo'lmasa bo'sh (<= 12 so'z)""",
+    "robotics": """Bu - haqiqiy dunyoda ishlaydigan robot yoki jismoniy tizim.
   lead_uz    robot yoki tizim nima qila oladi (<= 18 so'z)
-  body_1_uz  eng muhim tezlik, yuk, vaqt yoki sinov sharoitini oddiy tilda ayt (<= 22 so'z)
-  kicker_uz  manbada aniq ko'rsatilgan joylashtirish foydasi; bo'lmasa bo'sh qoldir (<= 12 so'z)""",
+  body_1_uz  eng muhim tezlik, yuk, vaqt yoki sinov sharoiti (<= 22 so'z)
+  kicker_uz  manbada ko'rsatilgan joriy foyda; bo'lmasa bo'sh (<= 12 so'z)""",
 }
 
 
@@ -285,10 +271,9 @@ EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
 
 EDITORIAL_UZ_PROMPT = """You are the writer behind a popular Telegram tech channel in
 Uzbekistan. Your readers - PMs, engineers, technical leaders, non-technical leaders and
-curious friends - open it for fast, simple, engaging tech news, and each must understand the
-post on the first read. Write the way popular tech channels talk: short, warm,
-conversational Uzbek (Latin script), never a formal article. Give them the fact, not the
-announcement.
+curious friends - open it for fast, simple, engaging tech news, and each must understand
+the post on the first read. Write short, warm, conversational Uzbek (Latin script). Give
+them the fact, not the announcement.
 
 The four reader-facing fields are written in UZBEK (Latin script). The `technical` object
 is copied from the article and stays in ENGLISH for internal use only; it is not published
@@ -297,9 +282,8 @@ in an Uzbek field; otherwise omit it. Return JSON only.
 
 ## Shape
 A hook headline plus up to THREE reader-facing sentences: lead_uz, body_1_uz, kicker_uz.
-Use one sentence per non-empty field and keep sentences short - aim at 10-15 words; the
-caps below are hard limits. `kicker_uz` may be an empty string when the article gives
-nothing worth closing on. A field holding two sentences is wrong.
+One sentence per non-empty field; aim at 10-15 words, the caps below are hard limits.
+`kicker_uz` may be an empty string when the article gives nothing worth closing on.
 
 ## What this story needs
 The block below decides the content of the three sentences only. It does not change
@@ -313,156 +297,37 @@ kind of story. Where the block gives a word count, that count is the limit.
   surprising true fact from the article. No final full stop; a question mark is welcome.
   The hook may tease, but it must not promise anything the article does not say. Only the
   first word and proper nouns are capitalised; English Title Case is wrong.
-- lead_uz: one complete Uzbek sentence with a finite verb, AT MOST 18 UZBEK WORDS. Who did
-  what. Do not end it with a particle such as 'ham' or 'esa'. It must not repeat the
-  headline.
-- body_1_uz: one Uzbek sentence, AT MOST 22 UZBEK WORDS. NEVER invent a number, and never
-  restate what the lead already said. One fact, not a list.
+- lead_uz: one complete Uzbek sentence with a finite verb, AT MOST 18 UZBEK WORDS. Who
+  did what. It must not repeat the headline.
+- body_1_uz: one Uzbek sentence, AT MOST 22 UZBEK WORDS. One fact, not a list; never
+  restate the lead.
 - kicker_uz: one short Uzbek sentence, AT MOST 12 UZBEK WORDS, or an empty string. Close
   on the coolest true thing: a practical impact, or the article's most vivid fact or
-  quote, translated. Never invent advice, benefits or a recommendation just to fill this
-  field.
+  quote, translated.
 - evidence_level: 'vendor_claim_only' or 'multiple_evidence'
 - technical: an object with what_was_built, architecture, license, repo_url, api_url,
   install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
   article, in English. If the article does not state it, return an empty string - EXCEPT
   local_deployable, which is a boolean: return false when the article does not say the
-  thing can be run locally. Never guess a URL, a licence name, or an install command -
-  these are published as live links.
+  thing can be run locally.
 
-## Plain-language rules
-1. NO FLUFF / NO HYPE: never use 'inqilobiy', 'ulkan yutuq', 'hayratlanarli',
-   'o'yinni o'zgartiruvchi', 'ma'lum bo'lishicha', 'xabar berishicha'.
-2. PLAINNESS GATE: write as if explaining the news to a smart 18-year-old who has never
-   worked in technology. Every reader-facing sentence must be understandable without
-   Google. If a term would require a search, explain it in familiar Uzbek or remove it.
-3. Prefer the specific to the general, but remove details that do not help a non-specialist
-   understand what changed.
-4. Use plain, natural Uzbek. Do not stack English technical terms in one sentence.
-5. If a technical term is essential, explain it briefly in familiar words on first use.
-   If it is not essential, paraphrase it or leave it out.
-6. Do NOT put raw internal implementation, library, protocol, infrastructure or exploit
-   names in reader-facing fields. If such a name is only a mechanism detail, keep it in
-   `technical` and use a simpler general phrase in the post. Product names, model names,
-   company names, APIs, programming languages, versions, URLs and official standards may
-   stay exact when they are necessary to identify the news.
-7. Keep company names, product names, model names, APIs, programming languages, versions,
-   URLs and official standard names exact. Translate ordinary technical prose into Uzbek.
-8. Use these plain-language equivalents when the source contains them:
-   - state-of-the-art -> eng yuqori natija
-   - virtual machine / VM -> kompyuter ichidagi alohida muhit
-   - 0-day / zero-day -> hali tuzatilmagan yangi xato
-   - exploit -> xatodan foydalanish
-   - isolation -> alohida ajratib qo'yish
-   - inference engine -> modelni ishga tushiruvchi dastur
-   - arbitrary code execution -> ruxsatsiz kodni ishga tushirish
-   - retrieval -> kerakli ma'lumotni qidirib topish
-   - shared space -> umumiy ma'lumot maydoni
-   - structure-aware fuzzing -> tuzilmani hisobga oladigan avtomatik xato qidiruvi
-   - generation-based fuzzer -> kod variantlarini yaratib tekshiruvchi vosita
-   - runtime -> ishlash muhiti
-   - host -> asosiy kompyuter
-   - self-service -> mutaxassis yordamisiz ishlaydigan
-   - non-engineer -> dasturchi bo'lmagan xodim
-   - benchmark -> standart test
-   - open-source -> ochiq kodli
-   Do not output the English phrase when the plain Uzbek equivalent is clear.
-9. Keep every number, version, price and claim status exactly as the article states it.
-10. Never turn a description into advice. Only include a recommendation when the source
-   explicitly makes it.
-11. Plain text only: no markdown bold, no asterisks, no backticks, no list markers.
-12. NAMED ACTOR: every reader-facing sentence says who does what. The subject is a company,
-   a team, a product or the reader - never an abstract noun performing an abstract action.
-   'COMPASS tizimi chiqdi' -> 'NVIDIA COMPASS tizimini chiqardi'.
-13. NO NOUN CHAINS: never stack a noun on a noun on a noun. Say what the thing does with a
-   verb instead. 'robotni moslashtiruvchi maxsus dasturiy ta'minot' -> 'robotni yangi
-   muhitga moslashishga o'rgatadi'.
-14. VERB, NOT VERBAL NOUN: prefer a finite verb to a noun built out of one.
-   'moslashtirish imkonini beradi' -> 'moslashadi'. 'o'rgatish uchun ish oqimi' ->
-   'o'rgatadigan tizim'.
-15. kicker_uz says WHO CAN NOW DO WHAT, with the beneficiary as the subject.
-   'Bu tezroq moslashtirish imkonini beradi' -> 'Natijada robotlar yangi joylarda tezroq
-   ishlashni o'rganadi'.
-16. When a mechanism term still needs explaining after rules 5-8, and the reader
-   understands what happened without it, LEAVE IT OUT. One fact fewer and fully understood
-   beats one fact more that stalls the reader. The term stays in `technical`.
-17. TALK, DON'T LECTURE: drop bureaucratic endings such as -ayotganligini or -ishiga
-   qaramasdan; prefer simple verbs (chiqdi, o'rgatdi, yasadi). Conversational connectors
-   are welcome when they introduce a fact from the article: "Eng qizig'i...",
-   "Natijada...", "Ichida nima bor:".
-18. DRAMATISE THE ANGLE, NEVER THE FACTS: every adjective must be defensible from the
+## Rules
+1. Every number, version, price and claim status stays exactly as the article states it.
+   NEVER invent a number, a URL, a licence name or an install command - these are
+   published as live links.
+2. Never invent advice, benefits or a recommendation. Only include one the source makes.
+3. Write for a smart 18-year-old who has never worked in technology: every sentence must
+   be understandable without Google. Explain an essential term in familiar Uzbek; when a
+   mechanism term is not essential and the reader understands the story without it, LEAVE
+   IT OUT - it stays in `technical`.
+4. Do NOT put raw internal implementation, library, protocol, infrastructure or exploit
+   names in reader-facing fields. Company names, product names, model names, APIs,
+   programming languages, versions and official standards stay exact.
+5. DRAMATISE THE ANGLE, NEVER THE FACTS: every adjective must be defensible from the
    article - an internal model is "ichki", never "maxfiy". When the article itself has a
    vivid quote or striking fact, use it (translated) instead of inventing colour.
-
-Before returning JSON, silently rewrite any reader-facing sentence that contains an
-unexplained internal name or a word an ordinary school graduate would not understand.
-Keep the exact internal name only inside `technical`.
-
-## Namunalar
-
-Misol 1 - model relizi, raqamlar bor. Hook - kontrast; raqamlar maqoladan aynan olinadi
-va kicker foyda ko'ruvchini ega qiladi.
-Maqola: "Mistral AI released Mistral-Large-2 with 123B parameters and 128k context,
-scoring 84% on MMLU. Weights are on GitHub under Apache-2.0."
-Chiquvchi JSON:
-{{
-  "headline_uz": "Mistral-Large-2 chiqdi — to'liq ochiq",
-  "lead_uz": "Mistral jamoasi 123B parametrli Mistral-Large-2 modelini hammaga ochiq qilib qo'ydi.",
-  "body_1_uz": "Model 128k kontekst bilan ishlaydi va MMLU testida 84% olgan.",
-  "kicker_uz": "Dasturchilar uni o'z serverida bepul ishlata oladi.",
-  "evidence_level": "vendor_claim_only",
-  "technical": {{
-    "what_was_built": "An open-weight large language model.",
-    "architecture": "123B parameters, 128k context window",
-    "license": "Apache-2.0",
-    "repo_url": "https://github.com/mistralai/mistral-large-2",
-    "api_url": "", "install": "", "benchmarks": "84% on MMLU", "limitations": "",
-    "local_deployable": true
-  }}
-}}
-
-Misol 2 - mahsulot e'loni, raqam yo'q. Hook savol shaklida - va u halol: maqola aynan
-bepul tarif haqida. body_1_uz raqam to'qimaydi, mexanizmni oddiy tilda aytadi.
-Maqola: "Replit is opening a free tier of its agent, powered by GPT-5.6 Luna. The free
-tier runs planning and experimentation in the same workspace where code is written. No
-pricing or usage limits were published."
-Chiquvchi JSON:
-{{
-  "headline_uz": "Replit agenti endi bepulmi?",
-  "lead_uz": "Replit GPT-5.6 Luna asosidagi kodlash agentiga bepul tarif ochdi.",
-  "body_1_uz": "Reja tuzish ham, tajriba ham kod yoziladigan bitta oynada ketadi.",
-  "kicker_uz": "Hamma endi agentni pul to'lamay sinab ko'radi.",
-  "evidence_level": "vendor_claim_only",
-  "technical": {{
-    "what_was_built": "A free tier of a coding agent.",
-    "architecture": "", "license": "", "repo_url": "", "api_url": "", "install": "",
-    "benchmarks": "",
-    "limitations": "No pricing or usage limits were published.",
-    "local_deployable": false
-  }}
-}}
-
-Misol 3 - robototexnika, mexanizm nomlari tushirilgan. Maqola "cross-embodiment",
-"residual policy" va "Isaac Sim" deb ataydi; postda ularning biri ham yo'q (16-qoida).
-"Natijada..." bog'lovchisi kickerni ochadi va robotlarning o'zini ega qiladi.
-Maqola: "NVIDIA's COMPASS is an agent-based workflow for cross-embodiment robot
-navigation. It distils a pre-trained foundation model into a residual policy that adapts
-a robot to a new environment. It runs on Isaac Lab 3.0 and Isaac Sim 6.0."
-Chiquvchi JSON:
-{{
-  "headline_uz": "NVIDIA robotlarga yangi joyda yurishni o'rgatdi",
-  "lead_uz": "NVIDIA robotlarni notanish joyda yo'l topishga o'rgatadigan COMPASS'ni chiqardi.",
-  "body_1_uz": "Tizim tayyor sun'iy intellekt modelini olib, uni har bir robotga moslab beradi.",
-  "kicker_uz": "Natijada robotlar yangi joyga tezroq moslashadi.",
-  "evidence_level": "vendor_claim_only",
-  "technical": {{
-    "what_was_built": "An agent-based workflow for cross-embodiment robot navigation.",
-    "architecture": "Distils a pre-trained foundation model into a residual policy.",
-    "license": "", "repo_url": "", "api_url": "", "install": "",
-    "benchmarks": "", "limitations": "Runs on Isaac Lab 3.0 and Isaac Sim 6.0.",
-    "local_deployable": false
-  }}
-}}
+6. No empty hype ('inqilobiy', 'ulkan yutuq', 'hayratlanarli') and no markdown - plain
+   text only.
 
 ARTICLE
 Title: {title}
@@ -489,6 +354,9 @@ tushunadigan oddiy, og'zaki o'zbek tilida ayt.
   narsaning o'zi kerak.
 - Faqat o'zbek so'zlari: turkcha yoki ruscha so'z ishlatma ("atlatdi" emas -
   "chetlab o'tdi").
+- Har jumlaning egasi aniq bo'lsin: kompaniya, dastur yoki o'quvchi. Ot zanjiri
+  o'rniga fe'l ishlat; "-ayotganligini" kabi og'ir qo'shimchalarni tashla.
+- Og'zaki bog'lovchilar erkin: "Eng qizig'i...", "Natijada...".
 - kicker_uz kim endi nima qila olishini aytadi - egasiz "mumkin." bilan tugamaydi.
 - headline_uz hook bo'lib qoladi, 8 so'zgacha; lead_uz 18; body_1_uz 22; kicker_uz 12
   so'zgacha. Har maydon bitta jumla.
@@ -523,10 +391,7 @@ TRIAGE_SCHEMA: dict[str, Any] = {
 TRIAGE_PROMPT_TEMPLATE = """You are the first filter for an AI-engineering news digest read
 by working engineers. Return JSON only.
 
-The readers want engineering, not the business around it.
-
-Answer relevant=true if ANY ONE of these holds. They are independent — one is enough, and
-you do not need the others.
+Answer relevant=true if ANY ONE of these holds. They are independent — one is enough.
 
   A. The headline names a specific model, tool, library, protocol, API, dataset or product.
   B. It reports something shipped, released, opened, updated, deprecated or priced.
@@ -534,25 +399,16 @@ you do not need the others.
      detecting, mitigating, hardening, migrating, scaling — even when nothing is named.
   D. It reports a concrete technical finding, benchmark or measurement.
 
-Answer relevant=false only when none of A-D holds and the headline is about the business
-around the work: money raised, valuations, acquisitions or share deals; hiring, appointments
-or someone speaking at an event; partnerships and collaborations; policy positions, lobbying,
-regulation or court cases; opinion, speculation or "will X happen" questions; company
-retrospectives and anniversary posts; advertising and monetisation; consumer lifestyle
-gadgets.
+Answer relevant=false only when none of A-D holds and the headline is the business around
+the work: funding, acquisitions, hiring, events, partnerships, policy, opinion, marketing,
+consumer gadgets.
 
-On rule A, do not also ask whether the headline is "about" the named thing in the right way.
-A question about it, a complaint about it, or a report of a problem with it all count. That
-judgement belongs to the classification stage, which reads the article.
+On rule A, do not judge how the headline relates to the named thing — a question about it,
+a complaint about it, or a problem with it all count. That judgement
+belongs to the classification stage, which reads the article.
 
-  "Who is behind the stealth model Ox Alpha?"        A: names Ox Alpha       -> true
-  "Instinct's AI assistant raises privacy concerns"  A: names the assistant  -> true
-  "Disrupting a covert influence campaign"           C: an action taken      -> true
-  "Nvidia partners with a data centre developer"     none of A-D             -> false
-  "Hugging Face in talks to be acquired for $13B"    none of A-D             -> false
-
-If one of A-D holds but you cannot tell how significant it is, keep it: letting one extra
-through costs one call, while dropping a real release loses it for good.
+If one of A-D holds but you cannot tell how significant it is, keep it: one extra costs
+one call, a dropped release is lost for good.
 
 reason: at most 10 words, naming what decided it.
 
@@ -563,56 +419,48 @@ Source: {source}
 
 # Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3 for deep classification
 CLASSIFICATION_PROMPT_TEMPLATE = (
-    "You are a technical editor for an AI-engineering news digest read by "
-    "engineers and technical decision-makers.\n\n"
-    "Classify the article below. Return JSON only conforming to the schema.\n\n"
-    "## primary_topic — choose the SINGLE best fit\n\n"
-    "- frontier_models: A specific named model is released, updated, or given new capabilities. "
-    "Not a technique — that is new_approaches. "
-    "Not a tool that runs models — that is production_engineering.\n"
-    "- ai_agents: A system where an LLM takes actions through tools: agent frameworks, "
-    "tool calling, MCP/A2A, multi-agent orchestration, coding or browser agents. "
-    'Not any paper that merely uses the word "agent". '
-    "Not a tool release that happens to support agents — that is production_engineering.\n"
-    "- new_approaches: A new method, architecture, training technique, or inference technique. "
-    "This is the default for research papers. Not a named model release.\n"
-    "- speech_voice: Audio is an input or an output: STT, TTS, voice agents, diarization, "
-    "audio models.\n"
-    "- robotics: Physical embodiment: robots, control policies, embodied AI.\n"
-    "- fintech: Financial technology: payments, banking, lending, financial infrastructure.\n"
-    "- govtech: Government digital services and public administration systems.\n"
-    "- production_engineering: Infrastructure, serving, deployment, and developer tooling — "
-    "including releases and changelogs of such tools. "
-    "An Ollama, vLLM or LangGraph changelog belongs here even when it mentions agents or models.\n"
-    "- startups: A company shipping a deployed commercial product. "
-    "Not any article that mentions a company. "
-    "Not a model release from a large lab — that is frontier_models.\n"
-    "- technical_talks: A recorded presentation: conference talk, demo, technical video.\n"
-    "- safety_security: Alignment, jailbreaks, model or agent security, permissions, red-teaming. "
-    "Not general research into model behaviour — that is new_approaches.\n"
-    "- irrelevant: Everything else: executive appointments, funding rounds, partnerships, "
-    "marketing, opinion pieces, consumer gadgets, general business news.\n\n"
-    "Mandatory rule:\n"
-    "If the article contains no technical substance, primary_topic MUST be irrelevant.\n"
-    "Do not force a technical category onto a business story.\n\n"
-    "## maturity — what actually exists right now\n\n"
-    "- production_deployment: Running in a named real organisation, with reported results. "
-    'Not "could be deployed".\n'
-    "- live_product: A publicly usable product or API available today. "
-    "A changelog for an already-shipped tool is live_product, not production_deployment.\n"
-    "- reproducible_open_source: Code or weights are downloadable today at a working link.\n"
-    "- public_pilot: Limited preview, waitlist, or restricted access.\n"
-    "- announcement_only: Announced, but nothing usable has been released.\n"
-    "- paper_only: A research paper or preprint.\n\n"
-    "The paper_only / reproducible_open_source boundary:\n"
-    'A paper is paper_only even when it promises code, says "code will be released", or links '
-    "a repository that does not yet exist. reproducible_open_source requires a link that resolves "
-    "to real artifacts today. Excellent results do not raise maturity — only shipped artifacts do."
-    "\n\n"
-    "## Numeric dimensions\n\n"
+    "You are a technical editor for an AI-engineering news digest read by engineers and "
+    "technical decision-makers. Classify the article below. Return JSON only.\n\n"
+    "## primary_topic — the SINGLE best fit\n"
+    "- frontier_models: a named model released, updated or given new capabilities. Not a "
+    "technique — that is new_approaches. Not a tool that runs models — that is "
+    "production_engineering.\n"
+    "- ai_agents: an LLM acting through tools: agent frameworks, tool calling, MCP/A2A, "
+    "multi-agent orchestration, coding or browser agents. Not every paper that says "
+    '"agent"; not a tool release that merely supports agents — that is '
+    "production_engineering.\n"
+    "- new_approaches: a new method, architecture, training or inference technique. The "
+    "default for research papers. Not a named model release.\n"
+    "- speech_voice: audio as input or output: STT, TTS, voice agents, diarization.\n"
+    "- robotics: physical embodiment: robots, control policies, embodied AI.\n"
+    "- fintech: payments, banking, lending, financial infrastructure.\n"
+    "- govtech: government digital services and public administration.\n"
+    "- production_engineering: infrastructure, serving, deployment and developer tooling — "
+    "including their releases and changelogs. An Ollama, vLLM or LangGraph changelog "
+    "belongs here even when it mentions agents or models.\n"
+    "- startups: a company shipping a deployed commercial product. Not any article that "
+    "mentions a company; a model release from a large lab is frontier_models.\n"
+    "- technical_talks: a recorded presentation: conference talk, demo, technical video.\n"
+    "- safety_security: alignment, jailbreaks, model or agent security, permissions, "
+    "red-teaming. General research into model behaviour is new_approaches.\n"
+    "- irrelevant: everything else: appointments, funding, partnerships, marketing, "
+    "opinion, consumer gadgets, general business news.\n\n"
+    "No technical substance means primary_topic MUST be irrelevant. Never force a "
+    "technical category onto a business story.\n\n"
+    "## maturity — what exists right now\n"
+    "- production_deployment: running in a named real organisation, with reported "
+    'results. Not "could be deployed".\n'
+    "- live_product: a publicly usable product or API today. A changelog of an "
+    "already-shipped tool is live_product, not production_deployment.\n"
+    "- reproducible_open_source: code or weights downloadable today at a working link.\n"
+    "- public_pilot: limited preview, waitlist or restricted access.\n"
+    "- announcement_only: announced, nothing usable released.\n"
+    '- paper_only: a research paper or preprint — even when it says "code will be '
+    'released" or links a repository that does not resolve to real artifacts today. '
+    "Excellent results do not raise maturity; only shipped artifacts do.\n\n"
+    "## Numeric dimensions\n"
     "- novelty: 1 = rehash of known news, 10 = genuinely new capability or result\n"
-    "- evidence: 1 = vendor claim only, 10 = reproducible artifacts: weights, repo, "
-    "independent eval\n"
+    "- evidence: 1 = vendor claim only, 10 = reproducible artifacts\n"
     "- production_readiness: 1 = paper or announcement, 10 = deployed and documented\n\n"
     "ARTICLE\n"
     "Title: {title}\n"
