@@ -310,6 +310,24 @@ def test_republish_overrides_the_guard(db, digest_15, settings):
 
 
 @respx.mock
+def test_the_publish_lock_is_released_when_the_channel_is_not_configured(
+    db, digest_15, settings, fake_publish_lock
+):
+    """The lock is taken before the channel id is read, and the release lives in a `finally`
+    that only opens further down. Anything raising in between keeps the key for its whole
+    300s TTL, and the next publish of that digest is refused with items_sent 0.
+    """
+    settings.PUBLISHING_ENABLED = True
+    settings.TELEGRAM_BOT_TOKEN = "123456:ABC-DEF"
+    settings.TELEGRAM_CHANNEL_ID = ""
+
+    with pytest.raises(ValueError):
+        publish.publish_digest(digest_15)
+
+    assert f"news_radar:publish_lock:{digest_15.id}" not in fake_publish_lock.store
+
+
+@respx.mock
 def test_publish_digest_acquires_lock_and_rejects_concurrent_run(
     db, digest_15, settings, monkeypatch
 ):

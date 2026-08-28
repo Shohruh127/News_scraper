@@ -40,6 +40,48 @@ def _no_real_broker():
         app.conf.task_always_eager = previous
 
 
+class FakePublishLockRedis:
+    """In-memory stand-in for the client `publish_digest` opens to take its lock."""
+
+    def __init__(self):
+        self.store: dict[str, str] = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        return True
+
+    def get(self, key):
+        value = self.store.get(key)
+        return value.encode() if isinstance(value, str) else value
+
+    def delete(self, key):
+        return 1 if self.store.pop(key, None) is not None else 0
+
+
+@pytest.fixture(autouse=True)
+def fake_publish_lock(monkeypatch):
+    """Keep the publish lock out of the stack's Redis. Autouse, because one leak is enough.
+
+    `publish_digest` opens its own client with `redis.Redis.from_url(CELERY_BROKER_URL)`,
+    which `_no_real_broker` does not cover: that fixture stops Celery dispatch, and this
+    lock never goes through Celery. The URL resolves to redis://127.0.0.1:6380/0, the
+    stack's own Redis, and the key is `news_radar:publish_lock:<digest.id>` - a test
+    digest and a live digest with the same id are the same key.
+
+    Measured 2026-08-28: one suite run without `TELEGRAM_CHANNEL_ID` raised after the lock
+    was taken and left it for its full 300s TTL. Every publish test reusing that id then
+    skipped and reported `items_sent: 0`, which read as three unrelated broken tests. The
+    same collision can block the running stack from publishing.
+    """
+    import redis
+
+    fake = FakePublishLockRedis()
+    monkeypatch.setattr(redis.Redis, "from_url", staticmethod(lambda url: fake))
+    return fake
+
+
 @pytest.fixture
 def source(db):
     return Source.objects.create(

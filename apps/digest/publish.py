@@ -758,24 +758,40 @@ def publish_digest(
             "locked": True,
         }
 
-    channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
-    if not channel_id:
-        raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
+    def release_publish_lock():
+        """Give the lock back. Every exit path after acquisition has to call this."""
+        if lock_client and lock_acquired:
+            try:
+                lock_client.delete(f"news_radar:publish_lock:{digest.id}")
+            except Exception as exc:
+                log.debug("Error releasing publish lock: %s", exc)
 
-    items = list(
-        digest.items.select_related("article", "article__source")
-        .prefetch_related(
-            "secondary_articles",
-            "secondary_articles__source",
-            "article__analyses",
+    # Everything from here to the send loop's own `finally` runs while the lock is held,
+    # so a raise inside this window - an unset channel id, a database error, a client
+    # that cannot be built - has to hand the lock back before it leaves. Otherwise the
+    # key survives for its full 300s TTL and the next publish of this digest is refused.
+    try:
+        channel_id = getattr(settings, "TELEGRAM_CHANNEL_ID", "")
+        if not channel_id:
+            raise ValueError("TELEGRAM_CHANNEL_ID is not configured in settings")
+
+        items = list(
+            digest.items.select_related("article", "article__source")
+            .prefetch_related(
+                "secondary_articles",
+                "secondary_articles__source",
+                "article__analyses",
+            )
+            .order_by("position")
         )
-        .order_by("position")
-    )
 
-    close_client = False
-    if client is None:
-        client = httpx.Client(timeout=30)
-        close_client = True
+        close_client = False
+        if client is None:
+            client = httpx.Client(timeout=30)
+            close_client = True
+    except Exception:
+        release_publish_lock()
+        raise
 
     sent_count = 0
     skipped_count = 0
@@ -803,11 +819,7 @@ def publish_digest(
     finally:
         if close_client:
             client.close()
-        if lock_client and lock_acquired:
-            try:
-                lock_client.delete(f"news_radar:publish_lock:{digest.id}")
-            except Exception as exc:
-                log.debug("Error releasing publish lock: %s", exc)
+        release_publish_lock()
 
     # --- Status decision ---
     # The status now follows the items (refresh_digest_status), so the manual bulk path and
