@@ -6,11 +6,27 @@ to the signal or threshold has to break a test that states *why* the value was c
 """
 
 import pytest
+from django.conf import settings
 
 from apps.digest import clustering
 from apps.digest.models import Analysis, Article, Source
 
 pytestmark = pytest.mark.django_db
+
+
+def _text_similarity(a, b):
+    """One pair's Jaccard, the way `cluster_candidates` computes it over the whole set.
+
+    Production shingles each article once and compares the sets; these tests need the score
+    for a single pair to state *why* a threshold was chosen, so the pairwise form lives here
+    rather than in the module under test.
+    """
+    k = settings.CLUSTER_SHINGLE_SIZE
+    limit = settings.CLUSTER_TEXT_CHARS
+    return clustering._jaccard(
+        clustering._shingles(a.extracted_text or "", k, limit),
+        clustering._shingles(b.extracted_text or "", k, limit),
+    )
 
 
 # Two HuggingFace model cards for quantisation variants of one model: the boilerplate is
@@ -93,7 +109,7 @@ def test_near_identical_text_merges_even_within_one_source(src_a):
         src_a, "https://hf.co/Qwen/A95B", "Qwen3.8-2.4T", CARD.format(name="Qwen3.8-2.4T-A95B"), 2
     )
 
-    assert clustering.text_similarity(a1, a2) >= 0.80
+    assert _text_similarity(a1, a2) >= 0.80
 
     clusters = clustering.cluster_candidates([(a1, an1, 0.90), (a2, an2, 0.80)])
     assert len(clusters) == 1
@@ -108,7 +124,7 @@ def test_consecutive_releases_stay_separate(src_a):
     a1, an1 = make(src_a, "https://gh/r/v10", "ollama/ollama v0.32.10", RELEASE_A, 3)
     a2, an2 = make(src_a, "https://gh/r/v11", "ollama/ollama v0.32.11", RELEASE_B, 4)
 
-    assert clustering.text_similarity(a1, a2) < 0.80
+    assert _text_similarity(a1, a2) < 0.80
 
     clusters = clustering.cluster_candidates([(a1, an1, 0.90), (a2, an2, 0.85)])
     assert len(clusters) == 2, "two distinct releases must consume two slots"
@@ -130,7 +146,7 @@ def test_titles_alone_would_not_have_worked(src_a):
     )
     # Titles look almost the same while the content does not.
     assert title_sim > 0.80
-    assert clustering.text_similarity(a1, a2) < 0.20
+    assert _text_similarity(a1, a2) < 0.20
 
 
 def test_different_stories_across_sources_stay_separate(src_a, src_b):
@@ -149,5 +165,5 @@ def test_article_without_text_never_clusters(src_a):
     """Jaccard on an empty set is 0.0, not 1.0 — two empty articles must not merge."""
     a1, an1 = make(src_a, "https://a/x", "One", "", 9)
     a2, an2 = make(src_a, "https://a/y", "Two", "", 10)
-    assert clustering.text_similarity(a1, a2) == 0.0
+    assert _text_similarity(a1, a2) == 0.0
     assert len(clustering.cluster_candidates([(a1, an1, 0.5), (a2, an2, 0.4)])) == 2

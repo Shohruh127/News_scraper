@@ -42,16 +42,6 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
-def text_similarity(a: Article, b: Article) -> float:
-    """Text similarity between two articles. 0.0 when either has no usable text."""
-    k = settings.CLUSTER_SHINGLE_SIZE
-    limit = settings.CLUSTER_TEXT_CHARS
-    return _jaccard(
-        _shingles(a.extracted_text or "", k, limit),
-        _shingles(b.extracted_text or "", k, limit),
-    )
-
-
 def cluster_candidates(
     candidates: list[tuple[Article, Analysis, float]],
     threshold: float | None = None,

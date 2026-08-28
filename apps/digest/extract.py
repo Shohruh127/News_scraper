@@ -81,12 +81,6 @@ def fetch_text_and_image(url: str) -> tuple[str, str, str | None]:
     return text, "trafilatura", image_url
 
 
-def fetch_text(url: str) -> tuple[str, str]:
-    """Return (text, method). Raises ExtractionFailed when the page is unusable."""
-    text, method, _ = fetch_text_and_image(url)
-    return text, method
-
-
 def page_title(url: str) -> str | None:
     """Real title for html-listing items, whose slug placeholder is not publishable."""
     downloaded = trafilatura.fetch_url(url)

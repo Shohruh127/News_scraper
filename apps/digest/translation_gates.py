@@ -45,43 +45,16 @@ def extract_numbers(text: str) -> set[str]:
     return set(re.findall(r"\d+(?:\.\d+)*", _THOUSANDS.sub("", text)))
 
 
-#: Uzbek words for the small numbers, which prose spells out rather than writing as digits.
-#:
-#: Measured 2026-08-24: the English headline said "in 2 weeks" and the Uzbek correctly said
-#: "ikki hafta". The gate saw no "2", called it a lost number, and article 11 lost its
-#: translation permanently on a translation that was right.
-#:
-#: The list stops at ten on purpose. The defect this gate exists for is a *changed* precise
-#: figure — mimo-v2.5 turning 2.4 trillion into 2 trillion — and no one writes 2.4, 123 or 84%
-#: as words. Accepting a spelled-out small number costs none of that protection.
-UZBEK_SMALL_NUMERALS = {
-    "1": ("bir",),
-    "2": ("ikki",),
-    "3": ("uch",),
-    "4": ("to'rt", "tort", "toʻrt"),
-    "5": ("besh",),
-    "6": ("olti",),
-    "7": ("yetti", "etti"),
-    "8": ("sakkiz",),
-    "9": ("to'qqiz", "toqqiz", "toʻqqiz"),
-    "10": ("o'n", "on", "oʻn"),
-}
-
-
-def _carries_number(number: str, uz_numbers: set[str], uz_text: str) -> bool:
-    """True when the Uzbek carries `number` as digits or, for 1-10, as a word."""
-    if number in uz_numbers:
-        return True
-    lowered = uz_text.lower()
-    return any(re.search(rf"\b{word}\b", lowered) for word in UZBEK_SMALL_NUMERALS.get(number, ()))
-
-
 #: English words for the small numbers, for the reverse-direction gate.
 #:
-#: The mirror of UZBEK_SMALL_NUMERALS and needed for the same reason. Against an article the
-#: gate asks whether a number in the Uzbek exists in the source, and English prose writes
+#: Against an article the gate asks whether a number in the Uzbek exists in the source, and
+#: English prose writes
 #: "two weeks" where the Uzbek writes "2 hafta". Without this the gate rejects a correct
 #: post — the shape of defect that cost article 11 its translation on 2026-08-24.
+#:
+#: The list stops at ten on purpose. The defect this gate exists for is a *changed*
+#: precise figure — 2.4 trillion becoming 2 trillion — and no one writes 2.4, 123 or
+#: 84% as words. Accepting a spelled-out small number costs none of that protection.
 ENGLISH_SMALL_NUMERALS = {
     "1": ("one",),
     "2": ("two",),
