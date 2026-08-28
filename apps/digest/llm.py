@@ -204,38 +204,29 @@ def shape_for(topic: str | None) -> str:
 UZ_BLOCKS: dict[str, str] = {
     SHAPE_GENERAL: """Bu postni PM, dasturchi va texnik bo'lmagan rahbar bir xil tushunsin.
 Lead'ni shu tartibda tanla, birinchi mos kelgani g'olib: 1) nomi bor narsa chiqdi yoki
-o'zgardi - kim chiqargani bilan; 2) o'lchangan natija - kim o'lchagani bilan; 3) qoida
-yoki cheklov - kimga tegishli ekani bilan. Faqat e'lon bo'lsa, buni ochiq ayt.
-  lead_uz 18 so'zdan, body_1_uz 22 so'zdan, kicker_uz 12 so'zdan oshmasin.""",
-    "release": """Bu - yangi model yoki vosita. Nima chiqqani va nimaga kerakligini ayt;
-reja yoki va'dani tayyor mahsulot deb yozma.
-  lead_uz    kim nimani chiqardi va u nima uchun kerak (<= 18 so'z)
-  body_1_uz  eng muhim raqam, imkoniyat yoki cheklov (<= 22 so'z)
-  kicker_uz  manbada aytilgan foyda; bo'lmasa bo'sh (<= 12 so'z)""",
-    "agent": """Bu - topshiriqni o'zi bajaradigan AI dastur yoki boshqa dasturga ulanish.
-  lead_uz    nima yaratildi va u qanday vazifani bajaradi (<= 18 so'z)
-  body_1_uz  qanday ishlashi; atama faqat qisqa izoh bilan (<= 22 so'z)
-  kicker_uz  manbada ko'rsatilgan amaliy foyda; bo'lmasa bo'sh (<= 12 so'z)""",
-    "risk": """Bu - zaiflik yoki undan himoyalanish usuli. Xavfni oddiy tilda ayt.
-QEMU/KVM, libslirp va 0-day kabi ichki nomlar postga emas, technicalga; postda
-oddiyroq umumiy ibora ishlat.
-  lead_uz    xavf nima va kimga ta'sir qiladi (<= 18 so'z)
-  body_1_uz  hujumchi nimaga erishadi yoki xavf qachon tug'iladi (<= 22 so'z)
-  kicker_uz  manba tavsiya qilgan chora; bo'lmasa bo'sh (<= 12 so'z)""",
-    "research": """Bu - tadqiqot natijasi yoki da'vo. Usul nomini emas, natija nimani
-ko'rsatganini ayt; va'da qilingan kodni tayyor vosita deb yozma.
-  lead_uz    kim nimani aniqladi yoki da'vo qildi (<= 18 so'z)
-  body_1_uz  natija qaysi test yoki taqqoslashga tayanadi (<= 22 so'z)
-  kicker_uz  manbada ko'rsatilgan ta'sir; bo'lmasa bo'sh (<= 12 so'z)""",
-    "product": """Bu - kompaniya mahsuloti yoki xizmatidagi o'zgarish. U nima qilishi va
-bugun bor-yo'qligini ayt.
-  lead_uz    kim nimani ishga tushirdi va u nima qiladi (<= 18 so'z)
-  body_1_uz  mavjudlik, narx yoki limit - bitta fakt (<= 22 so'z)
-  kicker_uz  manbada ko'rsatilgan foydalanuvchi; bo'lmasa bo'sh (<= 12 so'z)""",
-    "robotics": """Bu - haqiqiy dunyoda ishlaydigan robot yoki jismoniy tizim.
-  lead_uz    robot yoki tizim nima qila oladi (<= 18 so'z)
-  body_1_uz  eng muhim tezlik, yuk, vaqt yoki sinov sharoiti (<= 22 so'z)
-  kicker_uz  manbada ko'rsatilgan joriy foyda; bo'lmasa bo'sh (<= 12 so'z)""",
+o'zgardi - kim chiqargani bilan; 2) o'lchangan natija; 3) qoida yoki cheklov. Faqat e'lon
+bo'lsa, buni ochiq ayt. lead_uz 18 so'zdan, body_1_uz 22 so'zdan, kicker_uz 12 so'zdan
+oshmasin.""",
+    "release": """Bu - yangi model yoki vosita: nima chiqdi va nimaga kerak; va'dani tayyor
+mahsulot deb yozma. lead_uz kim nimani chiqardi (<= 18 so'z); body_1_uz eng muhim raqam,
+imkoniyat yoki cheklov (<= 22 so'z); kicker_uz manbadagi foyda, bo'lmasa bo'sh (<= 12 so'z).""",
+    "agent": """Bu - topshiriqni o'zi bajaradigan AI dastur yoki ulanish. lead_uz nima
+yaratildi va qanday vazifa bajaradi (<= 18 so'z); body_1_uz qanday ishlashi (<= 22 so'z);
+kicker_uz manbadagi amaliy foyda, bo'lmasa bo'sh (<= 12 so'z).""",
+    "risk": """Bu - zaiflik yoki himoya usuli; xavfni oddiy tilda ayt. QEMU/KVM, libslirp va
+0-day kabi ichki nomlar postga emas, technicalga; postda oddiyroq umumiy ibora ishlat.
+lead_uz xavf nima va kimga (<= 18 so'z); body_1_uz hujumchi nimaga erishadi (<= 22 so'z);
+kicker_uz manba tavsiya qilgan chora, bo'lmasa bo'sh (<= 12 so'z).""",
+    "research": """Bu - tadqiqot natijasi yoki da'vo: usul nomini emas, natijani ayt; va'da
+qilingan kodni tayyor vosita deb yozma. lead_uz kim nimani aniqladi (<= 18 so'z); body_1_uz
+natija qaysi testga tayanadi (<= 22 so'z); kicker_uz manbadagi ta'sir, bo'lmasa bo'sh
+(<= 12 so'z).""",
+    "product": """Bu - kompaniya mahsuloti yoki xizmatidagi o'zgarish: nima qilishi va bugun
+bor-yo'qligi. lead_uz kim nimani ishga tushirdi (<= 18 so'z); body_1_uz mavjudlik, narx yoki
+limit (<= 22 so'z); kicker_uz manbadagi foydalanuvchi, bo'lmasa bo'sh (<= 12 so'z).""",
+    "robotics": """Bu - haqiqiy dunyoda ishlaydigan robot yoki jismoniy tizim. lead_uz robot
+nima qila oladi (<= 18 so'z); body_1_uz eng muhim tezlik, yuk yoki sinov sharoiti
+(<= 22 so'z); kicker_uz manbadagi joriy foyda, bo'lmasa bo'sh (<= 12 so'z).""",
 }
 
 
@@ -271,19 +262,9 @@ EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
 
 EDITORIAL_UZ_PROMPT = """You are the writer behind a popular Telegram tech channel in
 Uzbekistan. Your readers - PMs, engineers, technical leaders, non-technical leaders and
-curious friends - open it for fast, simple, engaging tech news, and each must understand
-the post on the first read. Write short, warm, conversational Uzbek (Latin script). Give
-them the fact, not the announcement.
-
-The four reader-facing fields are written in UZBEK (Latin script). The `technical` object
-is copied from the article and stays in ENGLISH for internal use only; it is not published
-separately. If a benchmark, limitation or availability fact matters to the reader, put it
-in an Uzbek field; otherwise omit it. Return JSON only.
-
-## Shape
-A hook headline plus up to THREE reader-facing sentences: lead_uz, body_1_uz, kicker_uz.
-One sentence per non-empty field; aim at 10-15 words, the caps below are hard limits.
-`kicker_uz` may be an empty string when the article gives nothing worth closing on.
+curious friends - open it for fast, simple tech news, and each must understand the post
+on the first read. Write short, warm, conversational Uzbek (Latin script). Give them the
+fact, not the announcement. Return JSON only.
 
 ## What this story needs
 The block below decides the content of the three sentences only. It does not change
@@ -293,41 +274,35 @@ kind of story. Where the block gives a word count, that count is the limit.
 {block}
 
 ## Output fields
+One sentence per non-empty field, aiming at 10-15 words; the caps are hard limits.
 - headline_uz: a HOOK, AT MOST 8 UZBEK WORDS - a question, a contrast or the most
-  surprising true fact from the article. No final full stop; a question mark is welcome.
-  The hook may tease, but it must not promise anything the article does not say. Only the
-  first word and proper nouns are capitalised; English Title Case is wrong.
-- lead_uz: one complete Uzbek sentence with a finite verb, AT MOST 18 UZBEK WORDS. Who
-  did what. It must not repeat the headline.
-- body_1_uz: one Uzbek sentence, AT MOST 22 UZBEK WORDS. One fact, not a list; never
-  restate the lead.
-- kicker_uz: one short Uzbek sentence, AT MOST 12 UZBEK WORDS, or an empty string. Close
-  on the coolest true thing: a practical impact, or the article's most vivid fact or
+  surprising true fact. No final full stop; a question mark is welcome. The hook may
+  tease, but it must not promise anything the article does not say. Only the first word
+  and proper nouns are capitalised.
+- lead_uz: who did what, AT MOST 18 UZBEK WORDS. Must not repeat the headline.
+- body_1_uz: one more fact, AT MOST 22 UZBEK WORDS. Never restates the lead.
+- kicker_uz: AT MOST 12 UZBEK WORDS, or "" when the article gives nothing worth closing
+  on. The coolest true thing: a practical impact, or the article's most vivid fact or
   quote, translated.
 - evidence_level: 'vendor_claim_only' or 'multiple_evidence'
-- technical: an object with what_was_built, architecture, license, repo_url, api_url,
-  install, benchmarks, limitations, local_deployable. Copy each value VERBATIM from the
-  article, in English. If the article does not state it, return an empty string - EXCEPT
-  local_deployable, which is a boolean: return false when the article does not say the
-  thing can be run locally.
+- technical: what_was_built, architecture, license, repo_url, api_url, install,
+  benchmarks, limitations, local_deployable - copied VERBATIM from the article, in
+  ENGLISH, for internal use; '' when the article does not state it - EXCEPT
+  local_deployable, which is a boolean: false unless the article says it runs locally.
 
 ## Rules
 1. Every number, version, price and claim status stays exactly as the article states it.
-   NEVER invent a number, a URL, a licence name or an install command - these are
-   published as live links.
-2. Never invent advice, benefits or a recommendation. Only include one the source makes.
-3. Write for a smart 18-year-old who has never worked in technology: every sentence must
-   be understandable without Google. Explain an essential term in familiar Uzbek; when a
-   mechanism term is not essential and the reader understands the story without it, LEAVE
-   IT OUT - it stays in `technical`.
-4. Do NOT put raw internal implementation, library, protocol, infrastructure or exploit
-   names in reader-facing fields. Company names, product names, model names, APIs,
-   programming languages, versions and official standards stay exact.
+   NEVER invent a number, a URL, a licence name or an install command.
+2. Never invent advice or benefits. Only include a recommendation the source makes.
+3. Write for a smart 18-year-old who has never worked in technology: understandable
+   without Google. Explain an essential term simply; drop a non-essential mechanism
+   term - it stays in `technical`.
+4. No raw internal implementation, library, protocol or exploit names in reader-facing
+   fields. Company, product and model names, versions and standards stay exact.
 5. DRAMATISE THE ANGLE, NEVER THE FACTS: every adjective must be defensible from the
-   article - an internal model is "ichki", never "maxfiy". When the article itself has a
-   vivid quote or striking fact, use it (translated) instead of inventing colour.
-6. No empty hype ('inqilobiy', 'ulkan yutuq', 'hayratlanarli') and no markdown - plain
-   text only.
+   article - an internal model is "ichki", never "maxfiy". Prefer the article's own
+   vivid quote to invented colour.
+6. No empty hype ('inqilobiy', 'ulkan yutuq', 'hayratlanarli'); plain text, no markdown.
 
 ARTICLE
 Title: {title}
@@ -462,6 +437,7 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
     "- novelty: 1 = rehash of known news, 10 = genuinely new capability or result\n"
     "- evidence: 1 = vendor claim only, 10 = reproducible artifacts\n"
     "- production_readiness: 1 = paper or announcement, 10 = deployed and documented\n\n"
+    "reason: at most 10 words, naming what decided it. Always include it.\n\n"
     "ARTICLE\n"
     "Title: {title}\n"
     "Source: {source}\n"
