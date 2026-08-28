@@ -3,12 +3,13 @@ set -eu
 . "$(dirname "$0")/common.sh"
 
 SKIP_BACKUP=false
-ALLOW_PUBLISHING=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --skip-backup) SKIP_BACKUP=true ;;
-        --allow-publishing) ALLOW_PUBLISHING=true ;;
-        *) fail "Usage: $0 [--skip-backup] [--allow-publishing]" ;;
+        # Obsolete since preflight left the deploy (2026-08-28). Accepted and ignored so
+        # the command operators have in their chat history keeps deploying.
+        --allow-publishing) printf 'note: --allow-publishing is obsolete; ignored.\n' ;;
+        *) fail "Usage: $0 [--skip-backup]" ;;
     esac
     shift
 done
@@ -21,11 +22,10 @@ if [ "$SKIP_BACKUP" = false ] && [ -n "$(compose ps -q postgres)" ]; then
 fi
 
 compose build
-if [ "$ALLOW_PUBLISHING" = true ]; then
-    "$(dirname "$0")/preflight.sh" --allow-publishing
-else
-    "$(dirname "$0")/preflight.sh"
-fi
+# Preflight left the deploy path on 2026-08-28 by the operator's decision: the release
+# stays lean, and a configuration error now surfaces at runtime instead of blocking the
+# deploy. preflight.sh remains a hand tool, run after a build:
+#   docker compose build && sh ops/linux/preflight.sh
 compose up -d postgres redis
 compose up -d
 

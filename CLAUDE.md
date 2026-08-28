@@ -32,7 +32,7 @@ All operational work happens on the server, in the project checkout. Local runs 
 your own changes, never a step to hand to the operator. Deploy sequence:
 
 ```bash
-sh ops/linux/update.sh --allow-publishing
+sh ops/linux/update.sh
 ```
 
 That is the whole sequence: `update.sh` is `git pull --ff-only` followed by `deploy.sh`,
@@ -49,14 +49,16 @@ trims `django_celery_results`. `prune_schedule` replaces it: it deletes rows who
 starts with `digest.` and whose name the current schedule does not have, so Celery's own
 entry is never a candidate.
 
-`deploy.sh` runs: clean-checkout check → compose config → DB backup → build → preflight →
+`deploy.sh` runs: clean-checkout check → compose config → DB backup → build →
 `up -d` → health wait → `seed_sources` → `prune_schedule` → `restart beat` →
 `runtime_health`. There is no separate migrate step: the one-shot `migrate` service runs
 first inside `up -d`, and every app service waits on it via `service_completed_successfully`,
-so no worker can start against an out-of-date schema. Preflight sits before all of that
-deliberately — a configuration error is found before the database is touched, and a failure
-leaves the running stack untouched. The two management commands sit after the health gate
-because both need `web` answering, and both are idempotent.
+so no worker can start against an out-of-date schema. Preflight left the deploy path on
+2026-08-28 by the operator's decision — the release stays lean, and a configuration error
+now surfaces at runtime rather than blocking the deploy. `deploy.sh` still accepts
+`--allow-publishing` and ignores it, so the command in the operators' chat history keeps
+working. The two management commands sit after the health gate because both need `web`
+answering, and both are idempotent.
 
 `seed_sources` runs on every deploy, so it must not overwrite an operational decision.
 `enabled` is applied through `create_defaults` — set when a source is first created, never
@@ -317,13 +319,15 @@ measures the gate on the population that reaches classification today.
 deployment path; `NEWS_RADAR_PROJECT_DIR` overrides it. The systemd units keep `/opt/news-radar`
 as a placeholder that `install-systemd.sh` substitutes at install time.
 
-`deploy.sh` executes `backup.sh` and `preflight.sh` directly, so every `ops/linux/*.sh` must be
+`deploy.sh` executes `backup.sh` directly, so every `ops/linux/*.sh` must be
 mode `100755` in git — a fresh checkout of a 644 script fails with `Permission denied`.
 
-`preflight.sh` runs its checks inside the freshly built image via `docker compose run`, which is
-why it must come after `compose build` and cannot be run standalone against a stale image. It
-bootstraps Django itself (`DJANGO_SETTINGS_MODULE` + `django.setup()`); `python -` is not
-`manage.py`. `--allow-publishing` downgrades only the kill-switch check to a warning.
+`preflight.sh` is a hand tool since 2026-08-28; the deploy no longer calls it. It runs its
+checks inside the freshly built image via `docker compose run`, which is why it must follow a
+`compose build` (`docker compose build && sh ops/linux/preflight.sh`) and cannot be run against
+a stale image. It bootstraps Django itself (`DJANGO_SETTINGS_MODULE` + `django.setup()`);
+`python -` is not `manage.py`. `--allow-publishing` downgrades only the kill-switch check to a
+warning.
 
 ## Configuration
 

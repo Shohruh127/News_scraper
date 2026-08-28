@@ -8,6 +8,6 @@ set -eu
 #
 # The pull is --ff-only on purpose: a checkout that diverged from its upstream stops
 # here with git's own message instead of quietly merging on a production box. Every
-# flag is passed through to deploy.sh (--allow-publishing, --skip-backup).
+# flag is passed through to deploy.sh (--skip-backup).
 git pull --ff-only
 exec sh "$PROJECT_DIR/ops/linux/deploy.sh" "$@"
