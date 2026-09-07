@@ -35,7 +35,7 @@ def test_every_configured_provider_has_its_credentials():
         "CLASSIFIER_PROVIDER": settings.CLASSIFIER_PROVIDER,
     }
     for name, provider in stages.items():
-        assert provider in ("gateway", "mimo"), f"{name}={provider!r} is not a provider"
+        assert provider in ("gateway", "mimo", "gemini"), f"{name}={provider!r} is not a provider"
 
     in_use = set(stages.values())
     if "gateway" in in_use:
@@ -44,6 +44,9 @@ def test_every_configured_provider_has_its_credentials():
     if "mimo" in in_use:
         assert settings.MIMO_BASE_URL, "a stage runs on mimo but MIMO_BASE_URL is unset"
         assert settings.MIMO_API_KEY, "a stage runs on mimo but MIMO_API_KEY is unset"
+    if "gemini" in in_use:
+        assert settings.GEMINI_BASE_URL, "a stage runs on gemini but GEMINI_BASE_URL is unset"
+        assert settings.GEMINI_API_KEY, "a stage runs on gemini but GEMINI_API_KEY is unset"
 
 
 def test_llm_concurrency_matches_measurement():
@@ -129,15 +132,10 @@ def test_editorial_budget_clears_the_reasoning_floor():
     assert settings.EDITORIAL_NUM_PREDICT >= 3000
 
 
-def test_link_preview_defaults_to_on_when_unset(monkeypatch):
-    """Link preview is the approved image delivery mechanism (Option A, 2026-08-18).
+def test_link_previews_are_disabled():
+    from config import settings as config_settings
 
-    Guards against someone disabling it by accident in a refactor.
-    """
-    import environ
-
-    monkeypatch.delenv("TELEGRAM_LINK_PREVIEW", raising=False)
-    assert environ.Env(TELEGRAM_LINK_PREVIEW=(bool, True))("TELEGRAM_LINK_PREVIEW") is True
+    assert config_settings.TELEGRAM_LINK_PREVIEW is False
 
 
 def test_post_format_v2_defaults_to_off_when_unset(monkeypatch):

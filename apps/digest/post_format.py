@@ -1,11 +1,7 @@
-"""Pure post-format layer (v3).
+"""Pure post formatting for new dayjest posts and legacy three-sentence posts.
 
-Renders clean Uzbek prose: a bold headline label, exactly three sentences, no bullets, one
-inline link, a closing topic hashtag, and a character guard.
-
-The link anchor is positional, not chosen by the model: it is the tail of the lead's
-first sentence, taking the preceding word too when that tail is a light verb. Uzbek is
-SOV, so the predicate already lands there — which is why this needs no verb list.
+HTML and source-backed links are assembled in code. New dayjests preserve paragraphs
+and feature lists; the legacy renderer remains for already stored editorial rows.
 """
 
 import logging
@@ -17,6 +13,15 @@ from urllib.parse import urlparse
 from .models import Topic
 
 log = logging.getLogger(__name__)
+
+PLAIN_PHOTO_STYLE = "plain_photo_v1"
+#: Kept as a set: `post_style` is matched against it in three modules, and a second
+#: style would be added here rather than by widening three equality checks.
+DAYJEST_STYLES = {PLAIN_PHOTO_STYLE}
+#: A Telegram photo caption holds 1024 characters. These are the hard ceiling; the
+#: DAYJEST_MAX_* settings may tighten them and cannot raise them.
+DAYJEST_MAX_CHARS = 900
+DAYJEST_MAX_SENTENCES = 7
 
 TOPIC_TAGS: dict[Topic, str] = {
     Topic.FRONTIER_MODELS: "#modellar",
@@ -172,6 +177,8 @@ def linkify_lead(lead: str, url: str, anchor: str = "") -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError(f"Invalid URL scheme or missing host: {url}")
+    if parsed.hostname in {"t.me", "telegram.me"} and parsed.path.rstrip("/") == "/iv":
+        raise ValueError("Instant View links are not allowed; use the original article URL")
 
     escaped_url = html_escape(url, quote=True)
     first_sent_text, first_sent_full, rest = split_first_sentence(lead)
@@ -225,6 +232,12 @@ def visible_length(html_text: str) -> int:
     """Calculate character count of text as seen by readers (tags stripped, entities unescaped)."""
     plain = _TAG_STRIP_RE.sub("", html_text)
     return len(html_unescape(plain))
+
+
+def telegram_length(html_text: str) -> int:
+    """Conservative UTF-16 length after entity parsing, including emoji surrogate pairs."""
+    plain = html_unescape(_TAG_STRIP_RE.sub("", html_text))
+    return len(plain.encode("utf-16-le")) // 2
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZА-ЯЁO‘OʻG‘Gʻ\d\W])")
@@ -433,4 +446,90 @@ def render_item_post_v2(item_data: dict, max_chars: int = 500, max_sentences: in
     if violations:
         raise ValueError(f"Rendered post contract violation: {'; '.join(violations)}")
 
+    return rendered
+
+
+_SOURCE_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+#: Bullet markers the model actually emits, folded onto one. The class is written as a
+#: range from U+2010 to U+2015 so every dash Unicode offers is covered: the em dash was
+#: missing before, and an em-dash list slipped past the item-count check entirely.
+_BULLET_MARKER_RE = re.compile(r"(?m)^[^\S\r\n]*[•*‐-―\-][^\S\r\n]+")
+_NORMALISED_BULLET_RE = re.compile(r"(?m)^– ")
+
+
+def render_dayjest_post(
+    item_data: dict,
+    max_chars: int = DAYJEST_MAX_CHARS,
+    max_sentences: int = DAYJEST_MAX_SENTENCES,
+) -> str:
+    """Render a plain-photo post without silently removing facts or access restrictions.
+
+    One style, because one style exists. This renderer shipped with a second `dayjest_v1`
+    shape - a 14-word headline, 3-5 bullets, a two-link footer, a topic hashtag, a
+    4096-character ceiling - that nothing ever wrote: both producers in `llm.py` stamp
+    `plain_photo_v1` unconditionally, and the field is new, so no stored row carries the
+    other value either. Five of this renderer's tests exercised that dead half while the
+    half that runs had three, and the model was asked for `links_uz` in the schema only
+    for the renderer to refuse any non-empty value - a field generated to be discarded.
+
+    The caller still passes `max_chars`/`max_sentences`, so the operator's settings can
+    tighten the post; they cannot loosen it past what a Telegram photo caption holds.
+    """
+    fields = {
+        field: strip_markdown_formatting(item_data.get(field) or "").strip()
+        for field in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz")
+    }
+    headline, lead, body, kicker = fields.values()
+    max_chars = min(max_chars, DAYJEST_MAX_CHARS)
+    max_sentences = min(max_sentences, DAYJEST_MAX_SENTENCES)
+
+    if not lead:
+        raise ValueError("Cannot render dayjest: lead_uz is empty")
+    # Refused, not silently dropped. `parts` used to omit the bold line for a falsy
+    # headline, so a rewrite that returned "" shipped a caption with no headline at all.
+    if not headline:
+        raise ValueError("Cannot render dayjest: headline_uz is empty")
+    if "\n" in headline or len(headline.split()) > 10:
+        raise ValueError("Dayjest headline must be one line, at most 10 words")
+    if "\n" in lead or len(split_sentences(lead)) > 2:
+        raise ValueError("Dayjest lead must be one paragraph, at most 2 sentences")
+    if "\n" in kicker or len(split_sentences(kicker)) > 1:
+        raise ValueError("Dayjest kicker must be one paragraph, at most 1 sentence")
+    for value in fields.values():
+        if _SOURCE_URL_RE.search(value):
+            raise ValueError("Reader-facing URLs are not allowed; the source is linked in the lead")
+
+    # Standardise bullet markers, keeping the paragraph breaks and every word of every
+    # item. The leading class is horizontal whitespace only: `\s*` matches newlines, and
+    # in MULTILINE `^` also matches at the start of a blank line, so the match began on
+    # the blank separator and ate it. A prose paragraph opening with a dash was welded
+    # onto the paragraph above and counted as a one-item list, which fails the band below
+    # and discarded the article; a genuine list silently lost the blank line before it.
+    body = _BULLET_MARKER_RE.sub("– ", body)
+    bullets = _NORMALISED_BULLET_RE.findall(body)
+    # A single marked line is not a list; it is one sentence the model happened to
+    # bullet. Unmarking it is the same mechanical normalisation strip_markdown_formatting
+    # performs, and it costs nothing. Raising discarded a whole article over a dash.
+    if len(bullets) == 1:
+        body = _NORMALISED_BULLET_RE.sub("", body)
+        bullets = []
+    if bullets and not 2 <= len(bullets) <= 3:
+        raise ValueError("Dayjest lists must contain 2-3 items")
+    if not bullets and len([p for p in body.split("\n\n") if p.strip()]) > 3:
+        raise ValueError("Dayjest body must contain at most 3 paragraphs")
+
+    parts = [f"<b>{html_escape(headline)}</b>", linkify_lead(lead, item_data.get("url", ""))]
+    if body:
+        parts.append(html_escape(body))
+    if kicker:
+        parts.append(html_escape(kicker))
+
+    rendered = "\n\n".join(parts)
+    if count_sentences(rendered) > max_sentences:
+        raise ValueError(f"Dayjest exceeds {max_sentences} sentences/list items")
+    if telegram_length(rendered) > max_chars:
+        raise ValueError(
+            f"Dayjest exceeds {max_chars} characters; shorten without losing qualifiers"
+        )
     return rendered

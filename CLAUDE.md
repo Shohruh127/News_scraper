@@ -133,36 +133,58 @@ that reposts the five that worked.
 
 ## The post
 
-```
-<b>headline_uz</b>      label, <= 8 words, not a sentence
-lead_uz                 1 sentence, exactly one <a> on the tail, <= 18 English words
-body_1_uz               1 sentence, the most specific verifiable fact, <= 20 English words
-kicker_uz               1 sentence, <= 8 words
-#tag                    one approved topic hashtag
-```
+The owner rejected both earlier A/B styles and clarified the audience on 2026-09-07:
+ordinary people, including school students. Specialists read the linked article for detail.
+New editorial rows use `post_style: plain_photo_v1`.
 
-`POST_MAX_SENTENCES` is 3 and counts only the three sentence fields; the headline and hashtag
-lines are labels. `POST_MAX_CHARS` is 500 and is a runaway guard only — structure bounds the
-length, and the binding limit is Telegram's 1024-character cap on a photo caption.
+`apps/digest/editorial_prompts.py` asks for one clear development and at most two useful
+supporting facts. Omit nonessential technical mechanisms, benchmark tables and API lists;
+do not turn the caption into a glossary. Selected facts keep their qualifications,
+attribution and exact numbers. The rewrite may remove secondary facts; it must not invent
+actors, change a test into a release, or remove an essential limitation.
 
-**`body_2` was removed on 2026-08-24.** It was always the first thing trimmed, and the model
-could not tell it apart from `body_1` — in a live test its "cause or context" sentence turned up
-in `body_1` instead. Generating a field in order to discard it costs output tokens on two calls.
+- A short factual headline, up to 10 words, rendered bold.
+- `lead_uz`: one or two short sentences naming the main product and what happened.
+- `body_1_uz`: short prose, or two to three short bullets only when useful.
+- `kicker_uz`: one essential access condition or limitation, or empty.
+- Exactly one link: the original article URL, attached to a word in the lead by position.
+- No hashtag and no links footer.
 
-**Length is capped in English words, never in characters against another channel.** The word
-caps sit on `lead_en` and `body_1_en`, where an English word count means something. Uzbek
-agglutinates — it folds prepositions into suffixes — so a character or word budget calibrated on
-the Russian reference channel measures nothing here. That mistake was made once and reversed.
+`body_1_uz` and `kicker_uz` may be emptied by the rewrite; **`headline_uz` and `lead_uz`
+never may.** The merge in `_simplify_editorial_uz` guarded only `lead_uz`, and the renderer
+omitted the bold line for a falsy headline rather than refusing, so a rewrite that returned
+`""` shipped a caption with no headline. Both halves now refuse it.
 
-**Bold is positional.** The renderer wraps the headline line and nothing else; the model
-returns plain text for every field and `strip_markdown_formatting` removes any markup it emits
-anyway. Bold was removed once because the model applied it to the wrong words — the same
-failure the link anchor had, and the same fix: take the choice away from the model.
+Target 350–700 characters, maximum 900; seven sentences/list items at most.
+`DAYJEST_MAX_CHARS` / `DAYJEST_MAX_SENTENCES` may tighten these guards and cannot raise
+them — a photo caption is capped at 1024 by Telegram, so a larger setting would only build
+a post the API rejects.
 
-The headline and the kicker are **never trimmed**, and `body_1` is the only trimmable field.
-They are the two elements the reference channel (`@naebnet`, measured 2026-08-24: a closing
-sentence in 100% of posts) always carries and this channel had lost. Take from that channel its
-*structure*, not its lengths.
+**There is one style, and `render_dayjest_post` renders only it.** The renderer shipped
+with a second `dayjest_v1` shape — 14-word headline, 3–5 bullets, a two-link footer, a
+topic hashtag, a 4096-character ceiling — that no producer ever wrote: both writers in
+`llm.py` stamp `plain_photo_v1`. Five of the renderer's tests exercised that dead half
+while the half that runs had three, and the schema asked the model for a `links_uz` field
+the renderer then refused. All of it was removed on 2026-09-07.
+
+New posts are sent with `sendPhoto` and the caption; they never fall back to a
+text/preview card. **If no article photo can be found the item is marked `FAILED`, not
+left pending.** Leaving it pending was measured to stall everything behind it: the drip
+selects the lowest position still `PENDING` or `SENDING`, and `resolve_photo_url` is
+deterministic, so five consecutive ticks all returned the same item and nothing was sent.
+`publish_roundup` never fires while an item is unfinished, and digests are selected FIFO
+by `composed_at`, so every later edition queues behind it too. A `FAILED` item is stepped
+past, reaches the operator through the admin alert, and can be republished once
+`Article.meta["image_url"]` holds a photo.
+
+All sendMessage and editMessageText helpers disable link previews even if an old environment
+setting asks to enable them. Explicit Telegram Instant View URLs are rejected by the inline
+link renderer. Original article links are preserved; Telegram client behavior after a reader
+opens a link is outside the bot's control.
+
+Already stored legacy posts keep their renderer for compatibility; they are not regenerated
+or reposted automatically. Existing legacy text paths also have previews disabled.
+Source text is data, never instructions. Mechanical gates do not prove semantic correctness.
 
 ## django_celery_beat does not prune
 
@@ -188,7 +210,7 @@ the gateway fronts the same local GPU models — `fast` is the 8B, `smart` the 3
 client bought nothing, and its model tags had quietly become the tier vocabulary for providers
 that never spoke to it.
 
-Stages route independently, each accepting `gateway | mimo`:
+Stages route independently, each accepting `gateway | mimo | gemini`:
 
 | Setting | Stage | Default |
 |---|---|---|
@@ -197,10 +219,22 @@ Stages route independently, each accepting `gateway | mimo`:
 | `CLASSIFIER_PROVIDER` | triage + classification | `gateway` |
 
 - **The tier is said out loud.** `llm.TIER_FAST` / `llm.TIER_DEEP` are the only way a caller
-  names a speed tier; `_model_for(provider, tier)` turns that into `fast`/`smart` for the gateway
-  and `MIMO_FAST_MODEL`/`MIMO_DEEP_MODEL` for MiMo. Before this, passing the string
-  `gemma4:latest` was how every provider was told "fast" — which is why the Ollama settings had
-  to stay set even when nothing used them.
+  names a speed tier; `_model_for(provider, tier)` turns that into `fast`/`smart` for the gateway,
+  `MIMO_FAST_MODEL`/`MIMO_DEEP_MODEL` for MiMo and `GEMINI_FAST_MODEL`/`GEMINI_DEEP_MODEL` for
+  Gemini. Before this, passing the string `gemma4:latest` was how every provider was told "fast"
+  — which is why the Ollama settings had to stay set even when nothing used them.
+- **Gemini added 2026-09-07, for the editorial stage.** It speaks its own `generateContent`
+  protocol rather than the OpenAI shape, so it has its own adapter. Two things about it are
+  not obvious. Its `finishReason` is checked as an **allowlist** — only `STOP` means the model
+  wrote the whole answer; `MAX_TOKENS`, `RECITATION` and `OTHER` all return content, and a
+  truncated JSON object that happens to parse is indistinguishable from a finished post once
+  it reaches `json.loads`. Measured 2026-09-07: all three were accepted as successful posts,
+  one cut off mid-sentence. And `usageMetadata` is read **before** anything can raise, because
+  Google bills a blocked or truncated call for every thinking token it spent getting there.
+- **Both Gemini tiers default to `GEMINI_MODEL`, and the fast one is the dangerous one.**
+  A thinking model charges its reasoning to `maxOutputTokens` before writing anything, and
+  triage runs on a budget of 1000. Point `GEMINI_FAST_MODEL` at a non-thinking model before
+  routing triage there — this is the same trap the gateway's `fast` alias sprang at 200 tokens.
 - `CLASSIFIER_PROVIDER` deliberately does **not** inherit `LLM_PROVIDER`. These two stages make
   several hundred calls a day; inheriting would move that volume silently when the editorial
   provider changes. Any new provider setting must default to preserving current behaviour.

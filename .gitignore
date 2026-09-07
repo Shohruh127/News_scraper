@@ -63,3 +63,7 @@ Desktop.ini
 .DS_Store
 
 
+
+# Agent working artefacts: evaluation runs, prompt snapshots, A/B packages.
+# Regenerated per run and never part of the source tree.
+output/

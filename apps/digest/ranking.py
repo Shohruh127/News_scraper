@@ -352,6 +352,8 @@ def _item_data(item: DigestItem) -> dict:
         "lead_uz": lead_uz,
         "body_1_uz": uz_payload.get("body_1_uz", ""),
         "kicker_uz": uz_payload.get("kicker_uz", ""),
+        "post_style": uz_payload.get("post_style", ""),
+        "article_text": item.article.extracted_text or "",
         # Clustering
         "secondary_sources": secondary_sources,
         "score": item.score,
@@ -363,6 +365,12 @@ def render_item_post(item: DigestItem) -> str:
     data = _item_data(item)
     from . import post_format
 
+    if data.get("post_style") in post_format.DAYJEST_STYLES:
+        return post_format.render_dayjest_post(
+            data,
+            max_chars=settings.DAYJEST_MAX_CHARS,
+            max_sentences=settings.DAYJEST_MAX_SENTENCES,
+        )
     max_chars = getattr(settings, "POST_MAX_CHARS", 700)
     max_sentences = getattr(settings, "POST_MAX_SENTENCES", 4)
     return post_format.render_item_post_v2(data, max_chars=max_chars, max_sentences=max_sentences)

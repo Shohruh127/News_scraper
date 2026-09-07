@@ -59,7 +59,8 @@ BLOCKS = [
             "CLASSIFIER_PROVIDER",
         ],
         [
-            "Each accepts: gateway | mimo. Set them to one value to run the whole",
+            "Each accepts: gateway | mimo | gemini. Set them to one value to run the",
+            "whole",
             "pipeline on one provider; set them separately to mix.",
             "",
             "  LLM_PROVIDER          global default for anything not overridden below",
@@ -98,6 +99,19 @@ BLOCKS = [
         ],
     ),
     (
+        "Google Gemini",
+        [
+            "GEMINI_BASE_URL",
+            "GEMINI_API_KEY",
+            "GEMINI_MODEL",
+            "GEMINI_FAST_MODEL",
+            "GEMINI_DEEP_MODEL",
+            "GEMINI_TIMEOUT",
+            "GEMINI_THINKING_LEVEL",
+        ],
+        [],
+    ),
+    (
         "Telegram",
         [
             "TELEGRAM_BOT_TOKEN",
@@ -114,6 +128,8 @@ BLOCKS = [
             "POST_FORMAT_V2_ENABLED",
             "POST_MAX_CHARS",
             "POST_MAX_SENTENCES",
+            "DAYJEST_MAX_CHARS",
+            "DAYJEST_MAX_SENTENCES",
             "BENCHMARK_VERIFICATION_ENABLED",
             "ARTIFACT_VERIFICATION_ENABLED",
             "ARTIFACT_TIMEOUT",

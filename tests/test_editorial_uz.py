@@ -35,22 +35,6 @@ def test_the_uzbek_blocks_actually_differ():
     assert len({b.strip() for b in UZ_BLOCKS.values()}) == 7, "blocks must be distinct"
 
 
-def test_every_uzbek_block_states_its_word_limits():
-    """The block is read before the field bullets, so it has to carry the limits itself.
-
-    Measured 2026-08-26 on the English shape blocks: the risk block produced a 24-word lead
-    against an 18-word cap stated further down the prompt. The content instruction wins.
-    """
-    from apps.digest.llm import SHAPE_GENERAL, UZ_BLOCKS
-
-    for key, block in UZ_BLOCKS.items():
-        if key == SHAPE_GENERAL:
-            assert "18 so'z" in block and "22 so'z" in block and "12 so'z" in block
-            continue
-        for cap in ("<= 18 so'z", "<= 22 so'z", "<= 12 so'z"):
-            assert cap in block, f"{key} block does not state {cap}"
-
-
 def test_no_uzbek_block_redefines_the_headline():
     """headline_uz is a label and does not change with the story type.
 
@@ -93,115 +77,6 @@ def test_each_uzbek_block_reaches_the_formatted_prompt():
         assert first_line in filled, f"{key} block did not reach the prompt"
 
 
-def test_the_prompt_scopes_the_block_to_the_three_sentences():
-    """The English agent block wrote the headline until an equivalent guard was added."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    guard = EDITORIAL_UZ_PROMPT.split("## What this story needs")[1].split("{block}")[0]
-    assert "three sentences only" in guard
-    assert "headline_uz" in guard
-
-
-def test_the_prompt_states_the_word_limits_in_the_field_definitions():
-    """Stated twice on purpose. This pins the second copy."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Rules")[0]
-    assert "AT MOST 8 UZBEK WORDS" in fields
-    assert "AT MOST 18 UZBEK WORDS" in fields
-    assert "AT MOST 22 UZBEK WORDS" in fields
-    assert "AT MOST 12 UZBEK WORDS" in fields
-
-
-def test_the_prompt_exempts_local_deployable_from_the_empty_string_rule():
-    """MiMo returned '' for the boolean on 2026-08-26 because the prompt asked for it,
-    and the retry cost that article a second call."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    rule = EDITORIAL_UZ_PROMPT.split("- technical:")[1].split("## Rules")[0]
-    assert "EXCEPT" in rule and "local_deployable, which is a boolean" in rule
-
-
-def test_the_prompt_targets_the_full_mixed_audience():
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    prompt = EDITORIAL_UZ_PROMPT.lower()
-    assert "pms" in prompt
-    assert "engineers" in prompt
-    assert "technical leaders" in prompt
-    assert "non-technical leaders" in prompt
-    assert "first read" in prompt
-
-
-def test_the_prompt_forces_school_graduate_plainness_for_internal_technical_names():
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT, UZ_BLOCKS
-
-    prompt = EDITORIAL_UZ_PROMPT.lower()
-    risk_block = UZ_BLOCKS["risk"].lower()
-    assert "smart 18-year-old" in prompt
-    assert "google" in prompt
-    assert "internal implementation" in prompt
-    assert "qemu/kvm" in risk_block
-    assert "libslirp" in risk_block
-    assert "0-day" in risk_block
-    assert "oddiyroq umumiy ibora" in risk_block
-
-
-def test_the_sentence_structure_rules_live_with_the_rewrite():
-    """The structure rules were born in the drafting prompt (measured 2026-08-28: glossary
-    obeyed, register unmoved) and moved to the rewrite the same day, when three prompt
-    iterations showed that one call cannot both select facts and hold a register. The
-    draft prompt must stay free of them - squeezing both jobs into one prompt moved
-    neither - and the rewrite must carry them."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
-
-    slow = SIMPLIFY_UZ_PROMPT.lower()
-    assert "egasi aniq" in slow
-    assert "ot zanjiri" in slow
-    assert "kim endi nima qila olishini" in slow
-
-    rules = EDITORIAL_UZ_PROMPT.split("## Rules")[1].split("ARTICLE")[0]
-    lowered = rules.lower()
-    assert "named actor" not in lowered
-    assert "verbal noun" not in lowered
-
-
-def test_the_prompt_defines_the_headline_as_an_honest_hook():
-    """2026-08-28: stakeholders chose the SMM voice, so the headline is a hook, not a
-    label. The hook stays honest - the live probe of the raw SMM prompt turned "internal
-    research models" into "maxfiy modeli", so the contract must say the tease cannot
-    outrun the article."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    fields = EDITORIAL_UZ_PROMPT.split("## Output fields")[1].split("## Rules")[0]
-    low = fields.lower()
-    assert "hook" in low
-    assert "must not promise" in low
-    assert "plain label" not in EDITORIAL_UZ_PROMPT
-
-
-def test_the_prompt_carries_the_conversational_voice():
-    """The formal register was measured flat by the channel's readers; the voice rules are
-    part of the contract."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
-
-    assert "conversational" in EDITORIAL_UZ_PROMPT.lower()
-    slow = SIMPLIFY_UZ_PROMPT.lower()
-    assert "eng qizig'i" in slow
-    assert "-ayotganligini" in slow
-
-
-def test_the_prompt_pins_facts_under_the_louder_voice():
-    """Measured 2026-08-28: the SMM persona alone rewrote "internal research models" as
-    "maxfiy modeli" and stretched a kicker past its cap. The louder the voice, the harder
-    the prompt must pin every adjective to the article."""
-    from apps.digest.llm import EDITORIAL_UZ_PROMPT
-
-    low = EDITORIAL_UZ_PROMPT.lower()
-    assert "never the facts" in low
-    assert "maxfiy" in low
-
-
 def _draft_result():
     from apps.digest.llm import ChatResult
 
@@ -219,22 +94,6 @@ def _draft_result():
         input_tokens=100,
         output_tokens=50,
     )
-
-
-def test_the_simplify_prompt_names_the_measured_defects():
-    """The rewrite pass exists because of measured failures, each pinned in the prompt:
-    the Turkish calque ("atlat...") the 2026-08-28 fast-tier probe produced, invented
-    praise adjectives, impersonal kickers, and product names surviving as jargon. Company
-    names stay - readers know NVIDIA; it is COMPASS that stalls them."""
-    from apps.digest.llm import SIMPLIFY_UZ_PROMPT
-
-    low = SIMPLIFY_UZ_PROMPT.lower()
-    assert "maktab o'quvchisi" in low
-    assert "atlat" in low
-    assert "dastur" in low and "model" in low
-    assert "kompaniya nomi" in low
-    for cap in ("8", "18", "22", "12"):
-        assert cap in low
 
 
 def test_simplify_keeps_the_draft_when_the_rewrite_breaks_a_gate(risk_article, monkeypatch):
@@ -261,6 +120,7 @@ def test_simplify_overwrites_text_and_preserves_technical_and_cost(risk_article,
     draft = _draft_result()
 
     def fake_call(**kwargs):
+        assert risk_article.extracted_text[:8000] in kwargs["prompt"]
         return llm_mod.ChatResult(
             {
                 "headline_uz": "Filtr aylanib o'tildi",
@@ -549,7 +409,7 @@ def test_a_gate_violation_retries_once_with_the_violation_named(risk_article, se
 
     assert len(prompts) == 3, "one retry, then the rewrite"
     assert "999" in prompts[1], "the retry must name the violation it is fixing"
-    assert "maktab o'quvchisi".lower() in prompts[2].lower(), "the last call is the rewrite"
+    assert prompts[2].startswith(llm.SIMPLIFY_UZ_PROMPT.split("{post_json}")[0])
     assert len(created) == 1
 
 
@@ -771,4 +631,120 @@ def test_an_article_with_no_classification_gets_the_general_block(settings):
     respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
     llm.analyse_for_digest_logic([article.id])
 
-    assert "birinchi mos kelgani g'olib" in prompts[0]
+    assert llm.UZ_BLOCKS[llm.SHAPE_GENERAL] in prompts[0]
+
+
+def test_the_rewrite_may_not_blank_the_headline(risk_article, monkeypatch):
+    """body_1_uz and kicker_uz may be emptied by the rewrite; headline_uz may not.
+
+    The merge accepted any string the rewrite returned, guarding only lead_uz, and the
+    prompt tells the rewrite that emptying a field is allowed. An empty headline then
+    survives every gate -- no numbers to check, the case gate skips a falsy headline --
+    so the post shipped with no headline line at all.
+    """
+    from apps.digest import llm, post_format
+
+    draft = _draft_result()._replace(
+        payload={**_draft_result().payload, "post_style": post_format.PLAIN_PHOTO_STYLE}
+    )
+    rewritten = draft._replace(payload={**draft.payload, "headline_uz": ""})
+    monkeypatch.setattr(llm, "_editorial_call", lambda **kwargs: rewritten)
+    result = llm._simplify_editorial_uz(risk_article, draft)
+    assert result is not None
+    assert result.payload["headline_uz"] == draft.payload["headline_uz"]
+
+
+def test_a_discarded_editorial_is_recorded_and_not_re_drafted(risk_article, monkeypatch):
+    """A post that fails its gates twice costs real tokens; the row must say so.
+
+    `continue` alone skipped `_record_analysis`, so the calls disappeared from the
+    accounting and the article was re-drafted on every later cycle because the reuse
+    memo had nothing to find.
+    """
+    from apps.digest import llm, post_format
+
+    draft = _draft_result()._replace(
+        payload={
+            **_draft_result().payload,
+            "post_style": post_format.PLAIN_PHOTO_STYLE,
+            # Eleven words: over the ten-word cap, on every attempt.
+            "headline_uz": "Bir ikki uch tort besh olti yetti sakkiz toqqiz on bir",
+        }
+    )
+    calls = []
+
+    def _call(**kwargs):
+        calls.append(1)
+        return draft
+
+    monkeypatch.setattr(llm, "_editorial_call", _call)
+    assert llm.analyse_for_digest_logic([risk_article.id]) == []
+
+    row = risk_article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).first()
+    assert row is not None, "the cost of a discarded editorial must still be recorded"
+    assert row.payload["discarded_violations"]
+
+    # A second cycle must not re-draft it.
+    spent = len(calls)
+    assert llm.analyse_for_digest_logic([risk_article.id]) == []
+    assert len(calls) == spent, "a discarded article was re-drafted at full cost"
+
+
+def test_plain_rewrite_can_remove_secondary_technical_detail(risk_article, monkeypatch):
+    from apps.digest import llm, post_format
+
+    draft = _draft_result()._replace(
+        payload={
+            **_draft_result().payload,
+            "post_style": post_format.PLAIN_PHOTO_STYLE,
+        }
+    )
+    rewritten = draft._replace(payload={**draft.payload, "body_1_uz": ""})
+    monkeypatch.setattr(llm, "_editorial_call", lambda **kwargs: rewritten)
+    result = llm._simplify_editorial_uz(risk_article, draft)
+    assert result is not None
+    assert result.payload["body_1_uz"] == ""
+    assert result.payload["technical"] == draft.payload["technical"]
+
+
+def test_both_prompts_keep_the_measured_language_guards():
+    """The rewrite dropped two guards that each pin a defect measured in production.
+
+    The calque rule ("atlatdi" -> "chetlab o'tdi") and the empty-praise ban
+    ("inqilobiy", "ulkan yutuq") were deleted with the prompts they lived in, and with
+    the test that pinned them. Neither has a mechanical gate behind it: `CALQUES` in
+    translation_gates covers six English ML terms and cannot fire on a Turkish verb
+    form, and nothing at all checks for hype. The prompt is the only guard, so the
+    prompt has to keep saying it.
+    """
+    from apps.digest.editorial_prompts import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
+
+    for name, prompt in (("draft", EDITORIAL_UZ_PROMPT), ("rewrite", SIMPLIFY_UZ_PROMPT)):
+        lowered = prompt.lower()
+        assert "atlat" in lowered, f"{name} prompt lost the Turkish/Russian calque rule"
+        assert "inqilobiy" in lowered, f"{name} prompt lost the empty-praise ban"
+
+
+def test_the_rewrite_is_told_which_fields_may_not_be_emptied():
+    """ "Bo'sh maydon yaratish mumkin" was unqualified, and the merge trusted it.
+
+    body_1_uz and kicker_uz are genuinely droppable; headline_uz and lead_uz are not.
+    The code guards this too (see test_the_rewrite_may_not_blank_the_headline); the
+    prompt has to agree, or every post pays a rewrite that the merge then rejects.
+    """
+    from apps.digest.editorial_prompts import SIMPLIFY_UZ_PROMPT
+
+    assert "headline_uz va lead_uz hech qachon bo'sh qolmaydi" in SIMPLIFY_UZ_PROMPT
+
+
+def test_the_rewrite_keeps_the_sentence_agency_rules():
+    """Measured 2026-08-28: these three rules were what finally moved the register.
+
+    They were asserted by `test_the_sentence_structure_rules_live_with_the_rewrite`,
+    deleted in the same change that removed them from the prompt.
+    """
+    from apps.digest.editorial_prompts import SIMPLIFY_UZ_PROMPT
+
+    assert "egasi aniq" in SIMPLIFY_UZ_PROMPT
+    assert "Ot zanjiri" in SIMPLIFY_UZ_PROMPT
+    assert "kim endi nima qila olishini" in SIMPLIFY_UZ_PROMPT

@@ -7,7 +7,7 @@ from django.db.models import Prefetch
 
 from .models import Analysis, Article, Digest
 from .story_identity import subject_key
-from .translation_gates import extract_numbers
+from .translation_gates import english_numbers
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def _metric_numbers(text: str) -> set[str]:
     accepted: set[str] = set()
     for sentence in _SENTENCE_BREAK.split(text or ""):
         for match in _NUMBER.finditer(sentence):
-            values = extract_numbers(match.group())
+            values = english_numbers(match.group())
             if not values:
                 continue
             number = next(iter(values))

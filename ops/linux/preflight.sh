@@ -39,7 +39,7 @@ if settings.PUBLISHING_ENABLED:
             "PUBLISHING_ENABLED must be false during deployment "
             "(pass --allow-publishing to accept the risk)"
         )
-known = {"gateway", "mimo"}
+known = {"gateway", "mimo", "gemini"}
 providers = {
     "LLM_PROVIDER": settings.LLM_PROVIDER,
     "EDITORIAL_UZ_PROVIDER": settings.EDITORIAL_UZ_PROVIDER,
@@ -54,6 +54,8 @@ if "gateway" in in_use and not (settings.GATEWAY_BASE_URL and settings.GATEWAY_T
     errors.append("a stage runs on the gateway but GATEWAY_BASE_URL/GATEWAY_TOKEN are unset")
 if "mimo" in in_use and not (settings.MIMO_BASE_URL and settings.MIMO_API_KEY):
     errors.append("a stage runs on mimo but MIMO_BASE_URL/MIMO_API_KEY are unset")
+if "gemini" in in_use and not (settings.GEMINI_BASE_URL and settings.GEMINI_API_KEY):
+    errors.append("a stage runs on gemini but GEMINI_BASE_URL/GEMINI_API_KEY are unset")
 
 # The gateway addresses models by tier alias only and answers 404 for a real model name,
 # so an empty alias fails every call in that stage rather than falling back to anything.

@@ -175,6 +175,37 @@ GATEWAY_TIMEOUT = env.int("GATEWAY_TIMEOUT", default=300)
 #: default to preserving current behaviour.
 CLASSIFIER_PROVIDER = env("CLASSIFIER_PROVIDER", default="gateway")
 
+# --- Google Gemini -----------------------------------------------------------
+# Third provider, added 2026-09-07 for the Uzbek editorial stage (B2). Unlike the two
+# OpenAI-compatible providers above, Gemini speaks its own `generateContent` protocol
+# (`responseMimeType`/`responseSchema`), so it has its own adapter in llm.py rather
+# than going through `_openai_chat`.
+#
+# Model `gemini-3.8-flash`, verified 2026-09-07 against the official docs: GA on the
+# Gemini API, structured output supported, 1M input / 65K output tokens. Introductory
+# price $0.75/$3.75 per 1M through 2026-12-31, standard $1.50/$7.50 from 2027-01-01 —
+# see output/agent-audit/2026-09-07/gemini-design.md. The key travels in the
+# `x-goog-api-key` header, never in the URL, so it stays out of logs.
+GEMINI_BASE_URL = env("GEMINI_BASE_URL", default="https://generativelanguage.googleapis.com")
+GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
+GEMINI_MODEL = env("GEMINI_MODEL", default="gemini-3.8-flash")
+#: The tier is said out loud here too, as it is for the gateway and MiMo. Both default to
+#: GEMINI_MODEL, so nothing changes for the editorial stage that is the only caller today.
+#: The split exists because the fast tier is the dangerous one: a thinking model charges
+#: its reasoning to maxOutputTokens before writing anything, and triage runs at 1000. An
+#: operator moving triage here when the gateway saturates points GEMINI_FAST_MODEL at a
+#: non-thinking model rather than discovering empty content on every article.
+#: `or GEMINI_MODEL` and not just a default: `.env.example` ships these keys blank, and a
+#: key present with an empty value is "set" to django-environ, so the default never fires
+#: and the model name would reach the API empty.
+GEMINI_FAST_MODEL = env("GEMINI_FAST_MODEL", default="") or GEMINI_MODEL
+GEMINI_DEEP_MODEL = env("GEMINI_DEEP_MODEL", default="") or GEMINI_MODEL
+GEMINI_TIMEOUT = env.int("GEMINI_TIMEOUT", default=300)
+#: Reasoning effort for thinking models: low | medium | high. Thinking tokens are billed
+#: as output, so the level is a price multiplier; B4 measures which level passes the
+#: editorial bar. `minimal` is not offered — the API rejects it.
+GEMINI_THINKING_LEVEL = env("GEMINI_THINKING_LEVEL", default="medium")
+
 # --- Telegram ---------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 TELEGRAM_CHANNEL_ID = env("TELEGRAM_CHANNEL_ID", default="")
@@ -188,10 +219,8 @@ PUBLISHING_ENABLED = env("PUBLISHING_ENABLED")
 # This deterministic post-cluster check only promotes evidence when an independent
 # outlet repeats a metric-bearing number. Keep it off until the real-corpus review passes.
 BENCHMARK_VERIFICATION_ENABLED = env.bool("BENCHMARK_VERIFICATION_ENABLED", default=False)
-#: On by default: link preview is the approved image delivery mechanism (Option A, 2026-08-18).
-#: Telegram unfurls the article URL and fetches og:image without our code downloading or storing
-#: images, preserving the 4096-char sendMessage limit and working gracefully when no image exists.
-TELEGRAM_LINK_PREVIEW = env.bool("TELEGRAM_LINK_PREVIEW", default=True)
+# Retained for configuration compatibility. Delivery disables previews unconditionally.
+TELEGRAM_LINK_PREVIEW = False
 
 # --- Post format v2 redesign ------------------------------------------------
 POST_FORMAT_V2_ENABLED = env.bool("POST_FORMAT_V2_ENABLED", default=True)
@@ -205,6 +234,10 @@ POST_MAX_CHARS = env.int("POST_MAX_CHARS", default=500)
 #: the headline and hashtag lines are labels and are not counted. body_2 was removed on
 #: 2026-08-24 - it was always the first thing trimmed and the model confused it with body_1.
 POST_MAX_SENTENCES = env.int("POST_MAX_SENTENCES", default=3)
+
+# New dayjest posts have their own budgets; legacy .env caps still apply to old rows.
+DAYJEST_MAX_CHARS = env.int("DAYJEST_MAX_CHARS", default=900)
+DAYJEST_MAX_SENTENCES = env.int("DAYJEST_MAX_SENTENCES", default=7)
 
 
 # --- Ingestion --------------------------------------------------------------

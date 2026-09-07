@@ -90,24 +90,37 @@ def fetch_rss(source, client) -> list[dict]:
 
 def fetch_github(source, client) -> list[dict]:
     repo = source.config.get("repo") or source.url.rstrip("/").split("github.com/")[-1]
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
     out = []
-    for rel in _get(client, url).json():
-        if rel.get("draft"):
-            continue
-        out.append(
-            {
-                "url": rel["html_url"],
-                "title": f"{repo} {rel.get('name') or rel.get('tag_name', '')}".strip(),
-                "published_at": parse_date(rel.get("published_at")),
-                "raw_text": f"{rel.get('name') or ''}\n\n{rel.get('body') or ''}".strip(),
-                "meta": {
-                    "repo": repo,
-                    "tag": rel.get("tag_name"),
-                    "prerelease": rel.get("prerelease", False),
-                },
-            }
-        )
+    # Two pages, not one. Release candidates are skipped below, and a repo that ships a
+    # long rc burst -- ollama routinely does, v0.12.0-rc0 through rc9 -- can fill a whole
+    # 20-item page with them, pushing the stable release off it entirely. Filtering after
+    # a fixed page then returns nothing at all where the unfiltered page returned items.
+    # Stop early once a page has yielded something usable, so the common case still costs
+    # one request.
+    for page in (1, 2):
+        url = f"https://api.github.com/repos/{repo}/releases?per_page=20&page={page}"
+        releases = _get(client, url).json()
+        if not releases:
+            break
+        for rel in releases:
+            if rel.get("draft"):
+                continue
+            # A prerelease is a promise of a release, and the maturity rules already
+            # refuse promises. Measured 2026-09-07 on the local database: ollama
+            # v0.33.2-rc1 reached the channel as item #15.
+            if rel.get("prerelease"):
+                continue
+            out.append(
+                {
+                    "url": rel["html_url"],
+                    "title": f"{repo} {rel.get('name') or rel.get('tag_name', '')}".strip(),
+                    "published_at": parse_date(rel.get("published_at")),
+                    "raw_text": f"{rel.get('name') or ''}\n\n{rel.get('body') or ''}".strip(),
+                    "meta": {"repo": repo, "tag": rel.get("tag_name")},
+                }
+            )
+        if out:
+            break
     return out
 
 

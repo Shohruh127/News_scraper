@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import artifacts, post_format, translation_gates
+from .editorial_prompts import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT, UZ_BLOCKS
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Maturity, Topic
 
 log = logging.getLogger(__name__)
@@ -142,24 +143,7 @@ class EditorialUz(BaseModel):
     evidence_level: str = Field(default="vendor_claim_only")
 
 
-#: The editorial instruction, chosen by the article's classified topic.
-#:
-#: Only the three sentence fields vary. `headline_en` is a label of at most eight words and
-#: does not change with the kind of story, and neither do the style rules, the technical
-#: block or the few-shot examples — those stay in the base prompt so six copies cannot drift
-#: apart.
-#:
-#: The word counts are stated twice on purpose — here and in `## Output fields`. Measured
-#: 2026-08-26: the risk block asked for "what the risk is and who it reaches" and produced a
-#: 24-word lead against an 18-word cap. The content instruction sits before the field bullets
-#: and wins, so the limit has to sit where the sentence is being decided. Keep the two copies
-#: equal; `test_every_shape_block_states_its_word_limits` checks they are present, not that
-#: they agree.
-#:
-#: This is not the archetype system removed on 2026-08-24. That one added output structure
-#: (`*_details` blocks, six templates) with no data behind it — `license` was populated 0% of
-#: the time. A shape adds no structure: the same four fields are produced for every group and
-#: all four are always filled, so a group nobody hits is an unread dict entry.
+#: Topic guidance varies; the shared dayjest format and voice live in editorial_prompts.
 SHAPE_GENERAL = "general"
 
 #: Topic -> shape. `irrelevant` is absent because it never reaches the editorial stage:
@@ -186,48 +170,6 @@ def shape_for(topic: str | None) -> str:
     degrades to today's behaviour instead of dropping every article in that category.
     """
     return TOPIC_SHAPES.get(topic or "", SHAPE_GENERAL)
-
-
-#: The Uzbek editorial instruction, chosen by the article's classified topic.
-#:
-#: Keyed by the same names as SHAPE_BLOCKS so `shape_for()` selects both and TOPIC_SHAPES
-#: stays the single topic map. Two maps would drift.
-#:
-#: Only the three sentence fields vary. `headline_uz` is a label of at most eight words and
-#: does not change with the kind of story — the English agent block leaked a thesis into the
-#: headline on 2026-08-26 precisely because it argued about what matters.
-#:
-#: The word counts are stated here as well as in the output-field definitions. The block is
-#: read first and wins; a limit stated only later arrives after the sentence is decided.
-#: The limits are deliberately wider than the old 14/16/8 contract: a short explanation is
-#: more useful to a mixed audience than a compressed sentence full of English jargon.
-UZ_BLOCKS: dict[str, str] = {
-    SHAPE_GENERAL: """Bu postni PM, dasturchi va texnik bo'lmagan rahbar bir xil tushunsin.
-Lead'ni shu tartibda tanla, birinchi mos kelgani g'olib: 1) nomi bor narsa chiqdi yoki
-o'zgardi - kim chiqargani bilan; 2) o'lchangan natija; 3) qoida yoki cheklov. Faqat e'lon
-bo'lsa, buni ochiq ayt. lead_uz 18 so'zdan, body_1_uz 22 so'zdan, kicker_uz 12 so'zdan
-oshmasin.""",
-    "release": """Bu - yangi model yoki vosita: nima chiqdi va nimaga kerak; va'dani tayyor
-mahsulot deb yozma. lead_uz kim nimani chiqardi (<= 18 so'z); body_1_uz eng muhim raqam,
-imkoniyat yoki cheklov (<= 22 so'z); kicker_uz manbadagi foyda, bo'lmasa bo'sh (<= 12 so'z).""",
-    "agent": """Bu - topshiriqni o'zi bajaradigan AI dastur yoki ulanish. lead_uz nima
-yaratildi va qanday vazifa bajaradi (<= 18 so'z); body_1_uz qanday ishlashi (<= 22 so'z);
-kicker_uz manbadagi amaliy foyda, bo'lmasa bo'sh (<= 12 so'z).""",
-    "risk": """Bu - zaiflik yoki himoya usuli; xavfni oddiy tilda ayt. QEMU/KVM, libslirp va
-0-day kabi ichki nomlar postga emas, technicalga; postda oddiyroq umumiy ibora ishlat.
-lead_uz xavf nima va kimga (<= 18 so'z); body_1_uz hujumchi nimaga erishadi (<= 22 so'z);
-kicker_uz manba tavsiya qilgan chora, bo'lmasa bo'sh (<= 12 so'z).""",
-    "research": """Bu - tadqiqot natijasi yoki da'vo: usul nomini emas, natijani ayt; va'da
-qilingan kodni tayyor vosita deb yozma. lead_uz kim nimani aniqladi (<= 18 so'z); body_1_uz
-natija qaysi testga tayanadi (<= 22 so'z); kicker_uz manbadagi ta'sir, bo'lmasa bo'sh
-(<= 12 so'z).""",
-    "product": """Bu - kompaniya mahsuloti yoki xizmatidagi o'zgarish: nima qilishi va bugun
-bor-yo'qligi. lead_uz kim nimani ishga tushirdi (<= 18 so'z); body_1_uz mavjudlik, narx yoki
-limit (<= 22 so'z); kicker_uz manbadagi foydalanuvchi, bo'lmasa bo'sh (<= 12 so'z).""",
-    "robotics": """Bu - haqiqiy dunyoda ishlaydigan robot yoki jismoniy tizim. lead_uz robot
-nima qila oladi (<= 18 so'z); body_1_uz eng muhim tezlik, yuk yoki sinov sharoiti
-(<= 22 so'z); kicker_uz manbadagi joriy foyda, bo'lmasa bo'sh (<= 12 so'z).""",
-}
 
 
 EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
@@ -258,90 +200,6 @@ EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
     },
     "required": ["headline_uz", "lead_uz", "body_1_uz", "kicker_uz"],
 }
-
-
-EDITORIAL_UZ_PROMPT = """You are the writer behind a popular Telegram tech channel in
-Uzbekistan. Your readers - PMs, engineers, technical leaders, non-technical leaders and
-curious friends - open it for fast, simple tech news, and each must understand the post
-on the first read. Write short, warm, conversational Uzbek (Latin script). Give them the
-fact, not the announcement. Return JSON only.
-
-## What this story needs
-The block below decides the content of the three sentences only. It does not change
-headline_uz, whose hook contract is defined once under Output fields and holds for every
-kind of story. Where the block gives a word count, that count is the limit.
-
-{block}
-
-## Output fields
-One sentence per non-empty field, aiming at 10-15 words; the caps are hard limits.
-- headline_uz: a HOOK, AT MOST 8 UZBEK WORDS - a question, a contrast or the most
-  surprising true fact. No final full stop; a question mark is welcome. The hook may
-  tease, but it must not promise anything the article does not say. Only the first word
-  and proper nouns are capitalised.
-- lead_uz: who did what, AT MOST 18 UZBEK WORDS. Must not repeat the headline.
-- body_1_uz: one more fact, AT MOST 22 UZBEK WORDS. Never restates the lead.
-- kicker_uz: AT MOST 12 UZBEK WORDS, or "" when the article gives nothing worth closing
-  on. The coolest true thing: a practical impact, or the article's most vivid fact or
-  quote, translated.
-- evidence_level: 'vendor_claim_only' or 'multiple_evidence'
-- technical: what_was_built, architecture, license, repo_url, api_url, install,
-  benchmarks, limitations, local_deployable - copied VERBATIM from the article, in
-  ENGLISH, for internal use; '' when the article does not state it - EXCEPT
-  local_deployable, which is a boolean: false unless the article says it runs locally.
-
-## Rules
-1. Every number, version, price and claim status stays exactly as the article states it.
-   NEVER invent a number, a URL, a licence name or an install command.
-2. Never invent advice or benefits. Only include a recommendation the source makes.
-3. Write for a smart 18-year-old who has never worked in technology: understandable
-   without Google. Explain an essential term simply; drop a non-essential mechanism
-   term - it stays in `technical`.
-4. No raw internal implementation, library, protocol or exploit names in reader-facing
-   fields. Company, product and model names, versions and standards stay exact.
-5. DRAMATISE THE ANGLE, NEVER THE FACTS: every adjective must be defensible from the
-   article - an internal model is "ichki", never "maxfiy". Prefer the article's own
-   vivid quote to invented colour.
-6. No empty hype ('inqilobiy', 'ulkan yutuq', 'hayratlanarli'); plain text, no markdown.
-
-ARTICLE
-Title: {title}
-Source: {source}
----
-{text}
-"""
-
-#: The second editorial pass: language only, one job per call. Measured 2026-08-28: three
-#: prompt iterations never moved the drafting call off its translator register, while a
-#: separate rewrite with no other job matched the reference the stakeholders had produced
-#: by hand. Each guard below pins a defect the fast-tier probe of this pass produced: a
-#: Turkish calque ("atlatgan"), an invented praise adjective ("va yaxshiroq"), an
-#: impersonal kicker ("...mumkin."), a weakened meaning, and product names kept as jargon.
-SIMPLIFY_UZ_PROMPT = """Quyida bitta Telegram posti JSON ko'rinishida. Uni XUDDI SHU JSON
-tuzilmasida qayta yoz. Bitta vazifa: postni MAKTAB O'QUVCHISI ham birinchi o'qishda
-tushunadigan oddiy, og'zaki o'zbek tilida ayt.
-
-- Har bir fakt va raqam aynan qoladi. Yangi fakt, baho yoki maslahat qo'shilmaydi:
-  manbada bo'lmagan sifat ("yaxshiroq", "zo'r") yozilmaydi, ma'no yumshatilmaydi
-  ("vazifasini bajaradi" degani "ishini ko'rsatadi" emas).
-- Mahsulot yoki model nomini yozma - o'rniga u nima ekanini oddiy ayt: dastur, model,
-  vosita, sayt. Kompaniya nomi qoladi (NVIDIA, OpenAI kabi). O'quvchiga nom emas,
-  narsaning o'zi kerak.
-- Faqat o'zbek so'zlari: turkcha yoki ruscha so'z ishlatma ("atlatdi" emas -
-  "chetlab o'tdi").
-- Har jumlaning egasi aniq bo'lsin: kompaniya, dastur yoki o'quvchi. Ot zanjiri
-  o'rniga fe'l ishlat; "-ayotganligini" kabi og'ir qo'shimchalarni tashla.
-- Og'zaki bog'lovchilar erkin: "Eng qizig'i...", "Natijada...".
-- kicker_uz kim endi nima qila olishini aytadi - egasiz "mumkin." bilan tugamaydi.
-- headline_uz hook bo'lib qoladi, 8 so'zgacha; lead_uz 18; body_1_uz 22; kicker_uz 12
-  so'zgacha. Har maydon bitta jumla.
-- "technical" maydonini aynan nusxala.
-
-Faqat JSON qaytar.
-
-POST:
-{post_json}
-"""
 
 
 #: Triage asks one question and returns one answer. It used to request the full
@@ -647,6 +505,188 @@ def gateway_chat(
     )
 
 
+_GEMINI_TYPES = {
+    "string": "STRING",
+    "number": "NUMBER",
+    "integer": "INTEGER",
+    "boolean": "BOOLEAN",
+    "object": "OBJECT",
+    "array": "ARRAY",
+}
+
+
+def _to_gemini_schema(schema: Any) -> Any:
+    """Convert a lowercase JSON-Schema dict to Gemini's `responseSchema` dialect.
+
+    Same shape, uppercase type names: Gemini's REST API speaks `{"type": "OBJECT",
+    "properties": ...}` where the OpenAI-compatible providers take lowercase. Keys it
+    does not know (e.g. `strict`, `name`) are dropped rather than sent: an unknown key
+    fails the call, and neither carries meaning for Gemini.
+    """
+    if isinstance(schema, list):
+        return [_to_gemini_schema(v) for v in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in ("strict", "name"):
+            continue
+        if key == "type" and isinstance(value, str):
+            out[key] = _GEMINI_TYPES.get(value, value)
+        elif key == "properties" and isinstance(value, dict):
+            out[key] = {name: _to_gemini_schema(sub) for name, sub in value.items()}
+        elif key in ("items", "prefixItems", "additionalProperties"):
+            out[key] = _to_gemini_schema(value)
+        else:
+            out[key] = value
+    return out
+
+
+def gemini_chat(
+    model: str,
+    prompt: str,
+    schema: dict | None = None,
+    timeout: int | None = None,
+    max_tokens: int = 1500,
+    client: httpx.Client | None = None,
+) -> ChatResult:
+    """One `generateContent` call against the Gemini Developer API (B2).
+
+    Contract matches `_openai_chat`: returns a `ChatResult` with the provider's usage,
+    raises `RetryableLLMError` (via `_chat_post`) on 429/5xx, and raises a plain
+    `RuntimeError` naming the cause on permanent failures — bad key, unknown model,
+    safety block, truncation — so none of them can become a "valid empty post".
+
+    Token mapping: `promptTokenCount` is input; output is `candidatesTokenCount` plus
+    `thoughtsTokenCount`, because thinking tokens are billed as output on this API. No
+    usage block means None, never 0.
+    """
+    base_url = (settings.GEMINI_BASE_URL or "").rstrip("/")
+    api_key = settings.GEMINI_API_KEY or ""
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY must be set to use the gemini provider")
+    # Both are checked, as gateway_chat checks both its URL and its token. A blank base
+    # URL builds a protocol-less relative URL, and httpx raises UnsupportedProtocol for
+    # it — an httpx.HTTPError, therefore a member of INFRASTRUCTURE_EXCEPTIONS, therefore
+    # retried every cycle forever as if the network were down. It is a config error.
+    if not base_url:
+        raise RuntimeError("GEMINI_BASE_URL must be set to use the gemini provider")
+    url = f"{base_url}/v1beta/models/{model}:generateContent"
+    body: dict[str, Any] = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": max_tokens,
+            "thinkingConfig": {"thinkingLevel": settings.GEMINI_THINKING_LEVEL},
+        },
+    }
+    if schema:
+        body["generationConfig"]["responseMimeType"] = "application/json"
+        body["generationConfig"]["responseSchema"] = _to_gemini_schema(schema)
+
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=timeout or settings.GEMINI_TIMEOUT)
+        close_client = True
+
+    t0 = time.perf_counter()
+    try:
+        try:
+            r = _chat_post(client, url, body, headers={"x-goog-api-key": api_key})
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            detail = (exc.response.text or "")[:200]
+            if status in (401, 403):
+                raise RuntimeError(
+                    f"Gemini rejected the API key ({status}). Check GEMINI_API_KEY. {detail}"
+                ) from exc
+            if status == 400:
+                raise RuntimeError(
+                    f"Gemini rejected the request (400) for model {model!r}. Check "
+                    f"GEMINI_MODEL and the responseSchema. {detail}"
+                ) from exc
+            if status == 404:
+                raise RuntimeError(
+                    f"Gemini has no model {model!r} (404). Check GEMINI_MODEL. {detail}"
+                ) from exc
+            raise
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        data = r.json()
+
+        # Read the cost before anything can raise. Google bills a blocked or truncated
+        # call for every thinking token it spent getting there, and each raise below
+        # used to discard the figure — the one number that says why the call failed.
+        usage = data.get("usageMetadata") or {}
+        output_tokens = None
+        if "candidatesTokenCount" in usage or "thoughtsTokenCount" in usage:
+            output_tokens = (usage.get("candidatesTokenCount") or 0) + (
+                usage.get("thoughtsTokenCount") or 0
+            )
+        cost = f"in={usage.get('promptTokenCount')} out={output_tokens}"
+
+        candidates = data.get("candidates") or []
+        if not candidates:
+            reason = (data.get("promptFeedback") or {}).get("blockReason", "unknown")
+            raise RuntimeError(
+                f"Gemini returned no candidates (promptFeedback.blockReason={reason}; "
+                f"{cost}). The prompt was blocked before generation; retrying it is "
+                "pointless."
+            )
+        first = candidates[0]
+        finish = first.get("finishReason")
+        # An allowlist, not a denylist. STOP is the only finish reason that means the
+        # model wrote the whole answer; MAX_TOKENS, RECITATION and OTHER all return
+        # content, and a truncated JSON object that happens to parse is indistinguishable
+        # from a complete post once it reaches json.loads. Measured 2026-09-07: all three
+        # were accepted as successful posts, one of them cut off mid-sentence.
+        if finish and finish != "STOP":
+            if finish in ("SAFETY", "PROHIBITED_CONTENT"):
+                detail = "Safety block, not a retryable error."
+            elif finish == "MAX_TOKENS":
+                detail = (
+                    "The answer was truncated. Thinking tokens bill to maxOutputTokens, "
+                    "so max_tokens has to cover reasoning as well as the answer."
+                )
+            else:
+                detail = "The answer is incomplete; it must not be stored as a post."
+            raise RuntimeError(
+                f"Gemini did not finish for model {model!r} (finishReason={finish}; "
+                f"{cost}). {detail}"
+            )
+        parts = (first.get("content") or {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        if schema and not (text or "").strip():
+            raise RuntimeError(
+                f"Gemini returned an empty message for model {model!r} "
+                f"(finishReason={finish!r}; {cost}). Thinking tokens bill to "
+                "maxOutputTokens, so max_tokens has to cover reasoning as well as "
+                "the answer."
+            )
+        try:
+            parsed = json.loads(_strip_code_fence(text)) if schema else {"raw": text}
+        except json.JSONDecodeError:
+            # Re-raised unchanged: `_editorial_call` catches JSONDecodeError and retries,
+            # and a STOP answer that is merely malformed is worth one more call. Only the
+            # cost is added here, to the log, because the exception carries none.
+            log.warning(
+                "Gemini returned unparseable JSON for model %s (finishReason=%r; %s)",
+                model,
+                finish,
+                cost,
+            )
+            raise
+        return ChatResult(
+            payload=parsed,
+            latency_ms=latency_ms,
+            model_tag=model,
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=output_tokens,
+        )
+    finally:
+        if close_client:
+            client.close()
+
+
 def _combine(first: ChatResult | None, retry: ChatResult) -> ChatResult:
     """Fold a first attempt's cost into the retry that replaced it.
 
@@ -677,7 +717,9 @@ def _model_for(provider: str, tier: str) -> str:
         return settings.GATEWAY_FAST_MODEL if tier == TIER_FAST else settings.GATEWAY_SMART_MODEL
     if provider == "mimo":
         return settings.MIMO_FAST_MODEL if tier == TIER_FAST else settings.MIMO_DEEP_MODEL
-    raise RuntimeError(f"unknown LLM provider {provider!r}; expected 'gateway' or 'mimo'")
+    if provider == "gemini":
+        return settings.GEMINI_FAST_MODEL if tier == TIER_FAST else settings.GEMINI_DEEP_MODEL
+    raise RuntimeError(f"unknown LLM provider {provider!r}; expected 'gateway', 'mimo' or 'gemini'")
 
 
 def _dispatch(
@@ -699,6 +741,15 @@ def _dispatch(
     model = _model_for(provider, tier)
     if provider == "gateway":
         return gateway_chat(
+            model=model,
+            prompt=prompt,
+            schema=schema,
+            max_tokens=num_predict,
+            client=client,
+        )
+
+    if provider == "gemini":
+        return gemini_chat(
             model=model,
             prompt=prompt,
             schema=schema,
@@ -1126,6 +1177,31 @@ def _normalize_uz_payload(payload: dict) -> dict:
     return normalized
 
 
+def _uz_violations(article, payload: dict) -> list[str]:
+    """Check source fidelity gates and the actual new renderer before storing a post."""
+    violations = translation_gates.validate_against_source(
+        article_title=article.title,
+        article_text=article.extracted_text or "",
+        uz_fields=payload,
+        technical=payload.get("technical"),
+    )
+    if payload.get("post_style") in post_format.DAYJEST_STYLES:
+        try:
+            post_format.render_dayjest_post(
+                {
+                    **payload,
+                    "url": article.canonical_url,
+                    "article_text": article.extracted_text or "",
+                    "topic": _classified_topic(article) or "production_engineering",
+                },
+                max_chars=settings.DAYJEST_MAX_CHARS,
+                max_sentences=settings.DAYJEST_MAX_SENTENCES,
+            )
+        except ValueError as exc:
+            violations.append(str(exc))
+    return violations
+
+
 def _classified_topic(article: Article) -> str | None:
     """The topic the deep tier assigned, or None if the article was never classified.
 
@@ -1166,6 +1242,20 @@ def analyse_for_digest_logic(
         existing = (
             art.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).order_by("-created_at").first()
         )
+        # A row marked `discarded_violations` is a post that failed its gates twice. It
+        # is stored so its cost is counted, and it is skipped here so the article is not
+        # re-drafted every cycle: the gates are deterministic and the draft already had
+        # its retry, so a third attempt spends two more deep-tier calls on an outcome
+        # that has not changed. Before this the row was never written at all, which lost
+        # the cost from `pipeline_stats` *and* re-paid it morning and evening until the
+        # article aged out of the candidate window.
+        if existing and existing.payload.get("discarded_violations"):
+            log.info(
+                "Skipping article %s: its editorial was discarded on %s.",
+                art.id,
+                existing.created_at.date(),
+            )
+            continue
         if existing and existing.payload.get("lead_uz"):
             created.append(existing)
             continue
@@ -1173,17 +1263,26 @@ def analyse_for_digest_logic(
         try:
             result = editorial_uz_for_article(art, client=client)
 
-            violations = translation_gates.validate_against_source(
-                article_title=art.title,
-                article_text=art.extracted_text or "",
-                uz_fields=result.payload,
-                technical=result.payload.get("technical"),
-            )
+            violations = _uz_violations(art, result.payload)
             if violations:
                 log.warning(
                     "Uzbek gates failed for article %s: %s. Retrying once.", art.id, violations
                 )
                 result = _retry_editorial_uz(art, violations, result, client)
+
+            still = _uz_violations(art, result.payload)
+            if still:
+                # Recorded, not dropped. `continue` alone skipped `_record_analysis`, so
+                # the two-to-four deep-tier calls this article had already cost vanished
+                # from the accounting entirely -- not even as an unmeasured row, which is
+                # the one thing `pipeline_stats` says its totals are a floor because of.
+                # The marker keeps the row out of the reuse path above.
+                log.error("Discarding invalid editorial for article %s: %s", art.id, still)
+                discarded = result._replace(
+                    payload={**result.payload, "discarded_violations": still}
+                )
+                _record_analysis(art, Analysis.Stage.EDITORIAL_UZ, discarded)
+                continue
 
             simplified = _simplify_editorial_uz(art, result, client)
             if simplified is not None:
@@ -1225,7 +1324,9 @@ def _simplify_editorial_uz(article, first: ChatResult, client=None) -> ChatResul
     )
     try:
         rewritten = _editorial_call(
-            prompt=SIMPLIFY_UZ_PROMPT.format(post_json=post_json),
+            prompt=SIMPLIFY_UZ_PROMPT.format(
+                post_json=post_json, article_text=(article.extracted_text or "")[:8000]
+            ),
             schema=EDITORIAL_UZ_SCHEMA,
             model_cls=EditorialUz,
             num_predict=settings.EDITORIAL_NUM_PREDICT,
@@ -1239,15 +1340,19 @@ def _simplify_editorial_uz(article, first: ChatResult, client=None) -> ChatResul
 
     merged = dict(first.payload)
     normalized = _normalize_uz_payload(rewritten.payload)
+    # The rewrite may drop a secondary fact, so an emptied body_1_uz or kicker_uz is a
+    # legitimate edit. headline_uz and lead_uz are not: CLAUDE.md's rule is that the
+    # headline is never trimmed, and the prompt tells the rewrite that emptying a field
+    # is allowed without excepting them. An empty headline survives every gate --
+    # no numbers to check, the case gate skips a falsy headline, and the renderer emits
+    # no <b> line rather than refusing -- so it would publish a headline-less post.
+    ALWAYS_REQUIRED = ("headline_uz", "lead_uz")
     for field in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz"):
-        merged[field] = normalized.get(field) or merged.get(field)
+        value = normalized.get(field)
+        if isinstance(value, str) and (field not in ALWAYS_REQUIRED or value.strip()):
+            merged[field] = value
 
-    violations = translation_gates.validate_against_source(
-        article_title=article.title,
-        article_text=article.extracted_text or "",
-        uz_fields=merged,
-        technical=merged.get("technical"),
-    )
+    violations = _uz_violations(article, merged)
     if violations:
         log.warning(
             "Simplify pass broke gates for article %s; keeping the draft: %s",
@@ -1287,12 +1392,8 @@ def _retry_editorial_uz(art, violations, first, client):
         tier=TIER_DEEP,
     )
     retry = retry._replace(payload=_normalize_uz_payload(retry.payload))
-    still = translation_gates.validate_against_source(
-        article_title=art.title,
-        article_text=art.extracted_text or "",
-        uz_fields=retry.payload,
-        technical=retry.payload.get("technical"),
-    )
+    retry.payload["post_style"] = post_format.PLAIN_PHOTO_STYLE
+    still = _uz_violations(art, retry.payload)
     if still:
         log.error("Uzbek gates failed permanently for article %s: %s", art.id, still)
     return _combine(first, retry)
@@ -1324,7 +1425,9 @@ def editorial_uz_for_article(article: Article, client: httpx.Client | None = Non
         tier=TIER_DEEP,
     )
     # The prompt forbids markdown; normalize mechanically rather than trusting the model.
-    return result._replace(payload=_normalize_uz_payload(result.payload))
+    payload = _normalize_uz_payload(result.payload)
+    payload["post_style"] = post_format.PLAIN_PHOTO_STYLE
+    return result._replace(payload=payload)
 
 
 def _record_analysis(article, stage, result: ChatResult) -> Analysis:

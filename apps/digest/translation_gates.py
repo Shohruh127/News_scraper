@@ -10,6 +10,8 @@ Three mechanical checks that catch the highest-severity translation defects:
 import logging
 import re
 
+from .post_format import DAYJEST_STYLES
+
 log = logging.getLogger(__name__)
 
 # The presence requirement -- "a term in the English must appear verbatim in the Uzbek" -- was
@@ -39,10 +41,62 @@ CALQUES = {
 #: article: "5,000+ websites" against "5000+ veb-saytda" was rejected wrongly.
 _THOUSANDS = re.compile(r"(?<=\d)[,  ](?=\d{3}(?!\d))")
 
+#: Uzbek writes decimals with a comma: 0,75. Thousands are stripped first, so a comma
+#: still standing between two digits afterwards is a decimal comma, not a separator —
+#: 72,758 already became 72758 above, while 0,75 survives it. Measured 2026-09-07: a
+#: correct $0.75 price post was flagged as invented ("0" and "75" missing) for exactly
+#: this. A three-digit fraction (3,141) stays ambiguous with thousands and keeps the
+#: English-first reading; Uzbek fractions are one or two digits in practice.
+_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
+
+
+#: One uninterrupted numeric run, separators included: "5,000", "0,895", "2024,2025".
+_NUMBER_RUN = re.compile(r"\d[\d.,\xa0 ]*\d|\d")
+
+_NUMBER_TOKEN = re.compile(r"\d+(?:\.\d+)*")
+
+
+def number_variants(run: str) -> set[str]:
+    """Every reading of one numeric run, because a comma between digits is ambiguous.
+
+    Uzbek writes decimals with a comma and thousands with a space; English does the
+    reverse. Applying one substitution and then the other reads a run *once*, and the
+    order decides which. Measured 2026-09-07: "0,895" went through the thousands rule
+    first -- the comma precedes exactly three digits -- and came out "0895", a token
+    that exists in neither language, so a correct post reporting 0.895 was reported as
+    an invented number. That is the same defect the decimal-comma rule was added to fix,
+    one digit longer. Emitting both readings and letting the caller accept any match
+    removes the guess instead of moving it.
+    """
+    return set(_NUMBER_TOKEN.findall(_THOUSANDS.sub("", run))) | set(
+        _NUMBER_TOKEN.findall(_DECIMAL_COMMA.sub(".", run))
+    )
+
+
+def english_numbers(text: str) -> set[str]:
+    """Numeric tokens under the English reading only: 5,000 is five thousand.
+
+    `extract_numbers` returns every reading of an ambiguous comma, which is right for a
+    membership test and wrong for a caller that needs *the* value of a number.
+    `verification.py` reads English article text and picks one token per match, so it
+    takes this one; picking an arbitrary member of a multi-reading set made its result
+    depend on set iteration order.
+    """
+    return set(_NUMBER_TOKEN.findall(_THOUSANDS.sub("", text or "")))
+
 
 def extract_numbers(text: str) -> set[str]:
-    """Numeric tokens, with thousand separators removed so 5,000 == 5000 == 5 000."""
-    return set(re.findall(r"\d+(?:\.\d+)*", _THOUSANDS.sub("", text)))
+    """Every reading of every numeric run: 5,000 == 5000 == 5 000, and 0,75 == 0.75.
+
+    A superset by design. It is the *source* side of the gate and the input to
+    `verification.py`, where a wider set only makes the check more forgiving. The Uzbek
+    side is compared run by run in `check_numbers_against_source`, which is what keeps
+    the extra readings from becoming false violations of their own.
+    """
+    out: set[str] = set()
+    for run in _NUMBER_RUN.findall(text or ""):
+        out |= number_variants(run)
+    return out
 
 
 #: English words for the small numbers, for the reverse-direction gate.
@@ -76,23 +130,34 @@ def check_numbers_against_source(article_text: str, uz_fields: dict) -> list[str
     catches a number the model invented, which is the objection CONTENT_SCHEMA.md section 7
     raised against writing the post directly in Uzbek.
 
-    Keys starting with `headline` are exempt, as in the forward gate: a headline compresses
-    a figure away legitimately.
+    Legacy headlines remain exempt for compatibility. New dayjest headlines are checked,
+    because a headline is where a figure is most often compressed. `post_style` is
+    metadata, not a reader-facing claim.
     """
     source_numbers = extract_numbers(article_text)
     lowered_source = article_text.lower()
 
     violations = []
     for key, value in uz_fields.items():
-        if key.startswith("headline"):
+        if key == "post_style":
             continue
-        for number in extract_numbers(str(value)):
-            if number in source_numbers:
+        if key.startswith("headline") and uz_fields.get("post_style") not in DAYJEST_STYLES:
+            continue
+        # Run by run, not token by token. A run with an ambiguous comma has two readings
+        # and only one of them needs to be in the article; scoring each reading
+        # separately would flag the one that is merely the other interpretation.
+        for run in _NUMBER_RUN.findall(str(value)):
+            variants = number_variants(run)
+            if variants & source_numbers:
                 continue
-            words = ENGLISH_SMALL_NUMERALS.get(number, ())
-            if any(re.search(rf"\b{word}\b", lowered_source) for word in words):
+            if any(
+                re.search(rf"\b{word}\b", lowered_source)
+                for number in variants
+                for word in ENGLISH_SMALL_NUMERALS.get(number, ())
+            ):
                 continue
-            violations.append(f"Number not in the article: {number} (in {key})")
+            shown = min(variants, key=len) if variants else run
+            violations.append(f"Number not in the article: {shown} (in {key})")
     return violations
 
 

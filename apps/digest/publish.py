@@ -20,8 +20,8 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from . import media, ranking
-from .models import DeliveryState, Digest, DigestItem
+from . import media, post_format, ranking
+from .models import Analysis, DeliveryState, Digest, DigestItem
 
 log = logging.getLogger(__name__)
 
@@ -48,16 +48,10 @@ def send_message(
         )
         return {"suppressed": True}
 
-    if disable_preview:
-        preview_options = {"is_disabled": True}
-    elif getattr(settings, "TELEGRAM_LINK_PREVIEW", False):
-        preview_options = {
-            "is_disabled": False,
-            "prefer_small_media": True,
-            "show_above_text": False,
-        }
-    else:
-        preview_options = {"is_disabled": True}
+    # The channel owner requires photos and word links, never preview/Instant View
+    # cards. `disable_preview` is kept because callers pass it, but it can only ever
+    # disable: neither an argument nor TELEGRAM_LINK_PREVIEW can turn a preview back on.
+    preview_options = {"is_disabled": True}
 
     payload: dict = {
         "chat_id": chat_id,
@@ -104,6 +98,9 @@ def send_photo(
         )
         return {"suppressed": True}
 
+    if post_format.telegram_length(caption) > 1024:
+        raise ValueError("Photo caption exceeds 1024 characters")
+
     payload: dict[str, Any] = {
         "chat_id": str(chat_id),
         "photo": photo_url,
@@ -129,6 +126,49 @@ def send_photo(
             client.close()
 
 
+def resolve_photo_url(article) -> str | None:
+    """Use the article's photo, never its link-preview card as a substitute.
+
+    Writes a freshly fetched image back to `article.meta`, so a republish, an
+    `edit_message` or a later retry reuses it instead of downloading the page again.
+
+    Says which of the three outcomes happened. Returning a bare None for all of them
+    left the operator holding "Photo required" with no way to tell a page that has no
+    og:image from one whose image the media policy rejected.
+    """
+    raw = (article.meta or {}).get("image_url")
+    image = media.validate_image_url(raw)
+    if image:
+        return image
+    if raw:
+        log.warning(
+            "Stored image URL rejected by policy for article %s (host: %s)",
+            article.id,
+            media.get_safe_image_log_host(raw),
+        )
+    if not article.canonical_url:
+        return None
+    try:
+        downloaded = trafilatura.fetch_url(article.canonical_url)
+    except Exception as exc:
+        log.warning(
+            "Article photo lookup failed for article %s: %s", article.id, type(exc).__name__
+        )
+        return None
+    if not downloaded:
+        log.info("Article photo lookup fetched nothing for article %s", article.id)
+        return None
+    found = media.extract_image_url_from_html(downloaded, base_url=article.canonical_url)
+    if not found:
+        log.info("Article %s has no usable og:image", article.id)
+        return None
+    meta = dict(article.meta or {})
+    meta["image_url"] = found
+    article.meta = meta
+    article.save(update_fields=["meta"])
+    return found
+
+
 def edit_message(
     chat_id: str | int,
     message_id: int,
@@ -149,9 +189,12 @@ def edit_message(
         "parse_mode": "HTML",
     }
     if sent_as_photo:
+        if post_format.telegram_length(new_text) > 1024:
+            raise ValueError("Photo caption exceeds 1024 characters")
         payload["caption"] = new_text
     else:
         payload["text"] = new_text
+        payload["link_preview_options"] = {"is_disabled": True}
 
     close_client = False
     if client is None:
@@ -334,8 +377,18 @@ def publish_digest_item(
             }
 
     # --- Channel post rendering ---
+    editorial = (
+        item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
+        .order_by("-created_at")
+        .first()
+    )
+    photo_only = bool(
+        editorial and editorial.payload.get("post_style") == post_format.PLAIN_PHOTO_STYLE
+    )
     try:
         post_html = ranking.render_item_post(item)
+        if photo_only and post_format.telegram_length(post_html) > 1024:
+            raise ValueError("Photo caption exceeds 1024 characters")
     except ValueError as exc:
         log.error("Render failed for item #%s: %s", item.position, exc)
         with transaction.atomic():
@@ -354,6 +407,39 @@ def publish_digest_item(
             "error": f"render: {exc}",
             "suppressed": False,
         }
+
+    photo_url = None
+    if photo_only:
+        photo_url = resolve_photo_url(item.article)
+        if not photo_url:
+            # FAILED, not PENDING. The owner's rule is photo-or-nothing, so this item
+            # cannot go out — but `publish_next_item` selects the lowest position still
+            # PENDING or SENDING, and `resolve_photo_url` is deterministic for a given
+            # article, so leaving it pending re-picks the same item at every two-hour
+            # tick: items #2-#6 never publish, `publish_roundup` never fires because
+            # `has_remaining` stays true, and every later edition queues behind it,
+            # since digests are selected FIFO by `composed_at`. Measured 2026-09-07:
+            # five consecutive ticks all returned this item, and nothing was sent.
+            # FAILED is the state the drip is documented to step past, and it reaches
+            # the operator through the admin alert; the item can be republished once a
+            # photo exists. Silence in the channel is the worse failure.
+            log.error("No photo for item #%s; the item cannot be sent.", item.position)
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_delivery_state=DeliveryState.FAILED,
+                    channel_delivery_error="Photo required: no usable article image"[:512],
+                )
+            item.refresh_from_db()
+            return {
+                "success": False,
+                "status": "failed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "sent_as_photo": False,
+                "error": "Photo required: no usable article image",
+                "suppressed": False,
+            }
 
     # Lock row and transition pending -> sending
     with transaction.atomic():
@@ -407,27 +493,23 @@ def publish_digest_item(
 
     try:
         try:
-            if v2_enabled:
-                image_url = item.article.meta.get("image_url") if item.article.meta else None
-                if not image_url and item.article.canonical_url:
-                    try:
-                        downloaded = trafilatura.fetch_url(item.article.canonical_url)
-                        if downloaded:
-                            fetched_img = media.extract_image_url_from_html(
-                                downloaded, base_url=item.article.canonical_url
-                            )
-                            if fetched_img:
-                                image_url = fetched_img
-                                meta = dict(item.article.meta or {})
-                                meta["image_url"] = fetched_img
-                                item.article.meta = meta
-                                item.article.save(update_fields=["meta"])
-                    except Exception as exc:
-                        log.debug(
-                            "On-demand image fetch failed for item #%s: %s",
-                            item.position,
-                            exc,
-                        )
+            if photo_only:
+                res_post = send_photo(
+                    chat_id=channel_id, photo_url=photo_url, caption=post_html, client=client
+                )
+                sent_as_photo = True
+            elif post_format.telegram_length(post_html) > 1024:
+                # A legacy post too long for a caption goes out whole as one text
+                # message. It used to pass disable_preview=False expecting an unfurled
+                # card, which send_message ignores -- so the argument is dropped rather
+                # than left implying a preview this path never gets.
+                res_post = send_message(chat_id=channel_id, text=post_html, client=client)
+            elif v2_enabled:
+                # One article-photo policy, one implementation. This branch used to
+                # inline the same meta-then-fetch-then-cache sequence resolve_photo_url
+                # now owns; two copies meant the plain-photo path silently lost the
+                # meta write-back and the policy-rejection log.
+                image_url = resolve_photo_url(item.article)
 
                 valid_image_url = media.validate_image_url(image_url) if image_url else None
                 if image_url and not valid_image_url:
@@ -559,6 +641,31 @@ def publish_digest_item(
                     "error": f"HTTP {status_code}: {exc}",
                     "suppressed": False,
                 }
+
+        except ValueError as exc:
+            # A ValueError here comes from our own pre-send contract checks -- the 1024
+            # caption cap in `send_photo`, for one -- and means the request was never
+            # issued. The broad handler below sets UNKNOWN, which reads as "we may have
+            # sent it": `publish_digest_item` refuses to retry UNKNOWN automatically and
+            # the drip steps past it, so a send that provably never happened froze the
+            # item to manual review forever. FAILED is the honest state.
+            log.error("Refused to send item #%s: %s", item.position, exc)
+            with transaction.atomic():
+                DigestItem.objects.filter(id=item.id).update(
+                    channel_delivery_state=DeliveryState.FAILED,
+                    channel_delivery_error=f"Refused before sending: {exc}"[:512],
+                )
+            item.refresh_from_db()
+            return {
+                "success": False,
+                "status": "failed",
+                "item_id": item.id,
+                "position": item.position,
+                "channel_message_id": None,
+                "sent_as_photo": False,
+                "error": f"refused: {exc}",
+                "suppressed": False,
+            }
 
         except Exception as exc:
             log.error(

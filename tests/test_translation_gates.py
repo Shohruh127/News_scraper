@@ -217,6 +217,69 @@ def test_the_headline_is_exempt_from_the_source_number_gate():
     )
 
 
+def test_an_uzbek_decimal_comma_matches_an_english_decimal_point():
+    """Uzbek writes 0,75 where English writes 0.75 (F8).
+
+    Measured 2026-09-07 on article 630: a correct $0.75 price post was flagged as
+    invented ("0" and "75" missing) because the comma split the number.
+    """
+    from apps.digest.translation_gates import check_numbers_against_source, extract_numbers
+
+    # extract_numbers is deliberately a superset: a comma between digits has more than
+    # one reading and it emits all of them, leaving the choice to the run-by-run
+    # comparison in check_numbers_against_source.
+    assert "0.75" in extract_numbers("0,75 dollar")
+    assert "5000" in extract_numbers("5,000 websites")
+    assert not check_numbers_against_source(
+        "Available at $0.75 per million input tokens.",
+        {"body_1_uz": "Million kiruvchi tokenga 0,75 dollar turadi."},
+    )
+
+
+def test_a_three_digit_uzbek_fraction_is_not_read_as_thousands():
+    """0,895 is a fraction, not a thousands separator (F8, second half).
+
+    The thousands rule fires on a comma before exactly three digits, so it claimed
+    "0,895" first and produced "0895" -- a token in neither language -- and the correct
+    post was reported as inventing a number. Since the editorial stage now *discards* an
+    article whose gates fail, this cost the whole post rather than a log line.
+    """
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    assert not check_numbers_against_source(
+        "The model reaches 0.895 accuracy on the held-out set.",
+        {"body_1_uz": "Model 0,895 aniqlikka erishdi."},
+    )
+    assert not check_numbers_against_source(
+        "Latency dropped to 0.752 seconds.",
+        {"body_1_uz": "Kechikish 0,752 soniyaga tushdi."},
+    )
+
+
+def test_a_comma_joined_run_in_the_source_still_matches_one_of_its_numbers():
+    """trafilatura flattens tables into runs like "2024,2025"; the years must survive.
+
+    Reading the source run only as a decimal removed the individual years from the
+    source set, so an Uzbek post correctly repeating 2025 was flagged as invented.
+    """
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    assert not check_numbers_against_source(
+        "The roadmap covers 2024,2025 and 2026.",
+        {"body_1_uz": "2025-yilda chiqadi."},
+    )
+
+
+def test_a_genuinely_invented_decimal_still_fails():
+    """The comma fix must not blind the gate: 0,80 is not 0.75."""
+    from apps.digest.translation_gates import check_numbers_against_source
+
+    assert check_numbers_against_source(
+        "Available at $0.75 per million input tokens.",
+        {"body_1_uz": "Million kiruvchi tokenga 0,80 dollar turadi."},
+    )
+
+
 def test_source_validation_runs_all_three_gates():
     from apps.digest.translation_gates import validate_against_source
 

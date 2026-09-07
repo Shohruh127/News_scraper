@@ -70,6 +70,45 @@ def test_github_skips_drafts_and_builds_text():
 
 
 @respx.mock
+def test_github_skips_prereleases():
+    """Release candidates are not releases (B1, F10).
+
+    Measured 2026-09-07: ollama v0.33.2-rc1 (prerelease: true) reached the channel,
+    and v0.34.0-rc1 waited fetched for triage. The draft test above is the
+    counter-case: a normal release with substance must still pass.
+    """
+    s = src(connector="github", url="https://github.com/o/r", config={"repo": "o/r"})
+    respx.get("https://api.github.com/repos/o/r/releases").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "html_url": "https://github.com/o/r/releases/v2",
+                    "name": "v2",
+                    "tag_name": "v2",
+                    "body": "changes here",
+                    "published_at": "2026-08-13T10:00:00Z",
+                    "draft": False,
+                    "prerelease": False,
+                },
+                {
+                    "html_url": "https://github.com/o/r/releases/v3-rc1",
+                    "name": "v3-rc1",
+                    "tag_name": "v3-rc1",
+                    "body": "release candidate",
+                    "published_at": "2026-08-14T10:00:00Z",
+                    "draft": False,
+                    "prerelease": True,
+                },
+            ],
+        )
+    )
+    items = connectors.fetch(s)
+    assert len(items) == 1
+    assert items[0]["title"] == "o/r v2"
+
+
+@respx.mock
 def test_hn_drops_stories_without_a_url():
     s = src(connector="hn", url="https://hn.algolia.com/", config={"min_points": 50})
     respx.get(url__startswith="https://hn.algolia.com/api/").mock(
@@ -316,3 +355,60 @@ def test_seed_covers_every_source_added_since_the_file_was_written():
     }
 
     assert added_2026_08_18 <= names, f"missing from the seed: {added_2026_08_18 - names}"
+
+
+@respx.mock
+def test_github_pages_past_a_burst_of_release_candidates():
+    """A full page of prereleases must not hide the stable release behind it.
+
+    The filter runs after a fixed `per_page=20` page. ollama routinely ships runs like
+    v0.12.0-rc0 through rc9, so a page can be entirely release candidates -- and
+    filtering it then yields nothing at all where the unfiltered page yielded items.
+    """
+    s = src(connector="github", url="https://github.com/o/r", config={"repo": "o/r"})
+
+    def _rel(tag, prerelease):
+        return {
+            "html_url": f"https://github.com/o/r/releases/{tag}",
+            "name": tag,
+            "tag_name": tag,
+            "body": "notes",
+            "published_at": "2026-08-13T10:00:00Z",
+            "draft": False,
+            "prerelease": prerelease,
+        }
+
+    respx.get("https://api.github.com/repos/o/r/releases", params={"page": "1"}).mock(
+        return_value=httpx.Response(200, json=[_rel(f"v1.0-rc{i}", True) for i in range(20)])
+    )
+    respx.get("https://api.github.com/repos/o/r/releases", params={"page": "2"}).mock(
+        return_value=httpx.Response(200, json=[_rel("v0.9", False)])
+    )
+
+    items = connectors.fetch_github(s, httpx.Client())
+    assert [i["title"] for i in items] == ["o/r v0.9"]
+
+
+@respx.mock
+def test_github_stops_after_one_page_when_it_finds_a_release():
+    """The common case must still cost a single request."""
+    s = src(connector="github", url="https://github.com/o/r", config={"repo": "o/r"})
+    page1 = respx.get("https://api.github.com/repos/o/r/releases", params={"page": "1"}).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "html_url": "https://github.com/o/r/releases/v2",
+                    "name": "v2",
+                    "tag_name": "v2",
+                    "body": "changes here",
+                    "published_at": "2026-08-13T10:00:00Z",
+                    "draft": False,
+                    "prerelease": False,
+                }
+            ],
+        )
+    )
+    items = connectors.fetch_github(s, httpx.Client())
+    assert len(items) == 1
+    assert page1.call_count == 1
