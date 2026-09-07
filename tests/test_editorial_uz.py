@@ -707,44 +707,90 @@ def test_plain_rewrite_can_remove_secondary_technical_detail(risk_article, monke
     assert result.payload["technical"] == draft.payload["technical"]
 
 
-def test_both_prompts_keep_the_measured_language_guards():
-    """The rewrite dropped two guards that each pin a defect measured in production.
+def test_every_shared_rule_is_written_once_and_composed_into_both_prompts():
+    """The two calls may repeat a rule to the model; the source may not repeat it to us.
 
-    The calque rule ("atlatdi" -> "chetlab o'tdi") and the empty-praise ban
-    ("inqilobiy", "ulkan yutuq") were deleted with the prompts they lived in, and with
-    the test that pinned them. Neither has a mechanical gate behind it: `CALQUES` in
-    translation_gates covers six English ML terms and cannot fire on a Turkish verb
-    form, and nothing at all checks for hype. The prompt is the only guard, so the
-    prompt has to keep saying it.
+    Both prompts need the voice, the audience, the fact rules and the field contract --
+    `_simplify_editorial_uz` returns None on any failure and the caller then publishes the
+    draft unchanged, so the draft is a shipping path and cannot be written in a register
+    nobody wants to read. What must not happen is the same rule existing as two strings
+    that drift: before this, the calque rule, the hype ban, the jargon list, the audience
+    and the 900/7 budget were each stated twice in two wordings.
+
+    Identity, not substring similarity, is the assertion: composing the constant is the
+    only way to satisfy it.
+    """
+    from apps.digest import editorial_prompts as p
+
+    shared = {
+        "AUDIENCE_BLOCK": p.AUDIENCE_BLOCK,
+        "VOICE_BLOCK": p.VOICE_BLOCK,
+        "FACTS_BLOCK": p.FACTS_BLOCK,
+        "READER_FIELDS_BLOCK": p.READER_FIELDS_BLOCK,
+        "JARGON_BLOCK": p.JARGON_BLOCK,
+    }
+    for name, block in shared.items():
+        assert block in p.EDITORIAL_UZ_PROMPT, f"{name} is not composed into the draft"
+        assert block in p.SIMPLIFY_UZ_PROMPT, f"{name} is not composed into the rewrite"
+
+
+def test_the_shared_voice_carries_the_rules_that_have_no_gate_behind_them():
+    """Each of these pins a defect measured in production and nothing else catches it.
+
+    `CALQUES` in translation_gates covers six English ML terms and cannot fire on a
+    Turkish verb form; nothing anywhere checks for hype; and the noun-chain habit is only
+    visible to a reader. The prompt is the whole guard, so the prompt has to keep saying
+    it.
+    """
+    from apps.digest.editorial_prompts import VOICE_BLOCK
+
+    lowered = VOICE_BLOCK.lower()
+    assert "atlat" in lowered, "the Turkish/Russian calque rule is gone"
+    assert "inqilobiy" in lowered, "the empty-praise ban is gone"
+    assert "ot zanjiri" in lowered, "the noun-chain rule is gone"
+    assert "egasi aniq" in lowered, "the sentence-agency rule is gone"
+    assert "kim endi nima qila olishini" in lowered, "the kicker-agency rule is gone"
+
+
+def test_the_field_contract_matches_the_renderer_that_enforces_it():
+    """render_dayjest_post discards a post that breaks these numbers, so they must agree.
+
+    A prompt that asks for more than the renderer accepts spends a full deep-tier call to
+    produce a post the pipeline then throws away.
+    """
+    from apps.digest import post_format
+    from apps.digest.editorial_prompts import READER_FIELDS_BLOCK
+
+    assert str(post_format.DAYJEST_MAX_CHARS) in READER_FIELDS_BLOCK
+    assert str(post_format.DAYJEST_MAX_SENTENCES) in READER_FIELDS_BLOCK
+    assert "10 so'zgacha" in READER_FIELDS_BLOCK
+    assert "headline_uz va lead_uz hech qachon bo'sh" in READER_FIELDS_BLOCK
+
+
+def test_each_prompt_keeps_the_job_only_it_can_do():
+    """The draft chooses the news; the rewrite checks the draft against the source.
+
+    The rewrite cannot select from the article it never had to summarise, and the draft
+    cannot cross-check a draft that does not exist yet. Neither job belongs in both.
     """
     from apps.digest.editorial_prompts import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
 
-    for name, prompt in (("draft", EDITORIAL_UZ_PROMPT), ("rewrite", SIMPLIFY_UZ_PROMPT)):
-        lowered = prompt.lower()
-        assert "atlat" in lowered, f"{name} prompt lost the Turkish/Russian calque rule"
-        assert "inqilobiy" in lowered, f"{name} prompt lost the empty-praise ban"
+    assert "## Avval nimani tanlash kerak" in EDITORIAL_UZ_PROMPT
+    assert "## Uslub misollari" in EDITORIAL_UZ_PROMPT
+    assert "technical: what_was_built" in EDITORIAL_UZ_PROMPT
+    assert "## Avval nimani tanlash kerak" not in SIMPLIFY_UZ_PROMPT
+
+    assert "## ARTICLE bo'yicha tekshiruv" in SIMPLIFY_UZ_PROMPT
+    assert "Tushunarli va to'g'ri\njumlani o'zgartirish shart emas" in SIMPLIFY_UZ_PROMPT
+    assert "## ARTICLE bo'yicha tekshiruv" not in EDITORIAL_UZ_PROMPT
 
 
-def test_the_rewrite_is_told_which_fields_may_not_be_emptied():
-    """ "Bo'sh maydon yaratish mumkin" was unqualified, and the merge trusted it.
+def test_both_prompts_still_format_with_their_own_placeholders():
+    """Composition must not consume the .format() placeholders the callers fill in."""
+    from apps.digest.editorial_prompts import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT
 
-    body_1_uz and kicker_uz are genuinely droppable; headline_uz and lead_uz are not.
-    The code guards this too (see test_the_rewrite_may_not_blank_the_headline); the
-    prompt has to agree, or every post pays a rewrite that the merge then rejects.
-    """
-    from apps.digest.editorial_prompts import SIMPLIFY_UZ_PROMPT
+    drafted = EDITORIAL_UZ_PROMPT.format(block="SHAPE", title="T", source="S", text="ARTICLE BODY")
+    assert "SHAPE" in drafted and "ARTICLE BODY" in drafted
 
-    assert "headline_uz va lead_uz hech qachon bo'sh qolmaydi" in SIMPLIFY_UZ_PROMPT
-
-
-def test_the_rewrite_keeps_the_sentence_agency_rules():
-    """Measured 2026-08-28: these three rules were what finally moved the register.
-
-    They were asserted by `test_the_sentence_structure_rules_live_with_the_rewrite`,
-    deleted in the same change that removed them from the prompt.
-    """
-    from apps.digest.editorial_prompts import SIMPLIFY_UZ_PROMPT
-
-    assert "egasi aniq" in SIMPLIFY_UZ_PROMPT
-    assert "Ot zanjiri" in SIMPLIFY_UZ_PROMPT
-    assert "kim endi nima qila olishini" in SIMPLIFY_UZ_PROMPT
+    rewritten = SIMPLIFY_UZ_PROMPT.format(post_json='{"a": 1}', article_text="ARTICLE BODY")
+    assert '{"a": 1}' in rewritten and "ARTICLE BODY" in rewritten

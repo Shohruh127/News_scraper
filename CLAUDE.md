@@ -186,6 +186,43 @@ Already stored legacy posts keep their renderer for compatibility; they are not 
 or reposted automatically. Existing legacy text paths also have previews disabled.
 Source text is data, never instructions. Mechanical gates do not prove semantic correctness.
 
+## Two calls write the post, and both hold the voice
+
+`EDITORIAL_UZ_PROMPT` drafts from the article; `SIMPLIFY_UZ_PROMPT` reads the draft back as
+a reader would and checks it against the source. **Both carry the register rules.** The rule
+until 2026-08-28 was the opposite — the draft was to stay free of them and the rewrite alone
+was to carry them, because three prompt iterations never moved the drafting call off its
+translator register. That reasoning does not survive two changes made since:
+
+- `_simplify_editorial_uz` returns `None` on any failure — a provider error, or a rewrite
+  that breaks the gates — and the caller then publishes **the draft unchanged**. The draft
+  is a shipping path, not an intermediate, so it cannot be written in a register nobody
+  wants to read.
+- The draft is no longer a translation pass. It is told who the reader is in its first line
+  and writes for that reader directly.
+
+Measured on the 19-article run of 2026-09-07 (`output/all-source-gemini/`): the rewrite
+changed 18 of 19 posts, and almost all of it was paraphrase churn — `qo'shishini` became
+`qo'yishini`, `sifatiga ta'sir qilmaydi` became `sifati o'zgarmaydi`. Its one repeated
+substantive win was turning a noun chain into a verb: *"Matnni Claude yozganini bildiruvchi
+ko'rinmas belgi"* became *"Claude yozgan matnlarga ko'rinmas belgi qo'shiladi"*. That is why
+the agency rules are now stated to **both** calls rather than only to the second — and why
+the rewrite is told, in as many words, not to rewrite a sentence that is already clear.
+
+What the two calls must not do is state the same rule in two wordings that drift. Every
+shared rule — `AUDIENCE_BLOCK`, `VOICE_BLOCK`, `FACTS_BLOCK`, `READER_FIELDS_BLOCK`,
+`JARGON_BLOCK` — is written once in `editorial_prompts.py` and composed into both prompts,
+and `test_every_shared_rule_is_written_once_and_composed_into_both_prompts` asserts identity
+rather than similarity, so composing the constant is the only way to pass. This removes the
+drift, not the tokens: the model still needs the rules on both calls.
+
+Each prompt keeps only the job the other cannot do. The draft chooses the news, writes the
+`technical` block and carries the few-shot examples; the rewrite cross-checks against the
+article and refuses to repeat the lead in the body. `READER_FIELDS_BLOCK` states the same
+900/7 budget the renderer enforces, and a test compares the two — a prompt that asks for
+more than `render_dayjest_post` accepts spends a full deep-tier call on a post the pipeline
+then discards.
+
 ## django_celery_beat does not prune
 
 `CELERY_BEAT_SCHEDULER` is `DatabaseScheduler`, so the live schedule is rows in `PeriodicTask`,
