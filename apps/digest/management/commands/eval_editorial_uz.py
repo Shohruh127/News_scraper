@@ -143,9 +143,7 @@ class Command(BaseCommand):
 
     def _render(self, payload, _lang):
         return "\n".join(
-            str(payload.get(k, ""))
-            for k in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz")
-            if payload.get(k)
+            str(payload.get(k, "")) for k in ("lead_uz", "body_1_uz", "kicker_uz") if payload.get(k)
         )
 
     def _send(self, chat_id, label, text):

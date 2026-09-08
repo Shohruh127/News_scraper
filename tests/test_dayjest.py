@@ -19,7 +19,6 @@ from apps.digest.models import Analysis
 def plain_data():
     return {
         "post_style": post_format.PLAIN_PHOTO_STYLE,
-        "headline_uz": "PDFdan interaktiv dars tayyorlaymiz",
         "lead_uz": "LessonBox yangi vosita chiqardi. U PDFni dars materiallariga aylantiradi.",
         "body_1_uz": "Konspektni yuklasangiz, quyidagilarni olasiz:\n\n"
         "– Mavzu bo'yicha slaydlar;\n– Javoblarni tekshiradigan testlar;\n– Ovozli izohlar.",
@@ -45,7 +44,7 @@ def test_plain_caption_keeps_the_lead_the_list_and_the_access_condition():
 
 def test_plain_caption_escapes_html():
     data = plain_data()
-    data["headline_uz"] = "Model <script> & test"
+    data["lead_uz"] = "Model <script> & test chiqdi. U ishlaydi."
     rendered = post_format.render_dayjest_post(data)
     assert "<script>" not in rendered
     assert "&lt;script&gt; &amp;" in rendered
@@ -80,18 +79,6 @@ def test_the_settings_can_tighten_the_caption_but_not_loosen_it():
     data["body_1_uz"] = "Qisqa jumla. " * 12
     with pytest.raises(ValueError, match="exceeds 7 sentences"):
         post_format.render_dayjest_post(data, max_chars=4000, max_sentences=99)
-
-
-def test_an_empty_headline_is_refused_not_silently_dropped():
-    """The rewrite may empty a secondary field; the headline is not one of them.
-
-    `parts` used to omit the bold line for a falsy headline instead of refusing, so a
-    simplify pass that returned "" shipped a caption with no headline at all.
-    """
-    data = plain_data()
-    data["headline_uz"] = ""
-    with pytest.raises(ValueError, match="headline_uz is empty"):
-        post_format.render_dayjest_post(data)
 
 
 def test_a_paragraph_that_opens_with_a_dash_is_not_a_list():

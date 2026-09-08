@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import artifacts, post_format, translation_gates
-from .editorial_prompts import EDITORIAL_UZ_PROMPT, SIMPLIFY_UZ_PROMPT, UZ_BLOCKS
+from .editorial_prompts import EDITORIAL_UZ_PROMPT, UZ_BLOCKS
 from .models import EXCLUDED_MATURITIES, Analysis, Article, Maturity, Topic
 
 log = logging.getLogger(__name__)
@@ -134,7 +134,6 @@ class EditorialUz(BaseModel):
     published as live links.
     """
 
-    headline_uz: str = ""
     lead_uz: str = ""
     body_1_uz: str = ""
     kicker_uz: str = ""
@@ -175,7 +174,6 @@ def shape_for(topic: str | None) -> str:
 EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "headline_uz": {"type": "string"},
         "lead_uz": {"type": "string"},
         "body_1_uz": {"type": "string"},
         "kicker_uz": {"type": "string"},
@@ -198,7 +196,7 @@ EDITORIAL_UZ_SCHEMA: dict[str, Any] = {
             },
         },
     },
-    "required": ["headline_uz", "lead_uz", "body_1_uz", "kicker_uz"],
+    "required": ["lead_uz", "body_1_uz", "kicker_uz"],
 }
 
 
@@ -1284,84 +1282,17 @@ def analyse_for_digest_logic(
                 _record_analysis(art, Analysis.Stage.EDITORIAL_UZ, discarded)
                 continue
 
-            simplified = _simplify_editorial_uz(art, result, client)
-            if simplified is not None:
-                result = simplified
-
+            # One call. The rewrite pass that used to run here cost ~45% of every
+            # article's tokens; measured 2026-09-08 it changed 7 of 15 posts substantially
+            # with nothing to show those were improvements, and its two unique jobs --
+            # cross-check against the article, do not repeat the lead -- now sit in the
+            # draft prompt's own self-check. The draft is the post.
             created.append(_record_analysis(art, Analysis.Stage.EDITORIAL_UZ, result))
             log.info("Uzbek post done for article %s", art.id)
         except Exception as exc:
             log.error("Uzbek editorial failed for article %s (%s): %s", art.id, art.title, exc)
 
     return created
-
-
-def _simplify_editorial_uz(article, first: ChatResult, client=None) -> ChatResult | None:
-    """Second pass: rewrite the draft for a school-age reader. Language only.
-
-    Returns None whenever the rewrite cannot be trusted - a raise, or a gate violation
-    against the article - and the caller then publishes the draft. The polish step must
-    never cost a post.
-
-    Reader-facing fields come from the rewrite; `technical` and `evidence_level` are
-    copied from the draft rather than trusted to survive a round trip through the model.
-    Cost is folded with `_combine` so the Analysis row reports both calls.
-    """
-    post_json = json.dumps(
-        {
-            k: first.payload.get(k)
-            for k in (
-                "headline_uz",
-                "lead_uz",
-                "body_1_uz",
-                "kicker_uz",
-                "evidence_level",
-                "technical",
-            )
-        },
-        ensure_ascii=False,
-        indent=1,
-    )
-    try:
-        rewritten = _editorial_call(
-            prompt=SIMPLIFY_UZ_PROMPT.format(
-                post_json=post_json, article_text=(article.extracted_text or "")[:8000]
-            ),
-            schema=EDITORIAL_UZ_SCHEMA,
-            model_cls=EditorialUz,
-            num_predict=settings.EDITORIAL_NUM_PREDICT,
-            client=client,
-            provider=settings.EDITORIAL_UZ_PROVIDER,
-            tier=TIER_DEEP,
-        )
-    except Exception as exc:
-        log.warning("Simplify pass failed for article %s; keeping the draft: %s", article.id, exc)
-        return None
-
-    merged = dict(first.payload)
-    normalized = _normalize_uz_payload(rewritten.payload)
-    # The rewrite may drop a secondary fact, so an emptied body_1_uz or kicker_uz is a
-    # legitimate edit. headline_uz and lead_uz are not: CLAUDE.md's rule is that the
-    # headline is never trimmed, and the prompt tells the rewrite that emptying a field
-    # is allowed without excepting them. An empty headline survives every gate --
-    # no numbers to check, the case gate skips a falsy headline, and the renderer emits
-    # no <b> line rather than refusing -- so it would publish a headline-less post.
-    ALWAYS_REQUIRED = ("headline_uz", "lead_uz")
-    for field in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz"):
-        value = normalized.get(field)
-        if isinstance(value, str) and (field not in ALWAYS_REQUIRED or value.strip()):
-            merged[field] = value
-
-    violations = _uz_violations(article, merged)
-    if violations:
-        log.warning(
-            "Simplify pass broke gates for article %s; keeping the draft: %s",
-            article.id,
-            violations,
-        )
-        return None
-
-    return _combine(first, rewritten._replace(payload=merged))
 
 
 def _retry_editorial_uz(art, violations, first, client):

@@ -137,23 +137,36 @@ The owner rejected both earlier A/B styles and clarified the audience on 2026-09
 ordinary people, including school students. Specialists read the linked article for detail.
 New editorial rows use `post_style: plain_photo_v1`.
 
-`apps/digest/editorial_prompts.py` asks for one clear development and at most two useful
-supporting facts. Omit nonessential technical mechanisms, benchmark tables and API lists;
-do not turn the caption into a glossary. Selected facts keep their qualifications,
-attribution and exact numbers. The rewrite may remove secondary facts; it must not invent
-actors, change a test into a release, or remove an essential limitation.
+`apps/digest/editorial_prompts.py` picks the most striking true fact first and simplifies
+second — in that order, because simplifying first is what sent every striking number into
+`technical`, a block that is never published. It ranks four kinds of fact (a human
+consequence, a limit the developer admits, a test result you can picture, a measure with a
+comparison) and names the bare capability list as the last resort. Selected facts keep their
+qualifications, attribution and exact numbers; a benchmark score arrives with its comparison
+or is dropped, while counts, prices and distances stand alone.
 
-- A short factual headline, up to 10 words, rendered bold.
-- `lead_uz`: one or two short sentences naming the main product and what happened.
-- `body_1_uz`: short prose, or two to three short bullets only when useful.
-- `kicker_uz`: one essential access condition or limitation, or empty.
+**No headline, and no bold.** Read against 63 technology posts on `@naebnet` on 2026-09-08:
+none carries a separate headline — the first paragraph is the hook and the news in one,
+71% shaped `<what we do with it>: <the fact>`, and 60% close on ten words or fewer.
+`headline_uz` left the schema that day; `render_item_post_v2` still renders it for the
+stored rows that have one.
+
+- `lead_uz`: one or two sentences. The opening formula (`MacBook'ni oqlaymiz: SponsorBar
+  ... chiqdi`) when it fits; a plain fact when it does not. Never empty.
+- `body_1_uz`: one or two short paragraphs, or two to three bullets when one tool does
+  several distinct things. A run of bullets costs one unit of the sentence budget, not one
+  per item — the item count is bounded on its own.
+- `kicker_uz`: the closing line, ten words or fewer — a consequence, a limit or who can use
+  it, drawn from the source. Wry is allowed; a fact, prediction or verdict the source does
+  not make is not. Two of the reference channel's devices were declined by the owner
+  because the reader may be a school student: a joke that states an opinion, and a call
+  to action.
 - Exactly one link: the original article URL, attached to a word in the lead by position.
 - No hashtag and no links footer.
 
-`body_1_uz` and `kicker_uz` may be emptied by the rewrite; **`headline_uz` and `lead_uz`
-never may.** The merge in `_simplify_editorial_uz` guarded only `lead_uz`, and the renderer
-omitted the bold line for a falsy headline rather than refusing, so a rewrite that returned
-`""` shipped a caption with no headline. Both halves now refuse it.
+Every number in that contract is enforced by `render_dayjest_post`, which discards a post
+that breaks one, so the prompt states exactly what the code accepts and a test compares
+the two.
 
 Target 350–700 characters, maximum 900; seven sentences/list items at most.
 `DAYJEST_MAX_CHARS` / `DAYJEST_MAX_SENTENCES` may tighten these guards and cannot raise
@@ -186,42 +199,29 @@ Already stored legacy posts keep their renderer for compatibility; they are not 
 or reposted automatically. Existing legacy text paths also have previews disabled.
 Source text is data, never instructions. Mechanical gates do not prove semantic correctness.
 
-## Two calls write the post, and both hold the voice
+## One call writes the post, and the topic block carries what varies
 
-`EDITORIAL_UZ_PROMPT` drafts from the article; `SIMPLIFY_UZ_PROMPT` reads the draft back as
-a reader would and checks it against the source. **Both carry the register rules.** The rule
-until 2026-08-28 was the opposite — the draft was to stay free of them and the rewrite alone
-was to carry them, because three prompt iterations never moved the drafting call off its
-translator register. That reasoning does not survive two changes made since:
+`EDITORIAL_UZ_PROMPT` is the whole editorial stage. The language-only rewrite added on
+2026-08-28 was removed on 2026-09-08. It cost ~45% of every article's tokens; on the
+19-article run of 2026-09-07 it changed 18 posts and almost all of it was paraphrase
+(`qo'shishini` → `qo'yishini`), and by 2026-09-08 it changed 7 of 15 substantially with
+nothing to show those were improvements. The two jobs only it did — cross-check against
+the article, do not repeat the lead in the body — fit in two lines of the draft's own
+self-check, and the register rules it once carried had already moved into the draft
+because a failed rewrite published the draft unchanged. The draft is the post.
 
-- `_simplify_editorial_uz` returns `None` on any failure — a provider error, or a rewrite
-  that breaks the gates — and the caller then publishes **the draft unchanged**. The draft
-  is a shipping path, not an intermediate, so it cannot be written in a register nobody
-  wants to read.
-- The draft is no longer a translation pass. It is told who the reader is in its first line
-  and writes for that reader directly.
+**A rule goes in the shared text only if it holds for every kind of story.** Anything
+shaded by topic lives in `UZ_BLOCKS`, because one block is sent per article: enriching a
+block costs one article its ~250 characters, enriching the base costs every article and
+has to stay generic. Before this the base had grown to 9000 characters across two prompts
+while the seven blocks stayed at one line each. Each block now says what is usually the
+striking fact in that kind of story, which of the four ranked kinds to reach for first, and
+the guardrail measured for that topic — and a test checks all three.
 
-Measured on the 19-article run of 2026-09-07 (`output/all-source-gemini/`): the rewrite
-changed 18 of 19 posts, and almost all of it was paraphrase churn — `qo'shishini` became
-`qo'yishini`, `sifatiga ta'sir qilmaydi` became `sifati o'zgarmaydi`. Its one repeated
-substantive win was turning a noun chain into a verb: *"Matnni Claude yozganini bildiruvchi
-ko'rinmas belgi"* became *"Claude yozgan matnlarga ko'rinmas belgi qo'shiladi"*. That is why
-the agency rules are now stated to **both** calls rather than only to the second — and why
-the rewrite is told, in as many words, not to rewrite a sentence that is already clear.
-
-What the two calls must not do is state the same rule in two wordings that drift. Every
-shared rule — `AUDIENCE_BLOCK`, `VOICE_BLOCK`, `FACTS_BLOCK`, `READER_FIELDS_BLOCK`,
-`JARGON_BLOCK` — is written once in `editorial_prompts.py` and composed into both prompts,
-and `test_every_shared_rule_is_written_once_and_composed_into_both_prompts` asserts identity
-rather than similarity, so composing the constant is the only way to pass. This removes the
-drift, not the tokens: the model still needs the rules on both calls.
-
-Each prompt keeps only the job the other cannot do. The draft chooses the news, writes the
-`technical` block and carries the few-shot examples; the rewrite cross-checks against the
-article and refuses to repeat the lead in the body. `READER_FIELDS_BLOCK` states the same
-900/7 budget the renderer enforces, and a test compares the two — a prompt that asks for
-more than `render_dayjest_post` accepts spends a full deep-tier call on a post the pipeline
-then discards.
+`_retry_editorial_uz` is not the rewrite and stays: it is the one retry that names the gate
+violations, after which a still-failing editorial is recorded with `discarded_violations`
+and the article is not re-drafted. `EDITORIAL_NUM_PREDICT` stays at 8000 — a thinking model
+bills its reasoning to that budget before writing, and an unused cap costs nothing.
 
 ## django_celery_beat does not prune
 

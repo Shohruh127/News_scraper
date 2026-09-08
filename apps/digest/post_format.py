@@ -492,20 +492,19 @@ def render_dayjest_post(
     """
     fields = {
         field: strip_markdown_formatting(item_data.get(field) or "").strip()
-        for field in ("headline_uz", "lead_uz", "body_1_uz", "kicker_uz")
+        for field in ("lead_uz", "body_1_uz", "kicker_uz")
     }
-    headline, lead, body, kicker = fields.values()
+    lead, body, kicker = fields.values()
     max_chars = min(max_chars, DAYJEST_MAX_CHARS)
     max_sentences = min(max_sentences, DAYJEST_MAX_SENTENCES)
 
+    # No headline, and no bold anywhere. Read against 63 technology posts on the channel
+    # this format is modelled on (2026-09-08): none carries a separate headline; the first
+    # paragraph is the hook and the news in one. A `headline_uz` a stored row still has is
+    # a legacy field and is ignored here; render_item_post_v2 keeps rendering it for the
+    # rows that were written with one.
     if not lead:
         raise ValueError("Cannot render dayjest: lead_uz is empty")
-    # Refused, not silently dropped. `parts` used to omit the bold line for a falsy
-    # headline, so a rewrite that returned "" shipped a caption with no headline at all.
-    if not headline:
-        raise ValueError("Cannot render dayjest: headline_uz is empty")
-    if "\n" in headline or len(headline.split()) > 10:
-        raise ValueError("Dayjest headline must be one line, at most 10 words")
     if "\n" in lead or len(split_sentences(lead)) > 2:
         raise ValueError("Dayjest lead must be one paragraph, at most 2 sentences")
     if "\n" in kicker or len(split_sentences(kicker)) > 1:
@@ -533,7 +532,7 @@ def render_dayjest_post(
     if not bullets and len([p for p in body.split("\n\n") if p.strip()]) > 3:
         raise ValueError("Dayjest body must contain at most 3 paragraphs")
 
-    parts = [f"<b>{html_escape(headline)}</b>", linkify_lead(lead, item_data.get("url", ""))]
+    parts = [linkify_lead(lead, item_data.get("url", ""))]
     if body:
         parts.append(html_escape(body))
     if kicker:

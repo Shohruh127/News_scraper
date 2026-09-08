@@ -87,7 +87,6 @@ def test_gemini_chat_converts_schema_to_gemini_dialect(gemini):
 def test_dayjest_schema_is_accepted_by_generate_content(gemini):
     """Replay the 400 discovered with the real dayjest link-array schema."""
     payload = {
-        "headline_uz": "Vosita chiqdi",
         "lead_uz": "Yangi vosita chiqdi.",
         "body_1_uz": "",
         "kicker_uz": "",
@@ -108,7 +107,7 @@ def test_dayjest_schema_is_accepted_by_generate_content(gemini):
     result = llm.gemini_chat(
         model=gemini.GEMINI_MODEL, prompt="Write a dayjest.", schema=llm.EDITORIAL_UZ_SCHEMA
     )
-    assert llm.EditorialUz.model_validate(result.payload).headline_uz
+    assert llm.EditorialUz.model_validate(result.payload).lead_uz
     assert route.call_count == 1
 
 
