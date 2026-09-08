@@ -1195,12 +1195,34 @@ def render_editorial_preview(article, payload: dict) -> str:
     )
 
 
+#: What the reader sees. The gates judge these and nothing else.
+READER_FIELDS = ("lead_uz", "body_1_uz", "kicker_uz")
+
+
+def reader_fields(payload: dict) -> dict:
+    """The reader-facing slice of an editorial payload, for the source-fidelity gates.
+
+    The gates used to receive the whole payload, and `check_numbers_against_source`
+    walks every key it is given -- so `technical`, a block that is never published and
+    that the prompt tells the model to copy verbatim from the source, was judged as a
+    reader-facing numeric claim. Measured 2026-09-08 on a sherpa-onnx release: the gate
+    reported "Number not in the article: 2.0 (in technical)" because
+    `technical.license` was "Apache-2.0". In the pipeline that is one retry and then a
+    discarded article, over a licence string. `post_style` travels along because the
+    gate reads it to decide the legacy headline exemption; `technical` reaches the
+    glossary gate through its own parameter, as the English side.
+    """
+    return {k: payload.get(k, "") for k in READER_FIELDS} | (
+        {"post_style": payload["post_style"]} if "post_style" in payload else {}
+    )
+
+
 def _uz_violations(article, payload: dict) -> list[str]:
     """Check source fidelity gates and the actual new renderer before storing a post."""
     violations = translation_gates.validate_against_source(
         article_title=article.title,
         article_text=article.extracted_text or "",
-        uz_fields=payload,
+        uz_fields=reader_fields(payload),
         technical=payload.get("technical"),
     )
     if payload.get("post_style") in post_format.DAYJEST_STYLES:

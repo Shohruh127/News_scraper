@@ -860,3 +860,69 @@ def test_the_voice_asks_for_short_words_and_the_examples_practise_it():
         "tekshiruvchi",
     ):
         assert long_form not in outputs, f"an example still uses the long form {long_form!r}"
+
+
+def test_the_number_gate_never_sees_the_technical_block(risk_article):
+    """ "Apache-2.0" in technical.license is not a claim the reader is shown.
+
+    Measured 2026-09-08 on a sherpa-onnx release: the gate reported "Number not in the
+    article: 2.0 (in technical)" and, in the pipeline, that is one retry and then a
+    discarded article -- over a licence string. The prompt tells the model to copy
+    `technical` verbatim from the source, so version numbers, licence names and install
+    commands land there by design; the gate must judge only what the reader sees.
+    """
+    from apps.digest import llm
+
+    payload = {
+        "post_style": "plain_photo_v1",
+        "lead_uz": "Model 123B parametr bilan filtrni chetlab o'tdi.",
+        "body_1_uz": "Hujum 128k kontekst oynasida sinalgan.",
+        "kicker_uz": "",
+        "evidence_level": "vendor_claim_only",
+        "technical": {
+            "license": "Apache-2.0",
+            "install": "pip install sherpa-onnx==1.13.7",
+            "api_url": "https://example.com/docs#gemini-2-5-flash",
+        },
+    }
+    assert llm._uz_violations(risk_article, payload) == []
+
+
+def test_an_invented_number_in_a_reader_field_is_still_caught(risk_article):
+    """The counter-case: narrowing the gate's input must not blind it."""
+    from apps.digest import llm
+
+    payload = {
+        "post_style": "plain_photo_v1",
+        "lead_uz": "Model 999B parametr bilan filtrni chetlab o'tdi.",
+        "body_1_uz": "",
+        "kicker_uz": "",
+        "evidence_level": "vendor_claim_only",
+        "technical": {"license": "Apache-2.0"},
+    }
+    violations = llm._uz_violations(risk_article, payload)
+    assert any("999" in v and "lead_uz" in v for v in violations)
+    assert not any("technical" in v for v in violations)
+
+
+def test_reader_fields_is_exactly_the_published_slice():
+    from apps.digest import llm
+
+    sliced = llm.reader_fields(
+        {
+            "lead_uz": "a",
+            "body_1_uz": "b",
+            "kicker_uz": "c",
+            "post_style": "plain_photo_v1",
+            "technical": {"x": 1},
+            "evidence_level": "vendor_claim_only",
+            "discarded_violations": ["y"],
+        }
+    )
+    assert sliced == {
+        "lead_uz": "a",
+        "body_1_uz": "b",
+        "kicker_uz": "c",
+        "post_style": "plain_photo_v1",
+    }
+    assert llm.reader_fields({"lead_uz": "a"}) == {"lead_uz": "a", "body_1_uz": "", "kicker_uz": ""}

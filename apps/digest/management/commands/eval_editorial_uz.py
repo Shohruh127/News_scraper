@@ -133,7 +133,7 @@ class Command(BaseCommand):
         violations = translation_gates.validate_against_source(
             article_title=article.title,
             article_text=article.extracted_text or "",
-            uz_fields=result.payload,
+            uz_fields=llm.reader_fields(result.payload),
             technical=result.payload.get("technical"),
         )
         cost = f"1 call, {result.input_tokens} in / {result.output_tokens} out"
