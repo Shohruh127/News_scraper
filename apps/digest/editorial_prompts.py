@@ -46,8 +46,7 @@ UZ_BLOCKS = {
     "shu farq qiziq. Manbada bo'lmagan hujumchi yoki qo'rqinchli voqeani qo'shma: qo'rqitish "
     "emas, tushuntirish kerak.",
     "research": "Kutilmagan natija nima edi? Ko'z oldiga keladigan sinov natijasiga qara: "
-    "nima yasadi, qayerda ishladi, nechanchi urinishda. O'yin haqidagi xabarda uni qayerda "
-    "o'ynash mumkinligi ichki vositalardan muhimroq. Sinov o'tkazish bilan kodni qo'lda "
+    "nima yasadi, qayerda ishladi, nechanchi urinishda. Sinov o'tkazish bilan kodni qo'lda "
     "tuzatishni adashtirma.",
     "product": "Bugun kim ishlata oladi va nima to'sib turadi? Narx, navbat, davlat "
     "cheklovi yoki qurilma sharti - o'quvchiga tegishlisini tanla; bu ko'pincha yakun "
