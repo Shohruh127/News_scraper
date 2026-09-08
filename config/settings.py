@@ -149,7 +149,14 @@ EDITORIAL_UZ_PROVIDER = env("EDITORIAL_UZ_PROVIDER", default=LLM_PROVIDER)
 #: The single-stage prompt is the longer of the two — it carries the article, the class block
 #: and the Uzbek few-shot examples, and writes the post rather than notes — so it needs the
 #: larger budget, and the two-stage path loses nothing by sharing it.
-EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=5000)
+#:
+#: Raised 5000 -> 8000 on 2026-09-08. The interest-first prompts are ~31% longer, and on a
+#: 15-article Gemini run three calls stopped at MAX_TOKENS with output of 4986, 4984 and 4986
+#: against the 5000 ceiling: two rewrites were lost and one draft failed outright, costing
+#: that article its post. Thinking tokens bill to this budget before the answer is written,
+#: so the headroom has to cover reasoning as well. The cap is a limit, not a cost — the model
+#: stops when it is done — so the unused half of it is free.
+EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=8000)
 MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")

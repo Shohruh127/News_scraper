@@ -7,6 +7,7 @@ Performs pure URL validation (no DNS lookup, no HTTP request) to reject unsafe/p
 import ipaddress
 import logging
 import re
+from html import unescape as html_unescape
 from urllib.parse import urljoin, urlparse
 
 log = logging.getLogger(__name__)
@@ -128,6 +129,15 @@ def extract_image_url_from_html(html: str, base_url: str = "") -> str | None:
 
     if not candidate:
         return None
+
+    # A meta tag's content is HTML, so its `&` separators arrive as `&amp;`. Unescaping is
+    # not cosmetic: measured 2026-09-08 against openai.com, the og:image
+    # "...png?w=1600&amp;h=900&amp;fit=fill" reached the CDN as the parameters "w",
+    # "amp;h" and "amp;fit", which Contentful answered with 400 and Telegram then
+    # reported as a failed sendPhoto. Unescaped, the same URL returns a 668 KB PNG.
+    # Every image URL carrying query parameters is affected -- Contentful, imgix,
+    # Cloudinary -- and four of fifteen posts in that run lost their photo to it.
+    candidate = html_unescape(candidate)
 
     # Resolve relative URL against base_url
     if base_url:

@@ -110,3 +110,29 @@ def test_safe_logging_in_action(caplog):
     assert "secret-cdn.com" in caplog.text
     assert "access_key" not in caplog.text
     assert "super_secret" not in caplog.text
+
+
+def test_html_entities_in_the_image_url_are_unescaped():
+    """A meta tag's content is HTML, so its `&` separators arrive as `&amp;`.
+
+    Measured 2026-09-08 against openai.com: the og:image
+    "...png?w=1600&amp;h=900&amp;fit=fill" reached Contentful as the parameters "w",
+    "amp;h" and "amp;fit", which it rejected with 400, and Telegram reported the send as
+    a failed sendPhoto. Four of fifteen posts in that run lost their photo. Unescaped, the
+    same URL returns a 668 KB PNG. Every image URL with query parameters is exposed to
+    this -- Contentful, imgix, Cloudinary.
+    """
+    html = (
+        '<meta property="og:image" '
+        'content="https://cdn.example.com/a.png?w=1600&amp;h=900&amp;fit=fill">'
+    )
+    assert (
+        media.extract_image_url_from_html(html)
+        == "https://cdn.example.com/a.png?w=1600&h=900&fit=fill"
+    )
+
+
+def test_a_url_without_entities_is_left_alone():
+    """The counter-case: unescaping must not rewrite a URL that was already correct."""
+    html = '<meta property="og:image" content="https://cdn.example.com/a.png?w=1600&h=900">'
+    assert media.extract_image_url_from_html(html) == "https://cdn.example.com/a.png?w=1600&h=900"
