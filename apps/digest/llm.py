@@ -11,6 +11,7 @@ Rules:
 import json
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
@@ -20,8 +21,16 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import artifacts, post_format, translation_gates
-from .editorial_prompts import EDITORIAL_UZ_PROMPT, UZ_BLOCKS
-from .models import EXCLUDED_MATURITIES, Analysis, Article, Maturity, Topic
+from .editorial_prompts import EDITORIAL_UZ_PROMPT, RECENT_LEADS_BLOCK, UZ_BLOCKS
+from .models import (
+    EXCLUDED_MATURITIES,
+    Analysis,
+    Article,
+    DeliveryState,
+    DigestItem,
+    Maturity,
+    Topic,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1290,6 +1299,9 @@ def analyse_for_digest_logic(
         .prefetch_related("analyses")
     )
 
+    # One query per block. Each post is then also shown the posts written before it in
+    # this block, newest first, so six posts composed together do not open alike.
+    shown = recent_published_leads()
     created: list[Analysis] = []
     for art in articles:
         existing = (
@@ -1314,14 +1326,14 @@ def analyse_for_digest_logic(
             continue
 
         try:
-            result = editorial_uz_for_article(art, client=client)
+            result = editorial_uz_for_article(art, client=client, recent_leads=shown)
 
             violations = _uz_violations(art, result.payload)
             if violations:
                 log.warning(
                     "Uzbek gates failed for article %s: %s. Retrying once.", art.id, violations
                 )
-                result = _retry_editorial_uz(art, violations, result, client)
+                result = _retry_editorial_uz(art, violations, result, client, shown)
 
             still = _uz_violations(art, result.payload)
             if still:
@@ -1343,6 +1355,7 @@ def analyse_for_digest_logic(
             # cross-check against the article, do not repeat the lead -- now sit in the
             # draft prompt's own self-check. The draft is the post.
             created.append(_record_analysis(art, Analysis.Stage.EDITORIAL_UZ, result))
+            shown = [result.payload["lead_uz"], *shown][:RECENT_LEADS]
             log.info("Uzbek post done for article %s", art.id)
         except Exception as exc:
             log.error("Uzbek editorial failed for article %s (%s): %s", art.id, art.title, exc)
@@ -1350,20 +1363,61 @@ def analyse_for_digest_logic(
     return created
 
 
-def _retry_editorial_uz(art, violations, first, client):
+#: How many of the channel's latest leads the editorial is shown. Five is about what a
+#: reader scrolling the channel has on screen; a week's worth would blunt the point.
+RECENT_LEADS = 5
+
+
+def recent_published_leads(limit: int = RECENT_LEADS) -> list[str]:
+    """The first sentences of the last `limit` posts the channel shows, newest first.
+
+    Read from SENT items only: a failed or still-queued item is not on the reader's
+    screen. The lead is the latest usable editorial row's, which is the row publish sent.
+    """
+    items = (
+        DigestItem.objects.filter(channel_delivery_state=DeliveryState.SENT)
+        .select_related("article")
+        .order_by("-digest__composed_at", "-position")[:limit]
+    )
+    leads = []
+    for item in items:
+        rows = item.article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
+        for row in rows.order_by("-created_at"):
+            lead = (row.payload.get("lead_uz") or "").strip()
+            if lead and not row.payload.get("discarded_violations"):
+                leads.append(lead)
+                break
+    return leads
+
+
+def _editorial_prompt(article: Article, recent_leads: Sequence[str] = ()) -> str:
+    """The one prompt, built in one place for the draft and its retry.
+
+    The channel's recent leads go after the article, so the last thing the model reads
+    before writing is the shapes it must not open with. Nothing is appended when there
+    are none: the eval command and a fresh channel get the bare prompt.
+    """
+    block_key = shape_for(_classified_topic(article))
+    prompt = EDITORIAL_UZ_PROMPT.format(
+        block=UZ_BLOCKS[block_key],
+        title=article.title,
+        source=article.source.name if article.source else "",
+        text=(article.extracted_text or "")[:8000],
+    )
+    if recent_leads:
+        listed = "\n".join(f"- {lead}" for lead in recent_leads)
+        prompt += RECENT_LEADS_BLOCK.format(leads=listed)
+    return prompt
+
+
+def _retry_editorial_uz(art, violations, first, client, recent_leads: Sequence[str] = ()):
     """One retry naming the violations, then keep whichever attempt is clean.
 
     A permanently failing article is dropped by compose_and_publish, which filters
     candidates on a usable row; DIGEST_SELECT_MARGIN covers the hole.
     """
-    block_key = shape_for(_classified_topic(art))
     retry_prompt = (
-        EDITORIAL_UZ_PROMPT.format(
-            block=UZ_BLOCKS[block_key],
-            title=art.title,
-            source=art.source.name if art.source else "",
-            text=(art.extracted_text or "")[:8000],
-        )
+        _editorial_prompt(art, recent_leads)
         + "\n\nIMPORTANT: your previous answer failed these checks:\n"
         + "\n".join(f"- {v}" for v in violations)
         + "\nFix exactly these and return valid JSON."
@@ -1385,7 +1439,11 @@ def _retry_editorial_uz(art, violations, first, client):
     return _combine(first, retry)
 
 
-def editorial_uz_for_article(article: Article, client: httpx.Client | None = None) -> ChatResult:
+def editorial_uz_for_article(
+    article: Article,
+    client: httpx.Client | None = None,
+    recent_leads: Sequence[str] = (),
+) -> ChatResult:
     """Read the article and write the Uzbek post in one call (2026-08-26 design).
 
     `analyse_for_digest_logic` is the pipeline's only caller. This was introduced beside
@@ -1394,15 +1452,12 @@ def editorial_uz_for_article(article: Article, client: httpx.Client | None = Non
 
     No Analysis row is written here. The caller decides whether the result is worth storing,
     which keeps the eval command from polluting the pipeline's data.
+
+    `recent_leads` are the channel's latest first sentences, shown so the post does not
+    open like them. The pipeline passes them; the eval command passes none.
     """
-    block_key = shape_for(_classified_topic(article))
     result = _editorial_call(
-        prompt=EDITORIAL_UZ_PROMPT.format(
-            block=UZ_BLOCKS[block_key],
-            title=article.title,
-            source=article.source.name if article.source else "",
-            text=(article.extracted_text or "")[:8000],
-        ),
+        prompt=_editorial_prompt(article, recent_leads),
         schema=EDITORIAL_UZ_SCHEMA,
         model_cls=EditorialUz,
         num_predict=settings.EDITORIAL_NUM_PREDICT,

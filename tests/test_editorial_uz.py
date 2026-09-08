@@ -943,3 +943,153 @@ def test_the_facts_block_preserves_the_degree_of_a_claim():
     assert '"does not work well" — "yaxshi ishlamaydi"' in f
     assert '"may" — "mumkin", "will" — "bo\'ladi"' in f
     assert "shablon yoki prototip — tayyor mahsulot emas" in f
+
+
+def test_recent_leads_are_the_last_sent_posts_newest_first():
+    """The reader's screen, not the database: SENT only, newest block first, five at most,
+    and a discarded re-draft never replaces the lead that actually went out."""
+    from datetime import date, timedelta
+
+    from django.utils import timezone
+
+    from apps.digest import llm
+    from apps.digest.models import DeliveryState, Digest, DigestItem
+
+    source = Source.objects.create(
+        name="lead_src", connector=Source.Connector.RSS, url="https://l.test/rss", priority=50
+    )
+
+    def article(n):
+        a = Article.objects.create(
+            source=source,
+            canonical_url=f"https://l.test/{n}",
+            content_hash=f"lead_h{n}",
+            title=f"Article {n}",
+            extracted_text="x " * 50,
+            status=Article.Status.CLASSIFIED,
+        )
+        Analysis.objects.create(
+            article=a,
+            stage=Analysis.Stage.EDITORIAL_UZ,
+            model_tag="gemini",
+            payload={"lead_uz": f"Lead {n}.", "post_style": "plain_photo_v1"},
+            latency_ms=1,
+        )
+        return a
+
+    older = Digest.objects.create(digest_date=date(2026, 9, 6), edition=Digest.Edition.EVENING)
+    newer = Digest.objects.create(digest_date=date(2026, 9, 7), edition=Digest.Edition.MORNING)
+    Digest.objects.filter(pk=older.pk).update(composed_at=timezone.now() - timedelta(days=1))
+    for pos in range(1, 5):
+        DigestItem.objects.create(
+            digest=older,
+            article=article(pos),
+            position=pos,
+            score=0.5,
+            channel_delivery_state=DeliveryState.SENT,
+        )
+    states = {
+        5: DeliveryState.SENT,
+        6: DeliveryState.FAILED,
+        7: DeliveryState.SENT,
+        8: DeliveryState.PENDING,
+    }
+    for pos, (n, state) in enumerate(states.items(), start=1):
+        DigestItem.objects.create(
+            digest=newer, article=article(n), position=pos, score=0.5, channel_delivery_state=state
+        )
+    seven = Article.objects.get(title="Article 7")
+    Analysis.objects.create(
+        article=seven,
+        stage=Analysis.Stage.EDITORIAL_UZ,
+        model_tag="gemini",
+        payload={"lead_uz": "Bad 7.", "discarded_violations": ["numbers"]},
+        latency_ms=1,
+    )
+
+    assert llm.recent_published_leads() == ["Lead 7.", "Lead 5.", "Lead 4.", "Lead 3.", "Lead 2."]
+
+
+def test_the_recent_leads_go_after_the_article_and_only_when_there_are_some(risk_article):
+    from apps.digest import llm
+
+    bare = llm._editorial_prompt(risk_article)
+    assert "recent_leads" not in bare
+
+    shown = llm._editorial_prompt(
+        risk_article, ["Google yangi modelni chiqardi.", "OpenAI GPT-6 ni chiqardi."]
+    )
+    assert shown.startswith(bare), "the prompt itself is untouched; the leads come after"
+    assert (
+        "<recent_leads>\n- Google yangi modelni chiqardi.\n- OpenAI GPT-6 ni chiqardi.\n"
+        "</recent_leads>"
+    ) in shown
+    assert "Shu qolipda boshlama" in shown
+
+
+@respx.mock
+def test_the_pipeline_shows_each_post_the_channel_s_leads_and_the_block_s_own(
+    risk_article, settings
+):
+    """Anti-repetition is a pipeline behaviour, not a prompt constant: the leads come from
+    SENT items, and inside one block each post also sees the posts written before it."""
+    from datetime import date
+
+    from apps.digest import llm
+    from apps.digest.models import DeliveryState, Digest, DigestItem
+
+    settings.EDITORIAL_UZ_PROVIDER = "gateway"
+    settings.GATEWAY_BASE_URL = "http://gw.test/v1"
+    settings.GATEWAY_TOKEN = "sk-test"
+
+    sent_before = Article.objects.create(
+        source=risk_article.source,
+        canonical_url="https://e.test/sent",
+        content_hash="uz_sent",
+        title="Sent before",
+        extracted_text="x " * 50,
+        status=Article.Status.CLASSIFIED,
+    )
+    Analysis.objects.create(
+        article=sent_before,
+        stage=Analysis.Stage.EDITORIAL_UZ,
+        model_tag="gemini",
+        payload={"lead_uz": "Google Gemini 4 ni chiqardi.", "post_style": "plain_photo_v1"},
+        latency_ms=1,
+    )
+    digest = Digest.objects.create(digest_date=date(2026, 9, 7))
+    DigestItem.objects.create(
+        digest=digest,
+        article=sent_before,
+        position=1,
+        score=0.5,
+        channel_delivery_state=DeliveryState.SENT,
+    )
+    second = Article.objects.create(
+        source=risk_article.source,
+        canonical_url="https://e.test/second",
+        content_hash="uz_h2",
+        title="Second in the block",
+        extracted_text=risk_article.extracted_text,
+        status=Article.Status.CLASSIFIED,
+    )
+
+    prompts = []
+
+    def capture(request):
+        prompts.append(json.loads(request.content)["messages"][0]["content"])
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(UZ_PAYLOAD)}}]}
+        )
+
+    respx.post("http://gw.test/v1/chat/completions").mock(side_effect=capture)
+
+    llm.analyse_for_digest_logic([risk_article.id, second.id])
+
+    # Whichever article the batch took first: the post written first sees only the
+    # channel, the one written second sees the channel and the first.
+    first, second_prompt = prompts
+    assert "- Google Gemini 4 ni chiqardi." in first
+    assert "- Qwen" not in first, "nothing from this block has been written yet"
+    # The second post is told the first one's lead as well, newest first.
+    assert second_prompt.index("- Qwen") < second_prompt.index("- Google Gemini 4")

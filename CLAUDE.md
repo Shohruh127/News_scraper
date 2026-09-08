@@ -225,6 +225,22 @@ bills its reasoning to that budget before writing, one dense article hit 8000 on
 consecutive runs and with a single call there is no draft to fall back to, and an unused
 cap costs nothing.
 
+## The editorial is shown the channel's last five leads
+
+Added 2026-09-08. Seven of eight consecutive published leads read "<Kompaniya>
+<narsa>ni chiqardi", and a rule asking for variety in the abstract did not move that: the
+model reads such a rule and does not apply it. What it can act on is the exact shapes to
+avoid, so `analyse_for_digest_logic` reads the last five `SENT` items' leads
+(`llm.recent_published_leads`, newest first, from the row publish actually sent) and
+`_editorial_prompt` appends them after the article under `<recent_leads>` with one
+instruction: do not open like these. Inside one block each post is also shown the posts
+written before it, so six posts composed together do not open alike.
+
+Two things follow. The list comes from `SENT` items only - a failed or queued item is
+not on the reader's screen. And the eval command, the A/B scripts and a fresh channel
+pass nothing, so they get the bare prompt: `RECENT_LEADS_BLOCK` is written once in
+`editorial_prompts.py`, and the template itself carries no placeholder for it.
+
 ## django_celery_beat does not prune
 
 `CELERY_BEAT_SCHEDULER` is `DatabaseScheduler`, so the live schedule is rows in `PeriodicTask`,
@@ -277,6 +293,11 @@ Stages route independently, each accepting `gateway | mimo | gemini`:
 - `CLASSIFIER_PROVIDER` deliberately does **not** inherit `LLM_PROVIDER`. These two stages make
   several hundred calls a day; inheriting would move that volume silently when the editorial
   provider changes. Any new provider setting must default to preserving current behaviour.
+- **The editorial samples at `EDITORIAL_TEMPERATURE` (default 1.0); triage and
+  classification send 0.** Every call was pinned at 0 until 2026-09-08. At 0 the model
+  returns its single most probable continuation, which with examples in the prompt is
+  the examples' shape. 1.0 is the model's own default, read from the Gemini API's model
+  listing rather than remembered; decisions stay deterministic on purpose.
 - **Uzbek editorial runs on the deep tier.** One call writes reader-facing Uzbek and extracts the
   technical block directly.
 - The gateway addresses models by tier alias only; sending a real model name is a 404.
