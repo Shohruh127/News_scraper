@@ -82,6 +82,12 @@ Idoraviy til ("imkoniyatini taqdim etadi", "yechim joriy etildi") va "token", "A
 "benchmark", "inference" kabi so'zlar yo'q: qaysi ishni bajarishini ayt yoki tafsilotni tashla.
 Har jumlaning egasi aniq: kompaniya, dastur yoki o'quvchi. Ot zanjiri o'rniga fe'l -
 "Matnni X yozganini bildiruvchi belgi" emas, "X yozgan matnga belgi qo'shiladi".
+Uzun, murakkab, ko'p bo'g'inli so'zni bir nechta qisqa, oddiy so'zga aylantir - tilshunos
+bo'lmagan oddiy odam o'qiganda oson tushunsin. Uzun so'zni oxirigacha o'qiguncha boshi
+esdan chiqadi. Ayniqsa ruscha uslubdagi zanjirlar: "tanlovlarini o'rgandilar" emas -
+"nimani tanlashini ko'rdilar"; "tavsiya etadi" emas - "maslahat beradi"; "ishga tushirish
+jarayoni" emas - "sinov". Bir gapda ketma-ket kelsa, gapni ikkiga bo'l. Mahsulot va
+kompaniya nomlariga bu tegmaydi.
 
 Ochilish: mos kelsa lead `<o'quvchi nima qiladi yoki nima oladi>: <fakt>` shaklida -
 "MacBook'ni oqlaymiz: SponsorBar menyu qatorini reklamaga beradigan ilova chiqdi."
@@ -128,30 +134,28 @@ Odatda 3 paragraf, 300–600 belgi. Chegara: 900 belgi, 7 gap/band. To'ldirish s
   local_deployable boolean, aniq aytilmasa false.
 Matnda HTML, Markdown, hashtag va URL yo'q."""
 
-EXAMPLES_BLOCK = """## Misollar - to'qima, faktlarini ko'chirma
+EXAMPLES_BLOCK = """## Misollar - to'qima, faktlarini ko'chirma. So'zlari qisqa, gaplari qisqa.
 Manba: LessonBox PDFdan slaydlar, testlar va ovozli izoh yaratadi. Demo ochiq, xizmat pulli.
-lead_uz: Konspektdan darsni o'zi yasaydi: LessonBox PDFni dars materiallariga
-aylantiradigan dastur chiqardi.
-body_1_uz: Bitta PDFdan uchta narsa tayyorlanadi:
+lead_uz: Konspektdan dars yasaydi: LessonBox dasturi PDFdan tayyor dars qiladi.
+body_1_uz: Bitta PDFdan uch narsa chiqadi:
 – mavzu bo'yicha slaydlar;
-– javoblarni tekshiradigan testlar;
+– javobni tekshiradigan testlar;
 – darsning ovozli izohi.
-kicker_uz: Sinov versiyasi ochiq, to'liq xizmat pulli.
+kicker_uz: Sinov varianti bepul, to'liq xizmat pulli.
 
 Manba: MarkCheck fayl AI tomonidan qayta ishlanganini belgi orqali tekshiradi. Belgi asl
 muallifni isbotlamaydi. Tekshiruv qurilmada bajariladi.
-lead_uz: Faylni AI qayta ishlaganini tekshiramiz: MarkCheck fayldagi maxsus belgini
-o'qiydigan vosita chiqardi.
-body_1_uz: Lekin belgi rasm yoki matnning asl muallifi kimligini isbotlamaydi - faqat fayl
-qayta ishlanganini ko'rsatadi. Tekshiruv qurilmaning o'zida, serverga yuborilmaydi.
-kicker_uz: Kim yozganini bu tekshiruvchi ayta olmaydi.
+lead_uz: Faylga AI tekkanini tekshiramiz: MarkCheck fayldagi maxsus belgini o'qiydi.
+body_1_uz: Lekin belgi rasm yoki matnni kim yozganini aytmaydi. U faqat faylga AI
+tekkanini ko'rsatadi. Tekshiruv o'z qurilmangizda bo'ladi, serverga hech narsa ketmaydi.
+kicker_uz: Kim yozganini bu belgi aytmaydi.
 
 Manba: RoboPair ikki robot qo'liga vazifani bo'lib beradi. Laboratoriya sinovida qo'llar
 oldin mashq qilinmagan usulda ham birga ishlagan. Sotuv haqida ma'lumot yo'q.
-lead_uz: RoboPair tizimi ikkita robot qo'liga bitta vazifani bo'lib beradi.
-body_1_uz: Tadqiqotchilar aytishicha, qo'llar oldin mashq qilinmagan usulda ham ishni
-bo'lisha olgan.
-kicker_uz: Hozircha bu laboratoriyadagi sinov natijasi."""
+lead_uz: RoboPair ikkita robot qo'liga bitta ishni bo'lib beradi.
+body_1_uz: Qo'llar oldin ko'rmagan usulda ham ishni bo'lib olgan - buni tadqiqotchilar
+aytmoqda.
+kicker_uz: Hozircha bu faqat laboratoriya sinovi."""
 
 
 EDITORIAL_UZ_PROMPT = (

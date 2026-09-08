@@ -825,3 +825,38 @@ def test_one_example_shows_the_opening_formula_and_one_shows_it_is_optional():
     assert len(leads) == 3
     with_formula = [ln for ln in leads if ":" in ln.split("lead_uz:", 1)[1]]
     assert 1 <= len(with_formula) <= 2, "some, not all, examples use the colon opening"
+
+
+def test_the_voice_asks_for_short_words_and_the_examples_practise_it():
+    """Short words, not just short sentences -- the owner's rule of 2026-09-08.
+
+    The prompt already said "sodda til" and "oddiy fe'llar" and the output was still
+    "tanlovlarini o'rgandilar": a principle the model reads and does not apply to words.
+    The model copies examples, so the examples have to practise the rule themselves --
+    no passive participle chains (-ilgan, -lanadi, -ilanadi) and no long derived nouns.
+    """
+    from apps.digest.editorial_prompts import EXAMPLES_BLOCK, VOICE_BLOCK
+
+    v = " ".join(VOICE_BLOCK.split())
+    assert "ko'p bo'g'inli so'zni bir nechta qisqa, oddiy so'zga" in v
+    assert "oxirigacha o'qiguncha boshi esdan chiqadi" in v, "the reason, in the owner's words"
+    assert '"tavsiya etadi" emas - "maslahat beradi"' in v
+    assert "kompaniya nomlariga bu tegmaydi" in v, "the rule must not eat product names"
+
+    outputs = " ".join(
+        line.split(":", 1)[1]
+        for line in EXAMPLES_BLOCK.splitlines()
+        if line.startswith(("lead_uz:", "body_1_uz:", "kicker_uz:"))
+    )
+    for long_form in (
+        "materiallariga",
+        "aylantiradigan",
+        "tayyorlanadi",
+        "ishlanganini",
+        "isbotlamaydi",
+        "yuborilmaydi",
+        "qilinmagan",
+        "laboratoriyadagi",
+        "tekshiruvchi",
+    ):
+        assert long_form not in outputs, f"an example still uses the long form {long_form!r}"
