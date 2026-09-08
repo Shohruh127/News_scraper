@@ -1175,6 +1175,26 @@ def _normalize_uz_payload(payload: dict) -> dict:
     return normalized
 
 
+def render_editorial_preview(article, payload: dict) -> str:
+    """The caption exactly as the channel would show it, or ValueError naming why not.
+
+    One place builds the renderer's input from an article and a payload. The gates use
+    it to refuse a post before storing it, and the admin uses it to show the operator a
+    freshly written post without creating a Digest -- a Digest would claim a publishing
+    slot, and the uniqueness constraint on (digest_date, edition) makes that expensive.
+    """
+    return post_format.render_dayjest_post(
+        {
+            **payload,
+            "url": article.canonical_url,
+            "article_text": article.extracted_text or "",
+            "topic": _classified_topic(article) or "production_engineering",
+        },
+        max_chars=settings.DAYJEST_MAX_CHARS,
+        max_sentences=settings.DAYJEST_MAX_SENTENCES,
+    )
+
+
 def _uz_violations(article, payload: dict) -> list[str]:
     """Check source fidelity gates and the actual new renderer before storing a post."""
     violations = translation_gates.validate_against_source(
@@ -1185,16 +1205,7 @@ def _uz_violations(article, payload: dict) -> list[str]:
     )
     if payload.get("post_style") in post_format.DAYJEST_STYLES:
         try:
-            post_format.render_dayjest_post(
-                {
-                    **payload,
-                    "url": article.canonical_url,
-                    "article_text": article.extracted_text or "",
-                    "topic": _classified_topic(article) or "production_engineering",
-                },
-                max_chars=settings.DAYJEST_MAX_CHARS,
-                max_sentences=settings.DAYJEST_MAX_SENTENCES,
-            )
+            render_editorial_preview(article, payload)
         except ValueError as exc:
             violations.append(str(exc))
     return violations
@@ -1221,8 +1232,14 @@ def _classified_topic(article: Article) -> str | None:
 def analyse_for_digest_logic(
     article_ids: list[int],
     client: httpx.Client | None = None,
+    force: bool = False,
 ) -> list[Analysis]:
     """Read each article and write its Uzbek post in one call.
+
+    `force=True` skips the reuse memo and writes a fresh row even when a usable or a
+    discarded editorial already exists. The pipeline never sets it; the admin's "write a
+    new post" button does, because an operator pressing it on an article that already
+    has a post wants to see what the *current* prompt makes of it.
 
     Replaced the two-stage English-then-translate flow on 2026-08-26. That split let a
     poor post be traced to comprehension or to translation, which was worth less than the
@@ -1247,14 +1264,14 @@ def analyse_for_digest_logic(
         # that has not changed. Before this the row was never written at all, which lost
         # the cost from `pipeline_stats` *and* re-paid it morning and evening until the
         # article aged out of the candidate window.
-        if existing and existing.payload.get("discarded_violations"):
+        if not force and existing and existing.payload.get("discarded_violations"):
             log.info(
                 "Skipping article %s: its editorial was discarded on %s.",
                 art.id,
                 existing.created_at.date(),
             )
             continue
-        if existing and existing.payload.get("lead_uz"):
+        if not force and existing and existing.payload.get("lead_uz"):
             created.append(existing)
             continue
 

@@ -1,12 +1,13 @@
 """Admin is the operator interface (ADR-001). Source review must be two clicks."""
 
+from django.conf import settings
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.urls import path, reverse
 from django.utils.html import format_html
 
-from . import publish
+from . import llm, publish
 from .models import Analysis, Article, DeliveryState, Digest, DigestItem, Feedback, Source
 
 
@@ -68,7 +69,15 @@ class AnalysisInline(admin.TabularInline):
 
 @admin.register(Article)
 class ArticleAdmin(admin.ModelAdmin):
-    list_display = ("title", "source", "status", "artifact_verified", "published_at", "fetched_at")
+    list_display = (
+        "title",
+        "source",
+        "status",
+        "artifact_verified",
+        "published_at",
+        "fetched_at",
+        "post_actions",
+    )
     list_filter = ("status", "artifact_verified", "source", "language")
     search_fields = ("title", "canonical_url")
     date_hierarchy = "published_at"
@@ -82,6 +91,109 @@ class ArticleAdmin(admin.ModelAdmin):
         "artifact_verified",
     )
     inlines = [AnalysisInline]
+
+    # Two buttons per article, neither of which touches a Digest. "Write" runs the
+    # editorial stage on this one article with the current prompt, bypassing the reuse
+    # memo, and stores an Analysis row. "Send" renders the latest such row and posts it
+    # as a photo to the eval channel -- by that name and never TELEGRAM_CHANNEL_ID, so
+    # a preview cannot reach the live channel even when the two ids match. No
+    # DigestItem is created because a Digest claims a (digest_date, edition) slot.
+
+    @admin.display(description="Post")
+    def post_actions(self, obj: Article):
+        if not obj.pk:
+            return ""
+        write_url = reverse("admin:digest_article_write_post", args=[obj.pk])
+        send_url = reverse("admin:digest_article_send_preview", args=[obj.pk])
+        has_post = obj.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ).exists()
+        return format_html(
+            '<a class="button" href="{}">Yangi post yoz</a> '
+            '<a class="button" style="{}" href="{}">Sinov kanaliga yubor</a>',
+            write_url,
+            "" if has_post else "opacity:.5;pointer-events:none",
+            send_url,
+        )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "<int:article_id>/write-post/",
+                self.admin_site.admin_view(self.write_post_view),
+                name="digest_article_write_post",
+            ),
+            path(
+                "<int:article_id>/send-preview/",
+                self.admin_site.admin_view(self.send_preview_view),
+                name="digest_article_send_preview",
+            ),
+        ]
+        return custom_urls + urls
+
+    def _back(self, request):
+        return HttpResponseRedirect(
+            request.META.get("HTTP_REFERER") or reverse("admin:digest_article_changelist")
+        )
+
+    def write_post_view(self, request, article_id: int):
+        article = get_object_or_404(Article.objects.select_related("source"), pk=article_id)
+        try:
+            rows = llm.analyse_for_digest_logic([article.id], force=True)
+        except Exception as exc:  # the stage logs the cause; the operator needs the message
+            self.message_user(request, f"Post yozilmadi: {exc}", level=messages.ERROR)
+            return self._back(request)
+        if not rows:
+            self.message_user(
+                request,
+                "Post yozildi, lekin gate'lardan o'tmadi va saqlanmadi - "
+                "Analysis ro'yxatida 'discarded_violations' bilan turibdi.",
+                level=messages.WARNING,
+            )
+            return self._back(request)
+        lead = rows[0].payload.get("lead_uz", "")
+        self.message_user(request, f"Yangi post yozildi: {lead}", level=messages.SUCCESS)
+        return self._back(request)
+
+    def send_preview_view(self, request, article_id: int):
+        article = get_object_or_404(Article.objects.select_related("source"), pk=article_id)
+        chat_id = settings.TELEGRAM_EVAL_CHANNEL_ID
+        if not chat_id:
+            self.message_user(
+                request,
+                "TELEGRAM_EVAL_CHANNEL_ID o'rnatilmagan; sinov posti faqat o'sha kanalga ketadi.",
+                level=messages.ERROR,
+            )
+            return self._back(request)
+        row = (
+            article.analyses.filter(stage=Analysis.Stage.EDITORIAL_UZ)
+            .order_by("-created_at")
+            .first()
+        )
+        if not row or not row.payload.get("lead_uz"):
+            self.message_user(request, "Bu maqolada hali post yo'q.", level=messages.WARNING)
+            return self._back(request)
+        try:
+            caption = llm.render_editorial_preview(article, row.payload)
+        except ValueError as exc:
+            self.message_user(request, f"Post render bo'lmadi: {exc}", level=messages.ERROR)
+            return self._back(request)
+        photo = publish.resolve_photo_url(article)
+        if not photo:
+            self.message_user(
+                request, "Rasm topilmadi; rasmsiz post yuborilmaydi.", level=messages.ERROR
+            )
+            return self._back(request)
+        res = publish.send_photo(chat_id=chat_id, photo_url=photo, caption=caption)
+        if res.get("suppressed"):
+            self.message_user(
+                request, "PUBLISHING_ENABLED o'chiq; yuborilmadi.", level=messages.WARNING
+            )
+        else:
+            mid = (res.get("result") or {}).get("message_id")
+            self.message_user(
+                request, f"Sinov kanaliga yuborildi (xabar {mid}).", level=messages.SUCCESS
+            )
+        return self._back(request)
 
 
 @admin.register(Analysis)
