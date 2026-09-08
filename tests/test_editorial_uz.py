@@ -829,26 +829,89 @@ def test_both_calls_are_told_to_look_for_the_striking_fact():
     assert "O'CHIRMA" in SIMPLIFY_UZ_PROMPT, "the rewrite must be told to keep the measure"
 
 
-def test_the_interest_rule_allows_exactly_one_measure_and_keeps_its_qualifier():
-    """One number, not a benchmark table -- the owner rejected tables twice."""
-    from apps.digest.editorial_prompts import INTEREST_BLOCK
+def test_one_measure_and_its_qualifier_are_each_stated_once():
+    """One number, not a benchmark table -- the owner rejected tables twice.
 
-    assert "BITTA raqam" in INTEREST_BLOCK
-    assert "gacha" in INTEREST_BLOCK, "the qualifier must travel with the number"
-    assert "Raqamni yaxlitlama" in INTEREST_BLOCK
+    The two halves live in different blocks on purpose. INTEREST_BLOCK decides *how many*
+    numbers a post may carry and what has to travel beside them; FACTS_BLOCK decides how a
+    number that is used must be written. Stating either in both places is the drift this
+    file exists to prevent -- it was duplicated once and cut on 2026-09-08.
+    """
+    from apps.digest.editorial_prompts import FACTS_BLOCK, INTEREST_BLOCK
+
+    interest = " ".join(INTEREST_BLOCK.split())
+    facts = " ".join(FACTS_BLOCK.split())
+
+    assert "BITTA raqam" in interest
+    assert "gacha" not in interest, "the qualifier rule belongs to FACTS_BLOCK"
+    assert "yaxlitla" not in interest, "the rounding rule belongs to FACTS_BLOCK"
+
+    assert "Gacha" in facts, "the qualifier must travel with the number"
+    assert "Raqamni yaxlitlash o'rniga" in facts
 
 
 def test_interest_never_licenses_hype():
-    """The wow has to come from the fact. This is the rule the change could most easily
-    have broken, so it is asserted in the same block that asks for interest."""
+    """The wow has to come from the fact -- the rule this change could most easily break.
+
+    The banned words are listed once, in VOICE_BLOCK. INTEREST_BLOCK states the principle
+    instead of repeating the list: the same rule in two wordings is the drift this file
+    exists to prevent.
+    """
     from apps.digest.editorial_prompts import INTEREST_BLOCK, VOICE_BLOCK
 
     # Whitespace-normalised: these blocks are hand-wrapped prose, and a rewrap must not
     # look like a deleted rule.
     voice = " ".join(VOICE_BLOCK.split())
-    assert "inqilobiy" in INTEREST_BLOCK.lower()
-    assert "inqilobiy" in voice.lower()
+    interest = " ".join(INTEREST_BLOCK.split())
+    assert "inqilobiy" in voice.lower(), "the banned-word list is gone"
+    assert "inqilobiy" not in interest.lower(), "the word list is duplicated again"
+    assert "Hayrat faktdan kelsin, sifatdan emas" in interest
     assert "kuchliroq va'da berma" in voice
+
+
+def test_the_interest_rule_ranks_events_above_specifications():
+    """Measured against @naebnet on the same GPT-6 Astra launch, 2026-09-08.
+
+    They led with "the OpenAI site went down from demand" and "the first OpenAI model
+    rated critical for cyber-risk". We led with "47% less time" and a list of office
+    tasks. Both are true; theirs is a story and ours is a spec sheet. The block now ranks
+    the kinds of fact and names the capability list as the last resort, because that is
+    what the model reaches for by default.
+    """
+    from apps.digest.editorial_prompts import INTEREST_BLOCK
+
+    text = " ".join(INTEREST_BLOCK.split())
+    assert "Voqea texnik tavsifdan qiziqroq" in text
+    assert "birinchi topilgani g'olib" in text
+    assert "eng zerikarli tanlov" in text
+
+
+def test_a_number_must_carry_its_comparison():
+    """@naebnet never ships a bare benchmark score: every number has a comparison.
+
+    "52.6% -- almost twice Fable 5", "40 hours in 25 minutes, where 14M tokens used to be
+    needed", "25% cheaper". Our own Fable post said only "arzonroq" where the source had a
+    figure, breaking the rule FACTS_BLOCK already stated.
+    """
+    from apps.digest.editorial_prompts import FACTS_BLOCK, INTEREST_BLOCK
+
+    interest = " ".join(INTEREST_BLOCK.split())
+    facts = " ".join(FACTS_BLOCK.split())
+    assert "Raqam yolg'iz kelmasin" in interest
+    assert "Taqqossiz benchmark foizi" in interest
+    assert "arzonroq" in facts, "the vague-comparative ban must name this word"
+    assert "25% ga arzonlashdi" in facts
+
+
+def test_the_voice_allows_an_analogy_but_not_a_verdict():
+    """ "By and large this is NotebookLM with a virtual classroom" explains a new product
+    in one clause. The device is theirs; the guard is ours -- an analogy may say what a
+    thing does and may not rank it against the thing it is compared to."""
+    from apps.digest.editorial_prompts import VOICE_BLOCK
+
+    text = " ".join(VOICE_BLOCK.split())
+    assert "Notanish mahsulotni tanish narsa orqali tushuntir" in text
+    assert "baholash uchun emas" in text
 
 
 def test_the_never_rules_are_not_bundled_with_the_list_allowance():

@@ -83,20 +83,23 @@ O'quvchi bu postni o'qib "shunaqa narsa ham chiqibdimi" desin. Buning uchun avva
 maqoladagi ENG HAYRATLANARLI ROST faktni top, keyin uni sodda tilda ayt. Teskarisi emas:
 avval soddalashtirsang, qiziq fakt yo'qoladi.
 
-Odatda eng qiziq fakt shulardan biri bo'ladi:
-- dastur/model endi qila oladigan, ilgari qila olmagan ish;
-- kutilmagan yoki noqulay natija - shu jumladan ishlab chiquvchi o'zi tan olgan xavf;
-- odam his qila oladigan o'lchov: necha barobar tez, necha foiz aniq, qancha turadi;
-- kimdir uchun bugun ochilgan yoki yopilgan imkoniyat.
+Voqea texnik tavsifdan qiziqroq. Shu tartibda qidir, birinchi topilgani g'olib:
+1. odamlar reaksiyasi yoki oqibat: sayt ishlamay qoldi, navbat paydo bo'ldi, taqiqlandi;
+2. ishlab chiquvchi o'zi tan olgan xavf yoki cheklov;
+3. ko'z oldiga keladigan sinov natijasi: nima yasadi, qayerda ishladi, nechanchi urinishda;
+4. taqqosi bor o'lchov: necha barobar tez, avval qancha edi, qancha turadi.
+Quruq imkoniyat sanog'i ("jadval to'ldiradi, xatoni tekshiradi") eng zerikarli tanlov -
+undan faqat yuqoridagilarning hech biri bo'lmasa foydalan.
 
 **Bitta o'lchov qoidasi.** Postga ko'pi bilan BITTA raqam yoki cheklov chiqadi - eng
-ta'sirchani. Qolgan barcha raqam, test nomi va jadval `technical` blokida qoladi. Tanlangan
-raqam manbadagi shaklida qoladi: "gacha", "sinovda", "kompaniya aytishicha" kabi shartni
-tashlab ketma. Raqamni yaxlitlama.
+ta'sirchani. Qolgan barcha raqam, test nomi va jadval `technical` blokida qoladi.
+Raqam yolg'iz kelmasin: yoniga manbadagi taqqosni qo'y - "avvalgisidan ikki barobar ko'p",
+"avval 14 million kerak edi", "25% ga arzonlashdi". Taqqossiz benchmark foizi o'quvchiga
+hech narsa demaydi; manbada taqqos bo'lmasa, o'sha raqamni butunlay tashla.
 
-Hayrat faktdan kelsin, sifatdan emas. "Inqilobiy", "ulkan yutuq", "hayratlanarli" deb
-yozish - qiziq fakt topa olmaganlikning belgisi. Manbada shunday fakt yo'q bo'lsa, oddiy
-xabar yoz: bo'rttirgandan ko'ra zerikarli bo'lgani yaxshi."""
+Hayrat faktdan kelsin, sifatdan emas: bo'sh maqtovga qo'l urish qiziq fakt topa
+olmaganlikning belgisi. Manbada shunday fakt yo'q bo'lsa, oddiy xabar yoz - bo'rttirgandan
+ko'ra zerikarli bo'lgani yaxshi."""
 
 #: The register. Every line here pins a defect that was measured, not a preference.
 VOICE_BLOCK = """## Ovoz
@@ -112,6 +115,9 @@ tugamaydi.
 Sarlavha eng ta'sirchan rost faktni aytsin, umumiy tavsif emas: "Yangi ob-havo modeli
 chiqdi" emas, "Yangi model yomg'irni 60% gacha aniqroq aytadi". Manbadan kuchliroq va'da
 berma va javobi maqolada ham yo'q savol qo'yma.
+Notanish mahsulotni tanish narsa orqali tushuntir: "taqdimot yasaydigan dastur",
+"virtual sinfli daftar". Taqqos nima qilishini ko'rsatish uchun, baholash uchun emas -
+"PowerPoint'dan yaxshiroq" deb yozma.
 Hech qachon: o'quvchiga chaqiriq ("havolaga kiring", "sinab ko'ring"), hazil, va
 "kelajak allaqachon shu yerda" kabi yasama xulosa.
 Faqat o'zbek so'zlari: turkcha yoki ruscha shakl ishlatma - "atlatdi" emas,
@@ -130,10 +136,11 @@ Yangi dastur — hammaga ochiq dastur degani emas. Bepul demo — bepul xizmat e
 Faylni qayta ishlash — mazmunini yaratish emas. Inson tekshirgan — kodni o'zi yozgan
 emas. Bir bosqichdagi vaqt yoki natijani boshqa bosqichga ulama.
 Texnik nomlarni olib tashlash mumkin; shu jarayonda ma'noni kengaytirma.
-"Kuchliroq", "yaxshiroq", "endi hammasini" kabi umumiy baho o'rniga aynan nima qilganini
-ayt. Muallif yoki kompaniya bergan natijani "muallifga ko'ra", "Google aytishicha" kabi
-qisqa ibora bilan ularga bog'la. Bir sinovdagi natijadan barcha vazifalar yoki barcha
-robotlar haqida xulosa chiqarma.
+"Kuchliroq", "yaxshiroq", "arzonroq" kabi umumiy baho o'rniga aynan nima qilganini
+ayt; manbada raqam bo'lsa, umumiy so'z emas, o'sha raqam ishlatilsin ("arzonlashdi" emas,
+"25% ga arzonlashdi"). Muallif yoki kompaniya bergan natijani "muallifga ko'ra",
+"Google aytishicha" kabi qisqa ibora bilan ularga bog'la. Bir sinovdagi natijadan
+barcha vazifalar yoki barcha robotlar haqida xulosa chiqarma.
 Yangilikning sababchisini yo'qotma: masalan, o'yin AI yordamida qayta ishlangan bo'lsa,
 qaysi AI yordam bergani asosiy fakt; ichki dasturlash vositalari esa shart emas."""
 
