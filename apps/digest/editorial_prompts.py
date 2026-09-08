@@ -146,7 +146,9 @@ tashlash mumkin, lekin qolgan da'voning muhim cheklovini tashlash mumkin emas.
 - lead_uz: 1–2 qisqa gap: mahsulot/loyiha nomi va nima bo'lgani. Asosiy yangilik shu yerda.
 - body_1_uz: 1–2 qisqa paragraf. Agar bitta vosita bir nechta ALOHIDA ishni qilsa,
   2–3 ta "– " band yoz; har band bitta tushunarli ishni aytsin. Bandlar bir gapni bo'lish
-  uchun emas, har xil ishlarni sanash uchun. Tafsilot kerak bo'lmasa "".
+  uchun emas, har xil ishlarni sanash uchun. Manbada uchtadan ko'p bo'lsa, o'quvchiga eng
+  foydali uchtasini tanla va qolganini tashla; ro'yxatni uzaytirma. Tafsilot kerak
+  bo'lmasa "".
 - kicker_uz: muhim cheklov yoki kim ishlata olishi haqida bitta qisqa gap; bo'lmasa "".
 body_1_uz va kicker_uz bo'sh qolishi mumkin; headline_uz va lead_uz hech qachon bo'sh
 qolmaydi.
@@ -274,8 +276,10 @@ Postdagi eng qiziq fakt yo'qolgan yoki ko'milib qolgan bo'lsa, uni lead yoki sar
 chiqar. Lekin postda allaqachon bitta kuchli o'lchov bo'lsa, uni O'CHIRMA: keraksiz
 tafsilotni tashlash boshqa, qiziq faktni tashlash boshqa.
 
-Keraksiz texnik mexanizm, usul nomi va xizmatlar ro'yxatini BUTUNLAY olib tashlash
+Keraksiz texnik mexanizm, usul nomi va vosita nomlarini BUTUNLAY olib tashlash
 mumkin. Muhim cheklov, asosiy mahsulot nomi, da'vo egasi va tanlangan o'lchov qolsin.
+Bu ruxsat faktga tegishli, ko'rinishga emas: body_1_uz bandlar bilan yozilgan bo'lsa,
+bandligicha qoladi. Keraksiz bandni o'chirasan, qolganini bitta gapga birlashtirmaysan.
 Bir ma'lumotni lead va body/kickerda qaytarma.
 Mahsulot nomlarini boshidan oxirigacha bir xil yoz.
 """

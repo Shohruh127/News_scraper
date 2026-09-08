@@ -969,3 +969,32 @@ def test_every_few_shot_example_passes_the_real_renderer():
         if "\n– " in rendered:
             bulleted += 1
     assert bulleted >= 1, "no example demonstrates the list the format permits"
+
+
+def test_the_rewrite_may_drop_a_bullet_but_not_the_bullets():
+    """ "xizmatlar ro'yxatini BUTUNLAY olib tashlash mumkin" was read as a format licence.
+
+    Measured 2026-09-08: the gh_mcp draft listed four MCP tools -- literally a list of
+    services -- and the rewrite flattened it into one prose sentence. Across 15 articles
+    that left 0 posts with a list even though the draft produced one. The permission is
+    about facts; the shape is decided by the format block.
+    """
+    from apps.digest.editorial_prompts import SIMPLIFY_UZ_PROMPT
+
+    text = " ".join(SIMPLIFY_UZ_PROMPT.split())
+    assert "xizmatlar ro'yxatini" not in text, "the phrase that licensed flattening is back"
+    assert "bandligicha qoladi" in text
+    assert "birlashtirmaysan" in text
+
+
+def test_the_format_says_what_to_do_with_more_items_than_fit():
+    """The draft wrote four bullets because nothing said what to do with a fourth.
+
+    render_dayjest_post accepts 2-3, so a four-item list is a discarded article unless the
+    rewrite happens to fix it -- and on that run the rewrite had failed.
+    """
+    from apps.digest.editorial_prompts import READER_FIELDS_BLOCK
+
+    text = " ".join(READER_FIELDS_BLOCK.split())
+    assert "uchtadan ko'p bo'lsa" in text
+    assert "eng foydali uchtasini tanla" in text
