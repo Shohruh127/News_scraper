@@ -164,6 +164,18 @@ EDITORIAL_UZ_PROVIDER = env("EDITORIAL_UZ_PROVIDER", default=LLM_PROVIDER)
 #: 12000 leaves that article ~50% headroom. Every other article in those runs finished well
 #: under 8000, and pays nothing for the raise.
 EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=12000)
+
+#: Sampling temperature for the editorial call only. Triage and classification stay at 0:
+#: a decision should be deterministic. The post should not be. Every provider call was
+#: hardcoded to 0 until 2026-09-08, and at 0 a model returns its single most probable
+#: continuation -- which, with examples in the prompt, is the shape of the examples. Seven
+#: of the last eight published leads had the form "<Kompaniya> <narsa>ni chiqardi". The
+#: default is the model's own default, read from the Gemini API on 2026-09-08
+#: (`GET /v1beta/models/gemini-3.8-flash`: temperature 1, maxTemperature 2), stated here
+#: explicitly so behaviour does not change if Google changes theirs. The constraints are
+#: not loosened by this: numbers, calques and the renderer's limits are enforced by code
+#: after the call, with one retry and then a discard.
+EDITORIAL_TEMPERATURE = env.float("EDITORIAL_TEMPERATURE", default=1.0)
 MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")

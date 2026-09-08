@@ -246,3 +246,33 @@ def test_editorial_can_run_on_gemini_without_moving_the_classifier(gemini):
     assert route.called
     assert result.model_tag == "gemini-3.8-flash"
     assert gemini.CLASSIFIER_PROVIDER == "gateway"
+
+
+@respx.mock
+def test_the_editorial_samples_at_the_configured_temperature_and_triage_does_not(gemini):
+    """Decisions are deterministic; the post is not.
+
+    Every provider call was hardcoded to temperature 0 until 2026-09-08. At 0 the model
+    returns its single most probable continuation, which with examples in the prompt is
+    the shape of the examples: seven of the last eight published leads read "<Kompaniya>
+    <narsa>ni chiqardi". The editorial now sends EDITORIAL_TEMPERATURE (default 1.0, the
+    model's own default per the Gemini API); triage and classification still send 0.
+    """
+    gemini.EDITORIAL_UZ_PROVIDER = "gemini"
+    gemini.CLASSIFIER_PROVIDER = "gemini"
+    gemini.EDITORIAL_TEMPERATURE = 0.8
+
+    sent = []
+
+    def capture(request):
+        sent.append(json.loads(request.content)["generationConfig"]["temperature"])
+        return _ok()
+
+    respx.post(URL).mock(side_effect=capture)
+
+    # provider= is passed explicitly, as editorial_uz_for_article passes it; the bare
+    # fallback is LLM_PROVIDER, which is not what routes the editorial in production.
+    llm.editorial_chat(prompt="p", schema=SCHEMA, num_predict=100, provider="gemini")
+    llm.classifier_chat(tier=llm.TIER_FAST, prompt="p", schema=SCHEMA, num_predict=100)
+
+    assert sent == [0.8, 0], "editorial at the setting, classifier pinned at 0"

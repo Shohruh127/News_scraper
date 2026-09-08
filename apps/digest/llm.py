@@ -380,6 +380,7 @@ def _openai_chat(
     timeout: int = 120,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
+    temperature: float = 0,
 ) -> ChatResult:
     """Chat completion against any OpenAI-compatible endpoint.
 
@@ -400,7 +401,7 @@ def _openai_chat(
     payload: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
+        "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if schema:
@@ -461,6 +462,7 @@ def mimo_chat(
     timeout: int = 120,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
+    temperature: float = 0,
 ) -> ChatResult:
     """OpenAI-compatible chat completion against MiMo."""
     return _openai_chat(
@@ -472,6 +474,7 @@ def mimo_chat(
         timeout=timeout,
         max_tokens=max_tokens,
         client=client,
+        temperature=temperature,
     )
 
 
@@ -482,6 +485,7 @@ def gateway_chat(
     timeout: int | None = None,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
+    temperature: float = 0,
 ) -> ChatResult:
     """Chat completion against the internal LLM gateway.
 
@@ -499,6 +503,7 @@ def gateway_chat(
         schema=schema,
         timeout=timeout or settings.GATEWAY_TIMEOUT,
         max_tokens=max_tokens,
+        temperature=temperature,
         client=client,
     )
 
@@ -547,6 +552,7 @@ def gemini_chat(
     timeout: int | None = None,
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
+    temperature: float = 0,
 ) -> ChatResult:
     """One `generateContent` call against the Gemini Developer API (B2).
 
@@ -573,7 +579,7 @@ def gemini_chat(
     body: dict[str, Any] = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0,
+            "temperature": temperature,
             "maxOutputTokens": max_tokens,
             "thinkingConfig": {"thinkingLevel": settings.GEMINI_THINKING_LEVEL},
         },
@@ -727,6 +733,7 @@ def _dispatch(
     schema: dict,
     num_predict: int,
     client: httpx.Client | None = None,
+    temperature: float = 0,
 ) -> ChatResult:
     """One chat call to `provider` at `tier`.
 
@@ -744,6 +751,7 @@ def _dispatch(
             schema=schema,
             max_tokens=num_predict,
             client=client,
+            temperature=temperature,
         )
 
     if provider == "gemini":
@@ -753,6 +761,7 @@ def _dispatch(
             schema=schema,
             max_tokens=num_predict,
             client=client,
+            temperature=temperature,
         )
 
     if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
@@ -763,6 +772,7 @@ def _dispatch(
         schema=schema,
         timeout=settings.MIMO_TIMEOUT,
         max_tokens=num_predict,
+        temperature=temperature,
         client=client,
     )
 
@@ -782,6 +792,8 @@ def classifier_chat(
     calls a day, and inheriting would move that volume the moment the editorial provider
     changed.
     """
+    # A decision is deterministic. Temperature 0 is stated here, not inherited, so the
+    # editorial's sampling setting can never leak into triage or classification.
     return _dispatch(
         provider=settings.CLASSIFIER_PROVIDER,
         tier=tier,
@@ -789,6 +801,7 @@ def classifier_chat(
         schema=schema,
         num_predict=num_predict,
         client=client,
+        temperature=0,
     )
 
 
@@ -805,6 +818,8 @@ def editorial_chat(
     The single-stage Uzbek editorial is routed via EDITORIAL_UZ_PROVIDER.
     Triage and classification have their own switch via classifier_chat.
     """
+    # The post is sampled, not decided: see EDITORIAL_TEMPERATURE in settings. The fact
+    # and length constraints are enforced by code after this call, not by the temperature.
     return _dispatch(
         provider=provider or settings.LLM_PROVIDER,
         tier=tier,
@@ -812,6 +827,7 @@ def editorial_chat(
         schema=schema,
         num_predict=num_predict,
         client=client,
+        temperature=settings.EDITORIAL_TEMPERATURE,
     )
 
 
