@@ -886,19 +886,29 @@ def test_the_interest_rule_ranks_events_above_specifications():
     assert "eng zerikarli tanlov" in text
 
 
-def test_a_number_must_carry_its_comparison():
-    """@naebnet never ships a bare benchmark score: every number has a comparison.
+def test_a_score_must_carry_its_comparison_but_a_count_need_not():
+    """@naebnet never ships a bare benchmark score, but it ships counts and prices freely.
 
-    "52.6% -- almost twice Fable 5", "40 hours in 25 minutes, where 14M tokens used to be
-    needed", "25% cheaper". Our own Fable post said only "arzonroq" where the source had a
-    figure, breaking the rule FACTS_BLOCK already stated.
+    "52.6% -- almost twice Fable 5", "40 hours in 25 minutes where 14M tokens used to be
+    needed" -- every score has something beside it. But "$31.3 thousand", "1461 km" and
+    "10,000 seats" appear alone, because a count means something on its own.
+
+    The first version of this rule said only "a number must carry its comparison" and the
+    model applied it to everything: measured 2026-09-08, "Anthropic opened 10,000 seats
+    for scientists" became "released a free Claude subscription", losing a figure the
+    source stated plainly. The rule is now scoped to scores.
     """
     from apps.digest.editorial_prompts import FACTS_BLOCK, INTEREST_BLOCK
 
     interest = " ".join(INTEREST_BLOCK.split())
     facts = " ".join(FACTS_BLOCK.split())
-    assert "Raqam yolg'iz kelmasin" in interest
-    assert "Taqqossiz benchmark foizi" in interest
+
+    assert "Test bali va benchmark foizi yolg'iz kelmasin" in interest
+    assert "Taqqossiz ball" in interest
+    assert "Sanoq, narx, sana, muddat va masofa" in interest
+    assert "taqqos shart emas" in interest
+    assert "10 000 ta o'rin" in interest, "the counter-example that was regressed on"
+
     assert "arzonroq" in facts, "the vague-comparative ban must name this word"
     assert "25% ga arzonlashdi" in facts
 

@@ -260,12 +260,26 @@ def count_sentences(html_text: str) -> int:
     """
     lines = [line.strip() for line in html_text.strip().splitlines() if line.strip()]
     total = 0
+    in_list = False
     for index, line in enumerate(lines):
         if index == 0 and _HEADLINE_LINE_RE.match(line):
             continue
         plain = html_unescape(_TAG_STRIP_RE.sub("", line)).strip()
         if not plain or plain.startswith("#"):
             continue
+        # A run of bullets is one unit, not one per item. The item count is already
+        # bounded on its own (2-3 for a photo caption), so charging each bullet against
+        # the sentence budget bounded the same thing twice. Measured 2026-09-08: a
+        # 647-character post -- well inside the 900 limit -- was discarded for "10
+        # sentences" because a three-item list, its intro line, the lead and the kicker
+        # added up past seven. The budget exists to stop rambling prose; the character
+        # limit is what bounds a list.
+        if plain.startswith("– "):
+            if not in_list:
+                total += 1
+                in_list = True
+            continue
+        in_list = False
         total += len(split_sentences(plain))
     return total
 

@@ -306,3 +306,42 @@ def test_a_photoless_item_does_not_block_the_rest_of_the_block(
     assert 2 in positions, f"item #2 never got a turn: {positions}"
     item1.refresh_from_db()
     assert item1.channel_delivery_state == DeliveryState.FAILED
+
+
+def test_a_bulleted_list_costs_one_unit_of_the_sentence_budget():
+    """The item count already bounds a list; charging each bullet bounded it twice.
+
+    Measured 2026-09-08: a 647-character watermarking post -- well inside the 900-character
+    limit -- was discarded for "10 sentences" because a three-item list, its intro line,
+    a two-sentence lead and a kicker added up past seven. The budget exists to stop
+    rambling prose, and a list is not prose.
+    """
+    prose_only = "<b>Sarlavha</b>\n\nBirinchi gap. Ikkinchi gap.\n\nUchinchi gap."
+    assert post_format.count_sentences(prose_only) == 3
+
+    with_list = (
+        "<b>Sarlavha</b>\n\nBirinchi gap. Ikkinchi gap.\n\nQuyidagilar bor:\n"
+        "– birinchi band;\n– ikkinchi band;\n– uchinchi band.\n\nYakuniy gap."
+    )
+    # lead (2) + intro (1) + the whole list (1) + closing (1)
+    assert post_format.count_sentences(with_list) == 5
+
+
+def test_two_separate_lists_each_count_once():
+    """The run is the unit, so a second list after prose is charged again."""
+    html = "Kirish.\n– a;\n– b.\n\nOraliq gap.\n– c;\n– d."
+    assert post_format.count_sentences(html) == 4
+
+
+def test_a_three_item_list_post_of_normal_length_renders():
+    """The end-to-end case the previous behaviour discarded."""
+    data = plain_data()
+    data["body_1_uz"] = (
+        "Lekin bu usulning o'z chegarasi bor:\n"
+        "– qisqa matnlarda belgi qolmaydi;\n"
+        "– faqat xato tuzatilgan bo'lsa, payqash qiyin;\n"
+        "– matnni kim yozdirganini aniqlab bo'lmaydi."
+    )
+    rendered = post_format.render_dayjest_post(data)
+    assert rendered.count("\n– ") == 3
+    assert post_format.telegram_length(rendered) <= 900

@@ -93,9 +93,11 @@ undan faqat yuqoridagilarning hech biri bo'lmasa foydalan.
 
 **Bitta o'lchov qoidasi.** Postga ko'pi bilan BITTA raqam yoki cheklov chiqadi - eng
 ta'sirchani. Qolgan barcha raqam, test nomi va jadval `technical` blokida qoladi.
-Raqam yolg'iz kelmasin: yoniga manbadagi taqqosni qo'y - "avvalgisidan ikki barobar ko'p",
-"avval 14 million kerak edi", "25% ga arzonlashdi". Taqqossiz benchmark foizi o'quvchiga
-hech narsa demaydi; manbada taqqos bo'lmasa, o'sha raqamni butunlay tashla.
+Test bali va benchmark foizi yolg'iz kelmasin: yoniga manbadagi taqqosni qo'y -
+"avvalgisidan ikki barobar ko'p", "avval 14 million kerak edi", "25% ga arzonlashdi".
+Taqqossiz ball o'quvchiga hech narsa demaydi; manbada taqqos bo'lmasa, ballni tashla.
+Sanoq, narx, sana, muddat va masofa esa o'z-o'zidan tushunarli - ularga taqqos shart emas
+va ularni umumiy so'zga almashtirma: "10 000 ta o'rin", "31 ming dollar", "1461 km".
 
 Hayrat faktdan kelsin, sifatdan emas: bo'sh maqtovga qo'l urish qiziq fakt topa
 olmaganlikning belgisi. Manbada shunday fakt yo'q bo'lsa, oddiy xabar yoz - bo'rttirgandan
