@@ -220,8 +220,10 @@ the guardrail measured for that topic — and a test checks all three.
 
 `_retry_editorial_uz` is not the rewrite and stays: it is the one retry that names the gate
 violations, after which a still-failing editorial is recorded with `discarded_violations`
-and the article is not re-drafted. `EDITORIAL_NUM_PREDICT` stays at 8000 — a thinking model
-bills its reasoning to that budget before writing, and an unused cap costs nothing.
+and the article is not re-drafted. `EDITORIAL_NUM_PREDICT` is 12000 — a thinking model
+bills its reasoning to that budget before writing, one dense article hit 8000 on three
+consecutive runs and with a single call there is no draft to fall back to, and an unused
+cap costs nothing.
 
 ## django_celery_beat does not prune
 

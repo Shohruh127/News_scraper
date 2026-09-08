@@ -156,7 +156,14 @@ EDITORIAL_UZ_PROVIDER = env("EDITORIAL_UZ_PROVIDER", default=LLM_PROVIDER)
 #: that article its post. Thinking tokens bill to this budget before the answer is written,
 #: so the headroom has to cover reasoning as well. The cap is a limit, not a cost — the model
 #: stops when it is done — so the unused half of it is free.
-EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=8000)
+#:
+#: Raised 8000 -> 12000 the same day. One article — the GPT-6 Astra launch, 4127 input
+#: tokens and dense — hit the ceiling on three consecutive runs at 7985, 7985 and 7985 out.
+#: While there were two calls, a truncated rewrite fell back to the draft and the post still
+#: shipped; with one call there is nothing to fall back to and the article is lost outright.
+#: 12000 leaves that article ~50% headroom. Every other article in those runs finished well
+#: under 8000, and pays nothing for the raise.
+EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=12000)
 MIMO_BASE_URL = env("MIMO_BASE_URL", default="").rstrip("/")
 MIMO_API_KEY = env("MIMO_API_KEY", default="")
 MIMO_FAST_MODEL = env("MIMO_FAST_MODEL", default="mimo-v2.5")
