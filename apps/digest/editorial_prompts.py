@@ -109,11 +109,14 @@ narx" va da'vo egasi ham. Raqamni yaxlitlama - ahamiyatsiz bo'lsa tafsilotni but
 "Kuchliroq", "yaxshiroq", "arzonroq" o'rniga aynan nima bo'lganini ayt; manbada raqam bo'lsa
 o'sha raqam ("25% ga arzonlashdi"). Kompaniya aytgan natijani unga bog'la: "Google
 aytishicha". Bir sinovdan hammasi haqida xulosa chiqarma.
-Yangi dastur — hammaga ochiq degani emas. Bepul demo — bepul xizmat emas. Faylni qayta
-ishlash — mazmunini yaratish emas. Inson tekshirgan — kodni o'zi yozgan emas. Sinovni
-relizga, kompaniya da'vosini va'daga aylantirma. Texnik nomni olib tashlash mumkin, ma'noni
-kengaytirish mumkin emas. Yangilikning sababchisini yo'qotma: o'yinni AI qayta ishlagan
-bo'lsa, qaysi AI - asosiy fakt.
+Yangi dastur — hammaga ochiq degani emas. Bepul demo, shablon yoki prototip — tayyor
+mahsulot emas. Faylni qayta ishlash — mazmunini yaratish emas. Inson tekshirgan — kodni
+o'zi yozgan emas. Sinovni relizga, kompaniya da'vosini va'daga aylantirma.
+Darajani saqla: "does not work well" — "yaxshi ishlamaydi", "does not work" —
+"ishlamaydi"; "may" — "mumkin", "will" — "bo'ladi". Ehtimolni kafolatga, "aniqlash
+qiyin"ni "ishlamaydi"ga aylantirma — bu juftlar bir xil ma'no bermaydi. Texnik nomni
+olib tashlash mumkin, ma'noni kengaytirish mumkin emas. Yangilikning sababchisini
+yo'qotma: o'yinni AI qayta ishlagan bo'lsa, qaysi AI - asosiy fakt.
 
 Qaytarishdan oldin o'zing tekshir: har da'vo ARTICLEdagi aniq joyga mosmi; lead'dagi
 ma'lumot body yoki yakunda takrorlanmaganmi; oddiy o'quvchi nima bo'lganini biladimi.

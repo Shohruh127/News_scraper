@@ -926,3 +926,20 @@ def test_reader_fields_is_exactly_the_published_slice():
         "post_style": "plain_photo_v1",
     }
     assert llm.reader_fields({"lead_uz": "a"}) == {"lead_uz": "a", "body_1_uz": "", "kicker_uz": ""}
+
+
+def test_the_facts_block_preserves_the_degree_of_a_claim():
+    """Degree survives: "does not work well" is not "does not work"; "may" is not "will".
+
+    The one idea salvaged from the 2026-09-08 prompt optimisation done on the main
+    checkout against the superseded two-call prompt: its review found early candidates
+    "overstated the watermark limitation and confused templates with finished products".
+    No gate can catch this -- the numbers match and no calque appears -- so the prompt
+    has to hold it.
+    """
+    from apps.digest.editorial_prompts import FACTS_BLOCK
+
+    f = " ".join(FACTS_BLOCK.split())
+    assert '"does not work well" — "yaxshi ishlamaydi"' in f
+    assert '"may" — "mumkin", "will" — "bo\'ladi"' in f
+    assert "shablon yoki prototip — tayyor mahsulot emas" in f
