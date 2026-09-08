@@ -23,6 +23,14 @@ sent per article: enriching a block costs one article its ~300 characters, enric
 base costs every article and has to stay generic. The base had grown to 9000 characters
 while the blocks stayed at one line each; that ratio is now the other way round.
 
+**One example, of the story's own kind.** Three global examples went to every article. The
+model copies example shape, so that was three shapes taught to every story, and the second
+largest fixed cost in the prompt. Since 2026-09-08 each block carries one invented example of
+its kind in `UZ_EXAMPLES` -- the block's advice made concrete -- and an article sees only that
+one, after the field contract, under a header that asks for the approach, not the mould. The
+seven open differently on purpose, and the recent-leads block after the article stops the one
+shape from repeating.
+
 Every fact rule and every number in the field contract is enforced downstream --
 `render_dayjest_post` discards a post that breaks a limit -- so the prompt states exactly
 what the code accepts and no more. The empty-praise ban stays: the interest has to come
@@ -136,28 +144,64 @@ Odatda 3 paragraf, 300–600 belgi. Chegara: 900 belgi, 7 gap/band. To'ldirish s
   local_deployable boolean, aniq aytilmasa false.
 Matnda HTML, Markdown, hashtag va URL yo'q."""
 
-EXAMPLES_BLOCK = """## Misollar - to'qima, faktlarini ko'chirma. So'zlari qisqa, gaplari qisqa.
+#: One invented example per block, the same keys as UZ_BLOCKS. Each shows the block's own
+#: advice made concrete -- which fact that kind of story leads with -- in short words and short
+#: sentences, and the seven open differently on purpose: the channel's variety then comes from
+#: the mix of story kinds, not from the model's whim. An article sees only its own.
+UZ_EXAMPLES = {
+    "general": """\
+Manba: Suratchi ilovasi eski qora-oq suratni rangli qiladi. Bir kunda 2 million kishi
+kirgani uchun sayt bir kun ishlamadi. Kompaniya server qo'shdi. Ilova hozircha faqat telefonda.
+lead_uz: Eski suratni rangli qilamiz: Suratchi ilovasiga bir kunda 2 million kishi kirdi.
+body_1_uz: Shuncha odam kirgani uchun sayt bir kun ishlamadi - buni kompaniya o'zi aytdi.
+Endi server qo'shdik, navbat yo'q, deydi u.
+kicker_uz: Ilova hozircha faqat telefonda.""",
+    "release": """\
+Manba: Oqim kompaniyasi Nur 2 modelini chiqardi. U 40 betlik shartnomani o'qib, xato
+bandni topadi; avvalgi Nur 1 10 betgacha o'qirdi. Kompaniya aytishicha, chet tildagi hujjatda
+hali adashadi.
+lead_uz: Uzun shartnomani o'qitamiz: Nur 2 modeli 40 betlik hujjatdan xato bandni topadi.
+body_1_uz: Avvalgi Nur 1 faqat 10 betgacha o'qirdi. Endi butun shartnomani bir marta beramiz,
+u qaysi band xavfli ekanini aytadi.
+kicker_uz: Chet tildagi hujjatda hali adashadi, deydi Oqim.""",
+    "agent": """\
+Manba: Yo'lchi yordamchisi poyezd chiptasini o'zi topib, saytda to'ldirib, to'lovgacha
+olib boradi. To'lovni odam tasdiqlaydi. Hozircha faqat bitta temir yo'l saytida ishlaydi.
+lead_uz: Yo'lchi yordamchisi poyezd chiptasini o'zi topadi va to'lovgacha olib boradi.
+body_1_uz: Sana va shaharni aytasiz. U saytga kiradi, bo'sh o'rinni tanlaydi, ismingizni yozadi.
+Oxirgi tugmani - to'lovni - o'zingiz bosasiz.
+kicker_uz: Hozircha faqat bitta temir yo'l saytida ishlaydi.""",
+    "risk": """\
+Manba: MarkCheck fayl AI tomonidan qayta ishlanganini belgi orqali tekshiradi. Belgi asl
+muallifni isbotlamaydi. Tekshiruv qurilmada bajariladi.
+lead_uz: Faylga AI tekkanini tekshiramiz: MarkCheck fayldagi maxsus belgini o'qiydi.
+body_1_uz: Lekin belgi rasm yoki matnni kim yozganini aytmaydi. U faqat faylga AI
+tekkanini ko'rsatadi. Tekshiruv o'z qurilmangizda bo'ladi, serverga hech narsa ketmaydi.
+kicker_uz: Kim yozganini bu belgi aytmaydi.""",
+    "research": """\
+Manba: Tadqiqotchilar 12 ta modelga eski uslubdagi kichik o'yin yozdirdi. Faqat bittasi
+birinchi urinishda ishlaydigan o'yin yozdi; qolganlari ekranni qora qoldirdi. Sinovda faqat
+kichik o'yinlar bor edi.
+lead_uz: Tadqiqotchilar 12 ta modelga eski uslubdagi o'yin yozdirib ko'rdi.
+body_1_uz: Faqat bittasi birinchi urinishda ishlaydigan o'yin yozdi. Qolganlari ekranni qora
+qoldirdi yoki o'yin boshlanmay to'xtadi.
+kicker_uz: Sinovda faqat kichik, eski uslubdagi o'yinlar bor edi.""",
+    "product": """\
 Manba: LessonBox PDFdan slaydlar, testlar va ovozli izoh yaratadi. Demo ochiq, xizmat pulli.
 lead_uz: Konspektdan dars yasaydi: LessonBox dasturi PDFdan tayyor dars qiladi.
 body_1_uz: Bitta PDFdan uch narsa chiqadi:
 – mavzu bo'yicha slaydlar;
 – javobni tekshiradigan testlar;
 – darsning ovozli izohi.
-kicker_uz: Sinov varianti bepul, to'liq xizmat pulli.
-
-Manba: MarkCheck fayl AI tomonidan qayta ishlanganini belgi orqali tekshiradi. Belgi asl
-muallifni isbotlamaydi. Tekshiruv qurilmada bajariladi.
-lead_uz: Faylga AI tekkanini tekshiramiz: MarkCheck fayldagi maxsus belgini o'qiydi.
-body_1_uz: Lekin belgi rasm yoki matnni kim yozganini aytmaydi. U faqat faylga AI
-tekkanini ko'rsatadi. Tekshiruv o'z qurilmangizda bo'ladi, serverga hech narsa ketmaydi.
-kicker_uz: Kim yozganini bu belgi aytmaydi.
-
+kicker_uz: Sinov varianti bepul, to'liq xizmat pulli.""",
+    "robotics": """\
 Manba: RoboPair ikki robot qo'liga vazifani bo'lib beradi. Laboratoriya sinovida qo'llar
 oldin mashq qilinmagan usulda ham birga ishlagan. Sotuv haqida ma'lumot yo'q.
 lead_uz: RoboPair ikkita robot qo'liga bitta ishni bo'lib beradi.
 body_1_uz: Qo'llar oldin ko'rmagan usulda ham ishni bo'lib olgan - buni tadqiqotchilar
 aytmoqda.
-kicker_uz: Hozircha bu faqat laboratoriya sinovi."""
+kicker_uz: Hozircha bu faqat laboratoriya sinovi.""",
+}
 
 
 EDITORIAL_UZ_PROMPT = (
@@ -183,9 +227,10 @@ havoladagi maqoladan o'qiydi; postning o'zi hamma uchun.
     + FIELDS_BLOCK
     + """
 
-"""
-    + EXAMPLES_BLOCK
-    + """
+## Misol - to'qima, faktlarini ko'chirma
+Shu turdagi xabarga bitta misol. Qolipini emas, yondashuvini ol: qaysi faktni tanlagani,
+so'zlari va gaplari qanchalik qisqaligi.
+{example}
 
 Title: {title}
 Source: {source}

@@ -218,6 +218,14 @@ while the seven blocks stayed at one line each. Each block now says what is usua
 striking fact in that kind of story, which of the four ranked kinds to reach for first, and
 the guardrail measured for that topic — and a test checks all three.
 
+Each block also carries one invented example of its kind (`UZ_EXAMPLES`), shown after
+the field contract in place of the three global examples that went to every article until
+2026-09-08. The model copies example shape, so three examples for every story taught three
+shapes to every story, at ~1100 characters an article. Now an article sees one shape,
+matched to its story; the seven examples open differently on purpose, the header asks for
+the approach rather than the mould, and the recent-leads block stops the one shape from
+repeating. A test renders every example through `render_dayjest_post`.
+
 `_retry_editorial_uz` is not the rewrite and stays: it is the one retry that names the gate
 violations, after which a still-failing editorial is recorded with `discarded_violations`
 and the article is not re-drafted. `EDITORIAL_NUM_PREDICT` is 12000 — a thinking model

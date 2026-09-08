@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import artifacts, post_format, translation_gates
-from .editorial_prompts import EDITORIAL_UZ_PROMPT, RECENT_LEADS_BLOCK, UZ_BLOCKS
+from .editorial_prompts import EDITORIAL_UZ_PROMPT, RECENT_LEADS_BLOCK, UZ_BLOCKS, UZ_EXAMPLES
 from .models import (
     EXCLUDED_MATURITIES,
     Analysis,
@@ -1400,6 +1400,7 @@ def _editorial_prompt(article: Article, recent_leads: Sequence[str] = ()) -> str
     block_key = shape_for(_classified_topic(article))
     prompt = EDITORIAL_UZ_PROMPT.format(
         block=UZ_BLOCKS[block_key],
+        example=UZ_EXAMPLES[block_key],
         title=article.title,
         source=article.source.name if article.source else "",
         text=(article.extracted_text or "")[:8000],
