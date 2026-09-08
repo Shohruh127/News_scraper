@@ -210,6 +210,54 @@ def analyse_for_digest(article_ids: list[int]) -> dict:
     return {"analysed": len(analyses), "article_ids": article_ids}
 
 
+#: A triage message whose slot is older than this is beat replaying an entry it missed
+#: during an outage, not a worker picking the message up late: the LLM stage has run for
+#: hours, never for half a day. Measured 2026-09-08 -- see slot_for.
+STALE_SLOT_AFTER = timedelta(hours=12)
+
+#: Beat dispatches at or after the slot minute and the worker shares its clock, so a message
+#: never arrives before its slot; the grace covers clocks a few seconds apart.
+SLOT_GRACE = timedelta(minutes=5)
+
+TRIAGE_TASK = "digest.triage_and_classify"
+
+
+def slot_for(edition: str, now=None):
+    """The scheduled time the triage message for `edition` belongs to.
+
+    That is the latest occurrence, at or before now, of the beat entry that dispatches
+    `digest.triage_and_classify` with this edition, read from the code's own schedule in
+    `config/celery.py`. The edition is never re-derived from the clock; only its date is
+    fixed here, at the head of the chain. None when no entry schedules the edition (a
+    manual run), in which case the chain composes for today as it always has.
+
+    Why the date cannot wait for compose time: on 2026-09-08 the stack came up at 14:57
+    after missing the previous evening's entry. django-celery-beat treats an entry whose
+    `last_run_at` is behind its schedule as due and dispatches it once at startup, so it
+    replayed the 2026-09-07 evening entry at once; `compose_and_publish` stamped it with
+    *today's* date, composed the 2026-09-08 evening slot at 14:58 with one item, and the
+    genuine 18:00 run then found the slot published and composed nothing. A genuine
+    message the worker picks up after midnight would do the same to the next day.
+
+    Reads one hour and one minute from the entry: the triage entries are simple daily
+    crontabs, and tests/test_slot_guard.py pins them to that shape.
+    """
+    from celery import current_app
+
+    now = timezone.localtime(now)
+    for entry in current_app.conf.beat_schedule.values():
+        if entry.get("task") != TRIAGE_TASK or entry.get("kwargs", {}).get("edition") != edition:
+            continue
+        schedule = entry["schedule"]
+        slot = now.replace(
+            hour=min(schedule.hour), minute=min(schedule.minute), second=0, microsecond=0
+        )
+        if slot > now + SLOT_GRACE:
+            slot -= timedelta(days=1)
+        return slot
+    return None
+
+
 @shared_task(name="digest.triage_and_classify")
 def triage_and_classify(trigger_publish_chain: bool = True, edition: str | None = None) -> dict:
     """Run all triage first, then all classification to pay the model swap cost once.
@@ -220,8 +268,37 @@ def triage_and_classify(trigger_publish_chain: bool = True, edition: str | None 
     `edition` is carried through to that chained call. Without it compose_and_publish
     derives the edition from the clock at the moment it runs, so a morning cycle whose
     LLM stage ran past 14:00 would publish into the evening slot.
+
+    The slot's *date* is fixed here too, before anything else runs: `slot_for` says
+    which occurrence of the edition's beat entry this message belongs to, and a slot
+    older than STALE_SLOT_AFTER is refused outright, with an admin alert, because it is
+    beat replaying an entry it missed during an outage. Composing it would stamp it
+    with today's date and take today's slot (2026-09-08). The trade-off is that the
+    missed edition is skipped rather than published a day late: a day-late block
+    would drip ahead of the fresh one and push today's news back by twelve hours.
     """
-    from . import llm
+    from . import llm, publish
+
+    slot = slot_for(edition) if edition else None
+    digest_date_str = slot.date().isoformat() if slot else None
+    if slot is not None:
+        age = timezone.localtime() - slot
+        if age > STALE_SLOT_AFTER:
+            hours = age.total_seconds() / 3600
+            message = (
+                f"Refusing a stale {edition} triage message: its slot was "
+                f"{slot:%Y-%m-%d %H:%M}, {hours:.1f}h ago. Beat replays an entry it missed "
+                f"during an outage; composing it now would stamp today's date on it and "
+                f"take today's {edition} slot. The missed edition is skipped."
+            )
+            log.error(message)
+            publish.send_admin_alert(message)
+            return {
+                "status": "stale_slot",
+                "edition": edition,
+                "slot": slot.isoformat(),
+                "age_hours": round(hours, 1),
+            }
 
     # Overlap protection using Redis lock (T1.8)
     # Records holder identity so a stale lock is identifiable (T1.15).
@@ -303,10 +380,13 @@ def triage_and_classify(trigger_publish_chain: bool = True, edition: str | None 
 
         # Causal evening chain: trigger compose_and_publish
         if trigger_publish_chain:
-            log.info("Triggering compose_and_publish task in evening chain")
-            compose_and_publish.delay(edition=edition)
+            log.info(
+                "Triggering compose_and_publish for %s (%s)", digest_date_str or "today", edition
+            )
+            compose_and_publish.delay(digest_date_str=digest_date_str, edition=edition)
 
         return {
+            "digest_date": digest_date_str,
             "triaged": triaged_count,
             "triage_survivors": triage_passed,
             "classified": classified_count,

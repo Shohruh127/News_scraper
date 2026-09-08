@@ -93,6 +93,32 @@ Consequences that follow from this and are easy to undo by accident:
 - `publish.publish_digest` and `publish.refresh_digest_status` leave a digest with zero items
   as `COMPOSED`. Marking it published burns the slot for the day.
 
+### The chain carries the slot date
+
+Added 2026-09-08. `triage_and_classify` fixes the edition's *date* at the head of the chain
+(`slot_for`: the latest occurrence of that edition's beat entry, read from `config/celery.py`)
+and passes it to `compose_and_publish` as `digest_date_str`. The edition still comes from the
+beat entry's kwargs; only the date stops being read from the clock at compose time, hours
+later.
+
+What went wrong without it: the stack came up at 14:57 on 2026-09-08 after being down through
+the previous evening's 18:00. django-celery-beat treats an entry whose `last_run_at` is behind
+its schedule as due and dispatches it once at startup — the triage entries carry no `expires`,
+deliberately — so it replayed the 2026-09-07 evening entry at once. `compose_and_publish`
+stamped it with *today's* date, composed the 2026-09-08 evening slot at 14:58 with one item,
+and the genuine 18:00 run (79 triaged, 11 candidates) found the slot published and composed
+nothing. A worker that picks a genuine 18:00 message up after midnight would do the same to
+the next day, with no outage involved.
+
+A slot older than `STALE_SLOT_AFTER` (12 hours) is refused before the lock and before any LLM
+call, with an admin alert: that message is beat replaying a missed entry. The trade-off chosen
+is *skip the missed edition* rather than *publish it a day late* — a day-late block would
+drip ahead of the fresh one (FIFO by `composed_at`) and push today's news back by twelve hours.
+A slot up to 12 hours old is composed on its own date, so a deploy at 18:10 still runs the
+18:00 cycle and a message picked up at 00:10 lands on the evening it belongs to. A run with no
+edition (`run_pipeline`) is untouched. `slot_for` reads one hour and one minute per entry;
+`tests/test_slot_guard.py` pins the triage entries to that shape.
+
 ## Composition is causal, emission is on a clock
 
 Since 2026-08-24 the invariant above splits in two, and both halves matter.
