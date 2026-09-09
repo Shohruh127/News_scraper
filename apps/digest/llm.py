@@ -22,6 +22,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from . import artifacts, post_format, translation_gates
 from .editorial_prompts import EDITORIAL_UZ_PROMPT, RECENT_LEADS_BLOCK, UZ_BLOCKS, UZ_EXAMPLES
+from .editorial_prompts_ru import (
+    EDITORIAL_RU_PROMPT,
+    REEXPRESS_RU_UZ_PROMPT,
+    RU_BLOCKS,
+    RU_EXAMPLES,
+)
 from .models import (
     EXCLUDED_MATURITIES,
     Analysis,
@@ -149,6 +155,28 @@ class EditorialUz(BaseModel):
 
     technical: TechnicalDetails = Field(default_factory=TechnicalDetails)
     evidence_level: str = Field(default="vendor_claim_only")
+
+
+class ReexpressUz(BaseModel):
+    """The second layer's answer: the Russian draft said in Uzbek. Three fields, nothing else."""
+
+    lead_uz: str = ""
+    body_1_uz: str = ""
+    kicker_uz: str = ""
+
+
+REEXPRESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {f: {"type": "string"} for f in ("lead_uz", "body_1_uz", "kicker_uz")},
+    "required": ["lead_uz", "body_1_uz", "kicker_uz"],
+}
+
+#: The re-expression is a faithful rewrite, not a composition: sampled a little for natural
+#: wording, not enough to drift, and thinking at `low` because the facts are already chosen.
+#: Measured 2026-09-09 on 26 articles: 0.8-2.2k tokens a post, no gate failures; one post's
+#: thinking exhausted a 4000 cap at level medium, hence 8000.
+REEXPRESS_TEMPERATURE = 0.4
+REEXPRESS_NUM_PREDICT = 8000
 
 
 #: Topic guidance varies; the shared dayjest format and voice live in editorial_prompts.
@@ -562,6 +590,7 @@ def gemini_chat(
     max_tokens: int = 1500,
     client: httpx.Client | None = None,
     temperature: float = 0,
+    thinking_level: str | None = None,
 ) -> ChatResult:
     """One `generateContent` call against the Gemini Developer API (B2).
 
@@ -590,7 +619,7 @@ def gemini_chat(
         "generationConfig": {
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
-            "thinkingConfig": {"thinkingLevel": settings.GEMINI_THINKING_LEVEL},
+            "thinkingConfig": {"thinkingLevel": thinking_level or settings.GEMINI_THINKING_LEVEL},
         },
     }
     if schema:
@@ -743,6 +772,7 @@ def _dispatch(
     num_predict: int,
     client: httpx.Client | None = None,
     temperature: float = 0,
+    thinking_level: str | None = None,
 ) -> ChatResult:
     """One chat call to `provider` at `tier`.
 
@@ -771,6 +801,7 @@ def _dispatch(
             max_tokens=num_predict,
             client=client,
             temperature=temperature,
+            thinking_level=thinking_level,
         )
 
     if not settings.MIMO_API_KEY or not settings.MIMO_BASE_URL:
@@ -821,6 +852,8 @@ def editorial_chat(
     client: httpx.Client | None = None,
     provider: str | None = None,
     tier: str = TIER_DEEP,
+    temperature: float | None = None,
+    thinking_level: str | None = None,
 ) -> ChatResult:
     """Dispatch an editorial call.
 
@@ -836,7 +869,8 @@ def editorial_chat(
         schema=schema,
         num_predict=num_predict,
         client=client,
-        temperature=settings.EDITORIAL_TEMPERATURE,
+        temperature=settings.EDITORIAL_TEMPERATURE if temperature is None else temperature,
+        thinking_level=thinking_level,
     )
 
 
@@ -1326,14 +1360,17 @@ def analyse_for_digest_logic(
             continue
 
         try:
-            result = editorial_uz_for_article(art, client=client, recent_leads=shown)
+            result = write_post(art, client=client, recent_leads=shown)
 
             violations = _uz_violations(art, result.payload)
             if violations:
                 log.warning(
                     "Uzbek gates failed for article %s: %s. Retrying once.", art.id, violations
                 )
-                result = _retry_editorial_uz(art, violations, result, client, shown)
+                if settings.EDITORIAL_DRAFT_LANG == "ru":
+                    result = _retry_reexpress(art, violations, result, client)
+                else:
+                    result = _retry_editorial_uz(art, violations, result, client, shown)
 
             still = _uz_violations(art, result.payload)
             if still:
@@ -1486,6 +1523,123 @@ def _record_analysis(article, stage, result: ChatResult) -> Analysis:
     )
 
 
+def _draft_prompt_ru(article: Article) -> str:
+    """The Russian draft's prompt: the production prompt localised, one block and one example
+    of the story's kind, no recent-leads block -- the Russian draft varies its openings on
+    its own (measured 2026-09-09: 0 of 15 release-verb openings without it)."""
+    block_key = shape_for(_classified_topic(article))
+    return EDITORIAL_RU_PROMPT.format(
+        block=RU_BLOCKS[block_key],
+        example=RU_EXAMPLES[block_key],
+        title=article.title,
+        source=article.source.name if article.source else "",
+        text=(article.extracted_text or "")[:8000],
+    )
+
+
+def _reexpress_prompt(draft: dict) -> str:
+    return REEXPRESS_RU_UZ_PROMPT.format(
+        lead=draft.get("lead_uz", ""),
+        body=draft.get("body_1_uz") or "(нет)",
+        kicker=draft.get("kicker_uz") or "(нет)",
+    )
+
+
+def _reexpress(draft: dict, client, suffix: str = "") -> ChatResult:
+    """Say the Russian draft in Uzbek. Three fields come back; the facts are already chosen."""
+    result = _editorial_call(
+        prompt=_reexpress_prompt(draft) + suffix,
+        schema=REEXPRESS_SCHEMA,
+        model_cls=ReexpressUz,
+        num_predict=REEXPRESS_NUM_PREDICT,
+        client=client,
+        provider=settings.EDITORIAL_UZ_PROVIDER,
+        tier=TIER_DEEP,
+        temperature=REEXPRESS_TEMPERATURE,
+        thinking_level="low",
+    )
+    said = _normalize_uz_payload(result.payload)
+    for field in READER_FIELDS:
+        if (said.get(field) or "").strip() in ("(нет)", "(yo'q)"):
+            said[field] = ""
+    return result._replace(payload=said)
+
+
+def _chain_payload(draft: dict, said: dict) -> dict:
+    """The stored row: Uzbek reader fields, the draft's technical block and evidence level,
+    and the Russian draft under `draft_ru` so a post can be traced to the text it came from."""
+    return {
+        **{k: v for k, v in draft.items() if k not in READER_FIELDS},
+        **{k: said.get(k, "") for k in READER_FIELDS},
+        "draft_ru": {k: draft.get(k, "") for k in READER_FIELDS},
+        "post_style": post_format.PLAIN_PHOTO_STYLE,
+    }
+
+
+def editorial_ru_uz_for_article(article: Article, client: httpx.Client | None = None) -> ChatResult:
+    """Two layers: a Russian draft, then the same post said in Uzbek (2026-09-09 design).
+
+    The draft is the production editorial in Russian, where the model chooses facts and
+    structure best; the second call is a rewrite with the facts fixed. Both calls' cost is
+    folded into the one result. See editorial_prompts_ru for the measurements.
+    """
+    draft = _editorial_call(
+        prompt=_draft_prompt_ru(article),
+        schema=EDITORIAL_UZ_SCHEMA,
+        model_cls=EditorialUz,
+        num_predict=settings.EDITORIAL_NUM_PREDICT,
+        client=client,
+        provider=settings.EDITORIAL_UZ_PROVIDER,
+        tier=TIER_DEEP,
+    )
+    ru = _normalize_uz_payload(draft.payload)
+    said = _reexpress(ru, client)
+    return _combine(draft, said)._replace(payload=_chain_payload(ru, said.payload))
+
+
+def _retry_reexpress(art, violations, first: ChatResult, client) -> ChatResult:
+    """A gate failure on the chain redoes the cheap layer, not the draft.
+
+    The draft's facts stand; the Uzbek wording is said again with the violations named.
+    That is ~1k tokens against the draft's 7k, and the gates are deterministic, so a
+    second draft would be spent re-choosing facts the gates did not object to.
+    """
+    ru = {
+        **{
+            k: v
+            for k, v in first.payload.items()
+            if k not in (*READER_FIELDS, "draft_ru", "post_style")
+        },
+        **(first.payload.get("draft_ru") or {}),
+    }
+    suffix = (
+        "\n\nIMPORTANT: your previous answer failed these checks:\n"
+        + "\n".join(f"- {v}" for v in violations)
+        + "\nFix exactly these and return valid JSON."
+    )
+    retry = _reexpress(ru, client, suffix)
+    payload = _chain_payload(ru, retry.payload)
+    still = _uz_violations(art, payload)
+    if still:
+        log.error("Uzbek gates failed permanently for article %s: %s", art.id, still)
+    return _combine(first, retry)._replace(payload=payload)
+
+
+def write_post(
+    article: Article,
+    client: httpx.Client | None = None,
+    recent_leads: Sequence[str] = (),
+) -> ChatResult:
+    """The editorial stage's one entry point; EDITORIAL_DRAFT_LANG picks the design.
+
+    `uz` (default) writes the Uzbek post in one call and is shown the channel's recent
+    leads; `ru` drafts in Russian and says it in Uzbek, and needs no history.
+    """
+    if settings.EDITORIAL_DRAFT_LANG == "ru":
+        return editorial_ru_uz_for_article(article, client=client)
+    return editorial_uz_for_article(article, client=client, recent_leads=recent_leads)
+
+
 def _editorial_call(
     prompt: str,
     schema: dict,
@@ -1494,6 +1648,8 @@ def _editorial_call(
     client=None,
     provider: str | None = None,
     tier: str = TIER_DEEP,
+    temperature: float | None = None,
+    thinking_level: str | None = None,
 ) -> ChatResult:
     """One editorial call with validation retry and empty technical block check (T1.17).
 
@@ -1502,7 +1658,9 @@ def _editorial_call(
     """
     first: ChatResult | None = None
     try:
-        first = editorial_chat(prompt, schema, num_predict, client, provider, tier)
+        first = editorial_chat(
+            prompt, schema, num_predict, client, provider, tier, temperature, thinking_level
+        )
         model_cls.model_validate(first.payload)
         result = first
     except (ValidationError, json.JSONDecodeError) as exc:
@@ -1511,7 +1669,16 @@ def _editorial_call(
             f"{prompt}\n\nIMPORTANT: your previous output failed validation:\n{exc}\n"
             "Return valid JSON conforming strictly to the schema."
         )
-        retry = editorial_chat(recovery, schema, max(num_predict, 2000), client, provider, tier)
+        retry = editorial_chat(
+            recovery,
+            schema,
+            max(num_predict, 2000),
+            client,
+            provider,
+            tier,
+            temperature,
+            thinking_level,
+        )
         model_cls.model_validate(retry.payload)
         result = _combine(first, retry)
 
@@ -1523,7 +1690,16 @@ def _editorial_call(
             "You must provide a non-empty 1-sentence lead."
         )
         try:
-            retry = editorial_chat(recovery, schema, max(num_predict, 2000), client, provider, tier)
+            retry = editorial_chat(
+                recovery,
+                schema,
+                max(num_predict, 2000),
+                client,
+                provider,
+                tier,
+                temperature,
+                thinking_level,
+            )
             model_cls.model_validate(retry.payload)
             if retry.payload.get("lead_uz", "").strip():
                 result = _combine(result, retry)

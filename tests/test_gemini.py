@@ -276,3 +276,21 @@ def test_the_editorial_samples_at_the_configured_temperature_and_triage_does_not
     llm.classifier_chat(tier=llm.TIER_FAST, prompt="p", schema=SCHEMA, num_predict=100)
 
     assert sent == [0.8, 0], "editorial at the setting, classifier pinned at 0"
+
+
+@respx.mock
+def test_the_thinking_level_can_be_set_per_call(gemini):
+    """The second editorial layer thinks at `low`: its facts are already chosen. Until
+    2026-09-09 the level was global, so a cheap rewrite thought as hard as the draft."""
+    sent = []
+
+    def capture(request):
+        sent.append(json.loads(request.content)["generationConfig"]["thinkingConfig"])
+        return _ok()
+
+    respx.post(URL).mock(side_effect=capture)
+
+    llm.gemini_chat(model="gemini-3.8-flash", prompt="p", schema=SCHEMA)
+    llm.gemini_chat(model="gemini-3.8-flash", prompt="p", schema=SCHEMA, thinking_level="low")
+
+    assert sent == [{"thinkingLevel": "medium"}, {"thinkingLevel": "low"}]

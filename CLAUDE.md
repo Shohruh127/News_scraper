@@ -259,6 +259,35 @@ bills its reasoning to that budget before writing, one dense article hit 8000 on
 consecutive runs and with a single call there is no draft to fall back to, and an unused
 cap costs nothing.
 
+## Two layers behind `EDITORIAL_DRAFT_LANG`: a Russian draft, then the post said in Uzbek
+
+Added 2026-09-09, default off (`uz`). Measured that day on the same articles: the production
+prompt fully localised into Russian writes markedly better posts than in Uzbek — the model's
+Russian is far stronger, and @naebnet's register is a Russian genre it knows — while the
+Uzbek one-call post reads like officialese and pads (~450 characters against ~390). So `ru`
+drafts in Russian with `editorial_prompts_ru.py` (the same blocks, rules and invented
+examples, localised, plus the accuracy rules ported the same day: distinguish a claim from a
+confirmation, a prototype from a product, some from all; no computed numbers; Latin names
+stay Latin; a library's build number stays out of the lead, a model's number is its name),
+and `_reexpress` then says the draft in Uzbek: a plain prompt with Russian instructions,
+Uzbek specimens and a small glossary of simple words, no JSON in the prompt (the fields come
+from the response schema), temperature 0.4, thinking `low`, no article, one to two thousand
+tokens — about +11% a post. The stored row carries the Uzbek reader fields, the draft's
+`technical` and `evidence_level`, and the draft itself under `draft_ru`.
+
+Three things were measured into the design. The re-expression has to be told to keep the
+lead's colon formula *and* be shown one RU→UZ pair: the rule alone kept 3 of 12, the pair
+12 of 12. The chain needs no recent-leads block: the Russian draft opened 0 of 15 posts with
+a release verb without it. And the draft prompt does not name the channel: naming @naebnet
+made drafts dramatic and added a claim the source did not make. A gate failure on the chain
+retries the re-expression, not the draft. The Russian draft plus thinking hit the 12 000 cap
+four times on dense articles and finished in 6 900 tokens on the next try — runaway
+thinking, not a steady need — which is why `EDITORIAL_NUM_PREDICT` is 16 000.
+
+The frozen 26-article evaluation set and the loop that tuned these prompts live in
+`output/prompt-eval/` (gitignored): one change per run, judged by reading and by the
+gates, never by the opening-shape count, which swings run to run at temperature 0.
+
 ## The editorial is shown the channel's last five leads
 
 Added 2026-09-08. Seven of eight consecutive published leads read "<Kompaniya>

@@ -127,7 +127,7 @@ class Command(BaseCommand):
 
     def _new_path(self, article):
         try:
-            result = llm.editorial_uz_for_article(article)
+            result = llm.write_post(article)
         except Exception as exc:
             return None, f"FAILED — {exc}"
         violations = translation_gates.validate_against_source(

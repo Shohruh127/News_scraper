@@ -56,6 +56,7 @@ BLOCKS = [
         [
             "LLM_PROVIDER",
             "EDITORIAL_UZ_PROVIDER",
+            "EDITORIAL_DRAFT_LANG",
             "CLASSIFIER_PROVIDER",
         ],
         [
@@ -65,6 +66,7 @@ BLOCKS = [
             "",
             "  LLM_PROVIDER          global default for anything not overridden below",
             "  EDITORIAL_UZ_PROVIDER single-stage Uzbek editorial",
+            "  EDITORIAL_DRAFT_LANG  uz = one call | ru = Russian draft, then Uzbek",
             "  CLASSIFIER_PROVIDER   triage + classification, several hundred calls a day",
         ],
     ),

@@ -137,6 +137,11 @@ LLM_PROVIDER = env("LLM_PROVIDER", default="gateway")
 #: two stages it replaces; CLASSIFIER_PROVIDER deliberately does not, because its volume is
 #: several hundred calls a day and must not move silently.
 EDITORIAL_UZ_PROVIDER = env("EDITORIAL_UZ_PROVIDER", default=LLM_PROVIDER)
+#: Which design writes the post. `uz`: one call writes the Uzbek post (2026-08-26).
+#: `ru`: a Russian draft, then the same post said in Uzbek by a second, cheap call
+#: (2026-09-09; measured better on fact choice and structure, see CLAUDE.md). Default
+#: `uz` until the chain has been judged on live days.
+EDITORIAL_DRAFT_LANG = env("EDITORIAL_DRAFT_LANG", default="uz")
 #: The English editorial budget. Was a hardcoded 1500, which is enough on MiMo but not on the
 #: gateway: its `smart` tier is a reasoning model and charges its reasoning to the same
 #: budget. Measured 2026-08-21 on the live gateway with the real editorial prompt — 1500
@@ -163,7 +168,7 @@ EDITORIAL_UZ_PROVIDER = env("EDITORIAL_UZ_PROVIDER", default=LLM_PROVIDER)
 #: shipped; with one call there is nothing to fall back to and the article is lost outright.
 #: 12000 leaves that article ~50% headroom. Every other article in those runs finished well
 #: under 8000, and pays nothing for the raise.
-EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=12000)
+EDITORIAL_NUM_PREDICT = env.int("EDITORIAL_NUM_PREDICT", default=16000)
 
 #: Sampling temperature for the editorial call only. Triage and classification stay at 0:
 #: a decision should be deterministic. The post should not be. Every provider call was
