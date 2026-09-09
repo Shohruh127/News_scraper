@@ -61,9 +61,11 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
     src_priority = article.source.priority if article.source else 50
     w_source = (src_priority / 100.0) * weights.get("source_credibility", 0.10)
 
-    # Audience relevance (1.0 for technical topics, 0.0 for irrelevant)
-    topic_rel = 1.0 if analysis.topic != Topic.IRRELEVANT else 0.0
-    w_audience = topic_rel * weights.get("audience_relevance", 0.10)
+    # Who cares: the classifier's audience score (2026-09-09). Before it this weight was
+    # 1.0 for every non-irrelevant topic, i.e. a constant, and evidence carried the rank:
+    # open-source developer tooling outscored news that reached ordinary readers.
+    audience = float(payload.get("audience", 5))
+    w_audience = (audience / 10.0) * weights.get("audience_relevance", 0.30)
 
     score = w_novelty + w_evidence + w_readiness + w_source + w_audience
 

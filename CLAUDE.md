@@ -380,6 +380,25 @@ guide:
   and `_openai_chat` raises a message naming the cause rather than letting an empty string reach
   `json.loads`.
 
+## The reader is not an engineer: the audience score
+
+Added 2026-09-09. Triage and classification were written for "an AI-engineering news digest
+read by working engineers", and the ranking rewarded evidence — so open-source developer
+tooling won: in the week before, 43 of the 98 non-irrelevant candidates were
+`production_engineering` (an Ollama changelog, vLLM on AMD GPUs, "the cheapest GPU cloud",
+a Python interpreter in 1024 bytes, Jellyfin 12.0), and HN supplied 131 of 160 classified
+articles. The channel's reader is a school student or a curious adult, and the owner asked
+that such topics stop reaching the channel.
+
+Classification now judges `audience` (1–10, anchored: 1–2 only people who build or deploy
+this kind of software, 5–6 a curious adult sees why it matters, 7–8 phones, school, money,
+privacy, safety) and `classify_article_logic` skips an article at or below
+`AUDIENCE_MIN_SCORE` (default 3) before any editorial cost. `RANKING_WEIGHTS` moved 0.20
+from evidence and readiness to `audience_relevance`, which now reads the score instead of
+being a constant 1.0 for every technical topic. Rows written before the field default to 5.
+Triage stays recall-first; only its audience line changed. The topic vocabulary is untouched:
+a changelog is still `production_engineering`, it is just audience 2.
+
 ## Triage reads the headline, not the article
 
 Changed 2026-08-25. Triage used to request the full `CLASSIFICATION_SCHEMA` — topic, maturity

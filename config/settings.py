@@ -301,13 +301,21 @@ EVENING_LOCK_TTL = env.int("EVENING_LOCK_TTL", default=360)
 # Only dimensions available in M1 classification schema (CONTENT_SCHEMA.md §4).
 # technical_significance was removed (double-counted novelty + evidence).
 # source_credibility stays at 0.10 to prevent systematic bias against HN/community sources.
+# Reweighted 2026-09-09 for a channel read by ordinary people: `audience_relevance` is the
+# classifier's audience score (it used to be a constant 1.0 for every technical topic),
+# and evidence gives up the share that let open-source developer tooling outrank news
+# that reaches readers. Measured the week before: 43 of 98 non-irrelevant candidates were
+# production_engineering - changelogs, GPU prices, self-hosting - none of them for readers.
 RANKING_WEIGHTS = {
-    "novelty": 0.35,
-    "evidence": 0.30,
-    "production_readiness": 0.15,
+    "novelty": 0.30,
+    "evidence": 0.20,
+    "production_readiness": 0.10,
     "source_credibility": 0.10,
-    "audience_relevance": 0.10,
+    "audience_relevance": 0.30,
 }
+#: Classification drops an article whose audience score is at or below this. 3 = developers
+#: and enthusiasts only; the channel's reader is a school student or a curious adult.
+AUDIENCE_MIN_SCORE = env.int("AUDIENCE_MIN_SCORE", default=3)
 # One post per news item (ADR-004 §6). Two blocks a day, six posts each, one every two hours.
 DIGEST_MAX_ITEMS = env.int("DIGEST_MAX_ITEMS", default=6)
 #: 3 of 6 on one topic is half a block. Lowered with DIGEST_MAX_ITEMS on 2026-08-24.

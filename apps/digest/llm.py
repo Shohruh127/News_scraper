@@ -77,6 +77,9 @@ class Classification(BaseModel):
     novelty: int = Field(..., ge=1, le=10)
     evidence: int = Field(..., ge=1, le=10)
     production_readiness: int = Field(..., ge=1, le=10)
+    #: Who cares, 1-10, judged from the article for an ordinary reader. Added 2026-09-09;
+    #: rows written before it default to the middle so old candidates keep their rank.
+    audience: int = Field(5, ge=1, le=10)
     reason: str
 
 
@@ -94,6 +97,7 @@ CLASSIFICATION_SCHEMA: dict[str, Any] = {
         "novelty": {"type": "integer", "minimum": 1, "maximum": 10},
         "evidence": {"type": "integer", "minimum": 1, "maximum": 10},
         "production_readiness": {"type": "integer", "minimum": 1, "maximum": 10},
+        "audience": {"type": "integer", "minimum": 1, "maximum": 10},
         "reason": {"type": "string"},
     },
     "required": [
@@ -102,6 +106,7 @@ CLASSIFICATION_SCHEMA: dict[str, Any] = {
         "novelty",
         "evidence",
         "production_readiness",
+        "audience",
         "reason",
     ],
 }
@@ -253,8 +258,9 @@ TRIAGE_SCHEMA: dict[str, Any] = {
 #: Title and source only. This is the whole cost saving: the article body is already
 #: downloaded and stored, but sending it to the model costs ~2000 input tokens per article
 #: on the highest-volume stage in the pipeline, several hundred times a day.
-TRIAGE_PROMPT_TEMPLATE = """You are the first filter for an AI-engineering news digest read
-by working engineers. Return JSON only.
+TRIAGE_PROMPT_TEMPLATE = """You are the first filter for an AI news channel read by ordinary
+people, not engineers. This stage keeps recall; the classification stage, which reads the
+article, judges who cares. Return JSON only.
 
 Answer relevant=true if ANY ONE of these holds. They are independent — one is enough.
 
@@ -284,8 +290,9 @@ Source: {source}
 
 # Verbatim enum definitions and boundaries from CONTENT_SCHEMA.md §2 and §3 for deep classification
 CLASSIFICATION_PROMPT_TEMPLATE = (
-    "You are a technical editor for an AI-engineering news digest read by engineers and "
-    "technical decision-makers. Classify the article below. Return JSON only.\n\n"
+    "You are the editor of an AI news channel for ordinary readers - school students to "
+    "adults who are curious about technology and are not engineers. Classify the article "
+    "below. Return JSON only.\n\n"
     "## primary_topic — the SINGLE best fit\n"
     "- frontier_models: a named model released, updated or given new capabilities. Not a "
     "technique — that is new_approaches. Not a tool that runs models — that is "
@@ -312,6 +319,18 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
     "opinion, consumer gadgets, general business news.\n\n"
     "No technical substance means primary_topic MUST be irrelevant. Never force a "
     "technical category onto a business story.\n\n"
+    "## audience - who cares, judged for the channel's reader, not for its technical merit\n"
+    "- 1-2: only people who build, deploy or maintain this kind of software: a library, SDK "
+    "or server changelog, an infrastructure performance number, a self-hosting or "
+    "dev-environment how-to, a personal coding experiment, a benchmark of tooling.\n"
+    "- 3-4: developers and technology enthusiasts.\n"
+    "- 5-6: a curious adult with no technical background sees why it matters after one "
+    "sentence.\n"
+    "- 7-8: touches things many people use or worry about: phones and chat assistants, "
+    "school and work, money, privacy, safety, jobs.\n"
+    "- 9-10: most people would want to know today.\n"
+    "A release with a strong benchmark and no change for users is 3; a small change that "
+    "reaches millions of phones is 8. Real technical news can still be audience 1-2.\n\n"
     "## maturity — what exists right now\n"
     "- production_deployment: running in a named real organisation, with reported "
     'results. Not "could be deployed".\n'
@@ -326,7 +345,8 @@ CLASSIFICATION_PROMPT_TEMPLATE = (
     "## Numeric dimensions\n"
     "- novelty: 1 = rehash of known news, 10 = genuinely new capability or result\n"
     "- evidence: 1 = vendor claim only, 10 = reproducible artifacts\n"
-    "- production_readiness: 1 = paper or announcement, 10 = deployed and documented\n\n"
+    "- production_readiness: 1 = paper or announcement, 10 = deployed and documented\n"
+    "- audience: as defined above\n\n"
     "reason: at most 10 words, naming what decided it. Always include it.\n\n"
     "ARTICLE\n"
     "Title: {title}\n"
@@ -1205,9 +1225,17 @@ def classify_article_logic(article: Article, client: httpx.Client | None = None)
 
     _record_analysis(article, Analysis.Stage.CLASSIFICATION, result._replace(payload=capped))
 
+    if classification.audience <= settings.AUDIENCE_MIN_SCORE:
+        log.info(
+            "Article %s skipped: audience %d, nobody outside the trade cares (%s)",
+            article.id,
+            classification.audience,
+            classification.reason,
+        )
     if (
         classification.primary_topic == Topic.IRRELEVANT
         or classification.maturity in EXCLUDED_MATURITIES
+        or classification.audience <= settings.AUDIENCE_MIN_SCORE
     ):
         article.status = Article.Status.SKIPPED
     else:

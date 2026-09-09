@@ -57,6 +57,7 @@ BLOCKS = [
             "LLM_PROVIDER",
             "EDITORIAL_UZ_PROVIDER",
             "EDITORIAL_DRAFT_LANG",
+            "AUDIENCE_MIN_SCORE",
             "CLASSIFIER_PROVIDER",
         ],
         [
@@ -67,6 +68,7 @@ BLOCKS = [
             "  LLM_PROVIDER          global default for anything not overridden below",
             "  EDITORIAL_UZ_PROVIDER single-stage Uzbek editorial",
             "  EDITORIAL_DRAFT_LANG  uz = one call | ru = Russian draft, then Uzbek",
+            "  AUDIENCE_MIN_SCORE    classification drops audience <= this (1-10)",
             "  CLASSIFIER_PROVIDER   triage + classification, several hundred calls a day",
         ],
     ),
