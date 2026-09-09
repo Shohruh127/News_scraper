@@ -264,29 +264,61 @@ cap costs nothing.
 Added 2026-09-09, default off (`uz`). Measured that day on the same articles: the production
 prompt fully localised into Russian writes markedly better posts than in Uzbek — the model's
 Russian is far stronger, and @naebnet's register is a Russian genre it knows — while the
-Uzbek one-call post reads like officialese and pads (~450 characters against ~390). So `ru`
-drafts in Russian with `editorial_prompts_ru.py` (the same blocks, rules and invented
-examples, localised, plus the accuracy rules ported the same day: distinguish a claim from a
-confirmation, a prototype from a product, some from all; no computed numbers; Latin names
-stay Latin; a library's build number stays out of the lead, a model's number is its name),
-and `_reexpress` then says the draft in Uzbek: a plain prompt with Russian instructions,
-Uzbek specimens and a small glossary of simple words, no JSON in the prompt (the fields come
-from the response schema), temperature 0.4, thinking `low`, no article, one to two thousand
+Uzbek one-call post reads like officialese and pads (~450 characters against ~390). So `ru` drafts in Russian with `editorial_prompts_ru.py`, and `_reexpress` then says the
+draft in Uzbek: no JSON in either prompt (the fields come from the response schema),
+temperature 0.4 and thinking `low` for the re-expression, no article, one to two thousand
 tokens — about +11% a post. The stored row carries the Uzbek reader fields, the draft's
-`technical` and `evidence_level`, and the draft itself under `draft_ru`.
+`technical` and `evidence_level`, and the draft itself under `draft_ru`. Both prompts are
+written in English (owner's decision, 2026-09-09 evening; measured: English rules were
+followed most precisely); the specimens keep their languages — Russian example posts in
+the draft prompt, RU→UZ pairs in the re-expression.
 
-Three things were measured into the design. The re-expression has to be told to keep the
-lead's colon formula *and* be shown one RU→UZ pair: the rule alone kept 3 of 12, the pair
-12 of 12. No recent-leads block: the Russian draft opened 0 of 15 posts with a release verb
-without one (the block is gone from both paths since 2026-09-09). And the draft prompt does not name the channel: naming @naebnet
-made drafts dramatic and added a claim the source did not make. A gate failure on the chain
-retries the re-expression, not the draft. The Russian draft plus thinking hit the 12 000 cap
-four times on dense articles and finished in 6 900 tokens on the next try — runaway
-thinking, not a steady need — which is why `EDITORIAL_NUM_PREDICT` is 16 000.
+**The draft prompt is short, and that is the design.** It went from 7 000 characters with
+four rule blocks to 2 800 on 2026-09-09 evening, at the owner's reading of the long one as
+a hindrance: who reads (fifth grade up, curious adults, not engineers); what to take (the
+one point that makes a reader say "so that exists now?", plus one or two that explain it —
+the rest stays in the article); one topic block from `RU_BLOCKS` saying where the wow
+usually is in that kind of story; one invented Russian example of that kind from
+`RU_EXAMPLES`; lead with the most surprising fact, at most one number in the post, four or
+five sentences in all; a voice that asks for a little excitement drawn from the fact — the
+owner wants the wow, not a ban on it, and only a joke and a call to the reader stay out,
+for the school-age reader; the truth rules (keep the degree of a claim, say who says it, no
+computed numbers, Latin names stay Latin); the field contract. Measured on the same five
+articles: the short prompt with no example lost the opening formula (0 of 5 leads, three
+release verbs), the short prompt with one example of the story's own kind kept it (3 of 5,
+none), and "at most one number" cut the numbers across five posts from 17 to 5. The long
+prompt's ranked kinds of fact are gone on purpose: "a test result you can picture" first
+is what made a DNA-map story lead with a gene name (DNM1) no ordinary reader knows, while
+the short prompt led with "98% of the genome was a mystery" from the same article — the
+owner's verdict on 2026-09-09 evening, and his standing instruction: no constraints added
+on the model's behalf, and no tuning to particular kinds of story.
+
+**The re-expression prompt is short too** (under 2 000 characters; a test holds the cap):
+who reads; the words — short ones with few letters, the shorter of two words that say the
+same thing, no long many-syllable words (the owner's rule: cap the words in a sentence and
+the model packs the meaning into long words instead, so choose shorter words rather than
+fewer); sentences — one RU→UZ pair showing a long Russian sentence become three short
+Uzbek ones; what must not change, with the one colon-formula pair; the limits. Both pairs
+are there because a rule alone does not move the model and a pair does: the formula rule
+kept 3 of 12 leads, the pair 12 of 12; the split pair took words per sentence from 11.6 to
+9.3 and the share of sentences over eight words from 81% to 55% on identical drafts, at no
+cost in word length or post length.
+
+No recent-leads block (the Russian draft opened 0 of 15 posts with a release verb without
+one; gone from both paths since 2026-09-09), and the draft prompt does not name the
+channel: naming @naebnet made drafts dramatic and added a claim the source did not make. A
+gate failure on the chain retries the re-expression, not the draft. The Russian draft plus
+thinking hit the 12 000 cap four times on dense articles and finished in 6 900 tokens on
+the next try — runaway thinking, not a steady need — which is why `EDITORIAL_NUM_PREDICT`
+is 16 000.
 
 The frozen 26-article evaluation set and the loop that tuned these prompts live in
-`output/prompt-eval/` (gitignored): one change per run, judged by reading and by the
-gates, never by the opening-shape count, which swings run to run at temperature 0.
+`output/prompt-eval/` (gitignored): one change per run, five articles at a time since the
+Gemini balance ran out on 2026-09-09, judged by reading and by the gates, never by the
+opening-shape count. **A change to the re-expression is measured on stored drafts
+(`--reuse-draft`)**: Gemini re-samples the draft even at temperature 0 (thinking), so a
+full re-run changes both layers and the comparison says nothing about the one that was
+edited.
 
 ## No old posts in the model's context
 
