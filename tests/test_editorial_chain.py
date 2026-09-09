@@ -121,7 +121,7 @@ def test_ru_drafts_in_russian_then_says_it_in_uzbek(article, settings):
     assert llm.RU_BLOCKS["release"].strip().splitlines()[0] in draft_prompt
     assert llm.RU_EXAMPLES["release"] in draft_prompt
     assert "<recent_leads>" not in draft_prompt, "no old posts in the context"
-    assert RU_DRAFT["lead_uz"] in said_prompt and "Перескажи" in said_prompt
+    assert RU_DRAFT["lead_uz"] in said_prompt and "fifth-grader" in said_prompt
     assert "sun'iy intellekt" in said_prompt, "the glossary rides with the second layer"
     assert article.extracted_text[:40] not in said_prompt, "the second layer never sees the article"
 
@@ -200,4 +200,4 @@ def test_the_russian_prompt_mirrors_the_uzbek_one_and_its_examples_render():
         )  # raises ValueError if an example teaches a post the renderer would discard
     said = REEXPRESS_RU_UZ_PROMPT.format(lead="L", body="B", kicker="K")
     assert "Ob-havoni aniqroq ko'ramiz:" in said, "the RU->UZ pair that keeps the colon formula"
-    assert "не больше 7" in said and "«vosita», не «qurol»" in said
+    assert "at most 7 sentences" in said and "«vosita», not «qurol»" in said

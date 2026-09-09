@@ -1522,8 +1522,8 @@ def _draft_prompt_ru(article: Article) -> str:
 def _reexpress_prompt(draft: dict) -> str:
     return REEXPRESS_RU_UZ_PROMPT.format(
         lead=draft.get("lead_uz", ""),
-        body=draft.get("body_1_uz") or "(нет)",
-        kicker=draft.get("kicker_uz") or "(нет)",
+        body=draft.get("body_1_uz") or "(none)",
+        kicker=draft.get("kicker_uz") or "(none)",
     )
 
 
@@ -1542,7 +1542,7 @@ def _reexpress(draft: dict, client, suffix: str = "") -> ChatResult:
     )
     said = _normalize_uz_payload(result.payload)
     for field in READER_FIELDS:
-        if (said.get(field) or "").strip() in ("(нет)", "(yo'q)"):
+        if (said.get(field) or "").strip() in ("(none)", "(нет)", "(yo'q)"):
             said[field] = ""
     return result._replace(payload=said)
 
