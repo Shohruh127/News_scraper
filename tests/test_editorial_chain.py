@@ -94,15 +94,16 @@ def test_the_default_is_the_one_call_uzbek_path(settings):
 
 
 @respx.mock
-def test_write_post_routes_uz_to_the_one_call_and_shows_it_the_leads(article, settings):
+def test_write_post_routes_uz_to_the_one_call(article, settings):
     _gateway(settings, lang="uz")
     sent = _capture(respx.post(GW), UZ_ONE_CALL)
 
-    result = llm.write_post(article, recent_leads=["Google yangi modelni chiqardi."])
+    result = llm.write_post(article)
 
     assert len(sent) == 1
     prompt = sent[0]["messages"][0]["content"]
-    assert "## Avval: nimasi qiziq?" in prompt and "<recent_leads>" in prompt
+    assert "## Avval: nimasi qiziq?" in prompt
+    assert "<recent_leads>" not in prompt, "no old posts in the context, either path"
     assert "draft_ru" not in result.payload
 
 
@@ -113,13 +114,13 @@ def test_ru_drafts_in_russian_then_says_it_in_uzbek(article, settings):
     _gateway(settings)
     sent = _capture(respx.post(GW), RU_DRAFT, UZ_SAID)
 
-    result = llm.write_post(article, recent_leads=["Google yangi modelni chiqardi."])
+    result = llm.write_post(article)
 
     assert len(sent) == 2
     draft_prompt, said_prompt = (s["messages"][0]["content"] for s in sent)
     assert llm.RU_BLOCKS["release"].strip().splitlines()[0] in draft_prompt
     assert llm.RU_EXAMPLES["release"] in draft_prompt
-    assert "<recent_leads>" not in draft_prompt, "the Russian draft needs no history"
+    assert "<recent_leads>" not in draft_prompt, "no old posts in the context"
     assert RU_DRAFT["lead_uz"] in said_prompt and "Перескажи" in said_prompt
     assert "sun'iy intellekt" in said_prompt, "the glossary rides with the second layer"
     assert article.extracted_text[:40] not in said_prompt, "the second layer never sees the article"

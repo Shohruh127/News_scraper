@@ -249,7 +249,7 @@ the field contract in place of the three global examples that went to every arti
 2026-09-08. The model copies example shape, so three examples for every story taught three
 shapes to every story, at ~1100 characters an article. Now an article sees one shape,
 matched to its story; the seven examples open differently on purpose, the header asks for
-the approach rather than the mould, and the recent-leads block stops the one shape from
+the approach rather than the mould; sampling at temperature 1.0 keeps the one shape from
 repeating. A test renders every example through `render_dayjest_post`.
 
 `_retry_editorial_uz` is not the rewrite and stays: it is the one retry that names the gate
@@ -277,8 +277,8 @@ tokens — about +11% a post. The stored row carries the Uzbek reader fields, th
 
 Three things were measured into the design. The re-expression has to be told to keep the
 lead's colon formula *and* be shown one RU→UZ pair: the rule alone kept 3 of 12, the pair
-12 of 12. The chain needs no recent-leads block: the Russian draft opened 0 of 15 posts with
-a release verb without it. And the draft prompt does not name the channel: naming @naebnet
+12 of 12. No recent-leads block: the Russian draft opened 0 of 15 posts with a release verb
+without one (the block is gone from both paths since 2026-09-09). And the draft prompt does not name the channel: naming @naebnet
 made drafts dramatic and added a claim the source did not make. A gate failure on the chain
 retries the re-expression, not the draft. The Russian draft plus thinking hit the 12 000 cap
 four times on dense articles and finished in 6 900 tokens on the next try — runaway
@@ -288,21 +288,14 @@ The frozen 26-article evaluation set and the loop that tuned these prompts live 
 `output/prompt-eval/` (gitignored): one change per run, judged by reading and by the
 gates, never by the opening-shape count, which swings run to run at temperature 0.
 
-## The editorial is shown the channel's last five leads
+## No old posts in the model's context
 
-Added 2026-09-08. Seven of eight consecutive published leads read "<Kompaniya>
-<narsa>ni chiqardi", and a rule asking for variety in the abstract did not move that: the
-model reads such a rule and does not apply it. What it can act on is the exact shapes to
-avoid, so `analyse_for_digest_logic` reads the last five `SENT` items' leads
-(`llm.recent_published_leads`, newest first, from the row publish actually sent) and
-`_editorial_prompt` appends them after the article under `<recent_leads>` with one
-instruction: do not open like these. Inside one block each post is also shown the posts
-written before it, so six posts composed together do not open alike.
-
-Two things follow. The list comes from `SENT` items only - a failed or queued item is
-not on the reader's screen. And the eval command, the A/B scripts and a fresh channel
-pass nothing, so they get the bare prompt: `RECENT_LEADS_BLOCK` is written once in
-`editorial_prompts.py`, and the template itself carries no placeholder for it.
+The recent-leads history block added on 2026-09-08 (the channel's last five leads under
+`<recent_leads>`, "do not open like these") was removed on 2026-09-09, from both paths. The
+owner wants no earlier news in the model's context at all, and the measurement that
+justified the block belonged to the one-call Uzbek design: the Russian draft opened 0 of 15
+posts with a release verb without it. Openings are governed by the prompt's own rules and
+by sampling at temperature 1.0, not by what the channel published yesterday.
 
 ## django_celery_beat does not prune
 

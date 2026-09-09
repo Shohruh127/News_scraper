@@ -57,7 +57,7 @@ def test_force_bypasses_the_reuse_memo(article, monkeypatch):
     _row(article)
     calls = []
 
-    def fake(art, client=None, recent_leads=()):
+    def fake(art, client=None):
         calls.append(art.id)
         return llm.ChatResult(
             {
