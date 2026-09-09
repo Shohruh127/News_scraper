@@ -293,8 +293,8 @@ What must not change: the facts, the names, the numbers and units, the qualifier
 "in a test", "the company says"), the order of the parts, the paragraphs and "– " items one
 to one, and the shape of the first paragraph - if it opens with "<what we do or get>: <the
 fact>", keep the colon and that order - «Смотрим погоду точнее: Google выпустила модель
-WeatherNext 3.» becomes «Ob-havoni aniqroq ko'ramiz: Google WeatherNext 3 modelini chiqardi.» Add nothing, drop nothing; if a part is absent,
-leave it empty.
+WeatherNext 3.» becomes «Ob-havoni aniqroq ko'ramiz: Google WeatherNext 3 modelini chiqardi.»
+Add nothing, drop nothing; if a part is absent, leave it empty.
 
 Limits: the first paragraph at most 2 sentences; all parts together at most 7 sentences or
 items; the closing line up to 10 words. No HTML, Markdown, hashtags or links.
