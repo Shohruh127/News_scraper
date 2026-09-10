@@ -427,8 +427,10 @@ def compose_and_publish(
         return {"status": "already_published", "digest_date": str(target_date), "edition": edition}
 
     try:
-        # Step 2: Select candidates
-        candidates = ranking.select_digest_candidates(target_date)
+        # Step 2: Select candidates, then keep only the stories that can be posted. The
+        # photo is resolved here, before the editorial, because an item without one fails
+        # at publish and the editorial call would have been spent for nothing (2026-09-10).
+        candidates = publish.keep_publishable(ranking.select_digest_candidates(target_date))
         candidate_article_ids = [c[0].id for c in candidates]
 
         # Step 3: Run the editorial stage on the selected candidates.

@@ -126,6 +126,57 @@ def send_photo(
             client.close()
 
 
+def keep_publishable(candidates):
+    """Drop a story that has no photo before the editorial stage pays for it.
+
+    Added 2026-09-10. A post is a photo post and an item without one fails at publish, so
+    the photo is resolved first and the page fetch is spent instead of the editorial call:
+    on 2026-09-09 DeepMind's AlphaGenome post was drafted and re-expressed on Gemini, then
+    failed at 18:10 for want of a photo, while Google's copy of the same story sat one slot
+    below with a picture. A story keeps its slot if any copy has a photo - the copy that
+    does becomes the primary and the rest stay attached. `resolve_photo_url` writes what it
+    finds back to `article.meta`, so publish does not fetch the page again.
+
+    Input and output are `select_digest_candidates` tuples:
+    (primary, analysis, score, [secondary, ...]).
+    """
+    kept = []
+    for article, analysis, score, secondary in candidates:
+        members = [article, *secondary]
+        with_photo = next((m for m in members if _photo_or_none(m)), None)
+        if with_photo is None:
+            log.warning(
+                "Dropping candidate %s before the editorial: no usable photo (%s)",
+                article.id,
+                article.title[:60],
+            )
+            continue
+        if with_photo.id != article.id:
+            log.info(
+                "Candidate %s carries the photo for the story led by %s; it becomes the primary",
+                with_photo.id,
+                article.id,
+            )
+            analysis = (
+                Analysis.objects.filter(article=with_photo, stage=Analysis.Stage.CLASSIFICATION)
+                .order_by("-created_at")
+                .first()
+                or analysis
+            )
+            secondary = [m for m in members if m.id != with_photo.id]
+            article = with_photo
+        kept.append((article, analysis, score, secondary))
+    return kept
+
+
+def _photo_or_none(article) -> str | None:
+    try:
+        return resolve_photo_url(article)
+    except Exception as exc:  # noqa: BLE001 - one page's failure must not cost the edition
+        log.warning("Photo lookup raised for article %s: %s", article.id, type(exc).__name__)
+        return None
+
+
 def resolve_photo_url(article) -> str | None:
     """Use the article's photo, never its link-preview card as a substitute.
 

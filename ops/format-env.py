@@ -59,6 +59,7 @@ BLOCKS = [
             "EDITORIAL_DRAFT_LANG",
             "AUDIENCE_MIN_SCORE",
             "CLASSIFIER_PROVIDER",
+            "STORY_GROUPING_ENABLED",
         ],
         [
             "Each accepts: gateway | mimo | gemini. Set them to one value to run the",
@@ -70,6 +71,7 @@ BLOCKS = [
             "  EDITORIAL_DRAFT_LANG  uz = one call | ru = Russian draft, then Uzbek",
             "  AUDIENCE_MIN_SCORE    classification drops audience <= this (1-10)",
             "  CLASSIFIER_PROVIDER   triage + classification, several hundred calls a day",
+            "  STORY_GROUPING_ENABLED one call per composition: same story, one slot",
         ],
     ),
     (

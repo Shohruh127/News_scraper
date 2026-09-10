@@ -199,6 +199,11 @@ def classified_articles(db, source):
     )
     articles.append(a4)
 
+    # Every fixture candidate is publishable: since 2026-09-10 a story without a photo is
+    # dropped before the editorial (publish.keep_publishable).
+    for article in articles:
+        article.meta = {**article.meta, "image_url": f"https://example.com/{article.id}.jpg"}
+        article.save(update_fields=["meta"])
     return articles
 
 
@@ -252,3 +257,30 @@ def digest_with_two_items(db):
     DigestItem.objects.create(digest=digest, article=a1, position=1, score=0.9)
     DigestItem.objects.create(digest=digest, article=a2, position=2, score=0.8)
     return digest
+
+
+@pytest.fixture(autouse=True)
+def _no_story_grouping_call(settings):
+    """Keep selection off the classifier provider. Autouse, because one call is enough.
+
+    `select_digest_candidates` asks CLASSIFIER_PROVIDER once per composition which of the
+    candidates report the same story (2026-09-10). In the suite that would be a real HTTP
+    call from every ranking test, timing out on a machine without the gateway. A test that
+    wants the tier turns the flag back on and fakes `llm.group_same_story`.
+    """
+    settings.STORY_GROUPING_ENABLED = False
+
+
+@pytest.fixture(autouse=True)
+def _no_page_fetch_for_photos(monkeypatch):
+    """Keep photo lookups off the network. Autouse, because one fetch is enough.
+
+    `publish.keep_publishable` resolves every selected candidate's photo before the
+    editorial (2026-09-10), and `resolve_photo_url` downloads the article page when
+    `meta["image_url"]` is empty. In the suite that page is example.com. A fixture article
+    that should be publishable carries `meta={"image_url": ...}`; one without it has no
+    photo, deterministically, and a test about the lookup itself overrides this.
+    """
+    from apps.digest import publish
+
+    monkeypatch.setattr(publish.trafilatura, "fetch_url", lambda *args, **kwargs: None)

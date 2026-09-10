@@ -10,7 +10,9 @@ from apps.digest import llm, publish, ranking, tasks, verification
 def test_compose_and_publish_hands_off_selected_candidates(monkeypatch, settings):
     settings.PUBLISHING_ENABLED = True
     target_date = date(2026, 8, 19)
-    selected = [(SimpleNamespace(id=42), SimpleNamespace(), 0.9, [])]
+    # A candidate reaches the editorial only with a photo (publish.keep_publishable).
+    article = SimpleNamespace(id=42, title="t", meta={"image_url": "https://img.example/42.jpg"})
+    selected = [(article, SimpleNamespace(), 0.9, [])]
     analysed_ids = []
     compose_calls = []
 

@@ -10,7 +10,13 @@ from apps.digest.models import Analysis, Article, Digest, DigestItem
 from tests.helpers import make_editorial
 
 
-def test_calculate_score_bonuses_and_penalties(db, source):
+def test_open_source_and_github_earn_no_bonus(db, source):
+    """+0.15 for open source and +0.10 for a GitHub URL went on 2026-09-10.
+
+    Together they outweighed the audience of a middling story and lifted a reconstructed
+    Stuxnet source tree above two audience-8 stories on 2026-09-09. The score is the five
+    weighted dimensions and nothing else.
+    """
     art = Article.objects.create(
         source=source,
         canonical_url="https://github.com/test/repo",
@@ -33,7 +39,8 @@ def test_calculate_score_bonuses_and_penalties(db, source):
     )
 
     score = ranking.calculate_score(art, analysis)
-    assert score > 0.8
+    # n8 e8 r8 at 0.30/0.20/0.10, source priority 80 at 0.10, audience default 5 at 0.30
+    assert score == pytest.approx(0.24 + 0.16 + 0.08 + 0.08 + 0.15)
 
 
 def test_low_evidence_penalty(db, source):
@@ -585,3 +592,50 @@ def test_ranking_selects_on_publication_date_not_fetch_date(db, source, settings
     merged = {x.id for _a, _an, _s, secondary in selected for x in secondary}
     assert fresh.id in picked, "a six-hour-old article belongs in today's digest"
     assert stale.id not in picked | merged, "published six days ago, fetched today"
+
+
+def test_a_heavy_day_keeps_a_third_story_of_the_topic(db, source, settings):
+    """Cap 2 -> 3 on 2026-09-10.
+
+    On 2026-09-09 the third and fourth safety stories (audience 8) were dropped by the cap
+    of two, and the block was filled with a developer item at audience 4. Three different
+    stories on one topic beat one weak story on another; the fourth still waits.
+    """
+    settings.DIGEST_MAX_ITEMS = 6
+    settings.DIGEST_SELECT_MARGIN = 0
+    spec = [
+        ("safety_security", 9, "a"),
+        ("safety_security", 8, "b"),
+        ("safety_security", 7, "c"),
+        ("safety_security", 6, "d"),
+        ("ai_agents", 3, "e"),
+    ]
+    made = []
+    for n, (topic, novelty, host) in enumerate(spec):
+        art = Article.objects.create(
+            source=source,
+            canonical_url=f"https://{host}.example/{n}",
+            content_hash=f"heavy{n}",
+            title=f"Heavy day {n}",
+            extracted_text=f"Story {n} " * 40,
+            status=Article.Status.CLASSIFIED,
+        )
+        Analysis.objects.create(
+            article=art,
+            stage=Analysis.Stage.CLASSIFICATION,
+            model_tag="gemma4:31b",
+            payload={
+                "primary_topic": topic,
+                "maturity": "live_product",
+                "novelty": novelty,
+                "evidence": 8,
+                "production_readiness": 5,
+                "audience": 8,
+                "reason": "x",
+            },
+            latency_ms=1,
+        )
+        made.append(art)
+
+    picked = [a.id for a, _, _, _ in ranking.select_digest_candidates()]
+    assert picked == [made[0].id, made[1].id, made[2].id, made[4].id]

@@ -216,6 +216,16 @@ by `composed_at`, so every later edition queues behind it too. A `FAILED` item i
 past, reaches the operator through the admin alert, and can be republished once
 `Article.meta["image_url"]` holds a photo.
 
+Since 2026-09-10 the photo is resolved **before the editorial**, not at publish:
+`publish.keep_publishable` runs on the selected candidates and drops a story no copy of
+which has a usable photo, so the editorial call is not spent on an item that cannot be
+posted — DeepMind's AlphaGenome post was drafted and re-expressed on Gemini on 2026-09-09
+and then failed at 18:10 for want of a photo. A story keeps its slot if any copy in its
+cluster has a photo; that copy becomes the primary. The lookup writes what it finds to
+`Article.meta`, so publish does not fetch the page again; a lookup that raises counts as
+no photo. The suite stubs the page fetch (an autouse fixture), so a fixture article
+without `meta["image_url"]` is simply not publishable.
+
 All sendMessage and editMessageText helpers disable link previews even if an old environment
 setting asks to enable them. Explicit Telegram Instant View URLs are rejected by the inline
 link renderer. Original article links are preserved; Telegram client behavior after a reader
@@ -412,6 +422,37 @@ guide:
   and `_openai_chat` raises a message naming the cause rather than letting an empty string reach
   `json.loads`.
 
+## One story, one slot
+
+Clustering has two tiers since 2026-09-10, and `select_digest_candidates` runs both.
+
+**Tier A is text.** Character 5-gram Jaccard over article text at `CLUSTER_JACCARD_THRESHOLD`
+(0.80), measured over 17,020 live pairs with a 0.79 gap between the one true duplicate
+(two quantisation cards of one model, 0.900) and the nearest false one (consecutive
+release notes, 0.110). It catches the same page arriving twice; it cannot catch the same
+*story* written up twice. On 2026-09-09 the AlphaGenome Atlas launch arrived as
+DeepMind's own post (12k characters, no usable photo) and as Google's blog post via HN
+(2.7k, photo): Jaccard 0.215. It took positions 1 and 2 of the evening block, and
+position 1 then failed for want of a photo. Measured on that day's 15 candidates, no text
+signal separates that pair (word Jaccard 0.230) from the nearest different-story pair, two
+LG-TV articles at 0.147; the same event reads differently in every outlet.
+
+**Tier B is a judgement.** `llm.group_same_story` asks `CLASSIFIER_PROVIDER` once per
+composition, at the deep tier and temperature 0, which of the candidates report the same
+story, from their titles and first 200 characters — at most two calls a day, and no
+`Analysis` row because there is no single article to hang it on (the cost is logged).
+`clustering.cluster_candidates` takes the groups as an argument and stays a pure function;
+a group merges whole Tier A clusters, ids that are not candidates are ignored, and a failed
+or malformed call returns no groups, so composition falls back to Tier A rather than
+losing the edition. `STORY_GROUPING_ENABLED=false` is Tier A only, as before. The test
+suite keeps the flag off by default (an autouse fixture in `tests/conftest.py`), because
+every ranking test would otherwise make a real call.
+
+Within a cluster the primary is the highest-scoring member **that has a photo**, and the
+cluster keeps its best score: a post is a photo post, an item without one fails, and the
+story is as strong as its best write-up whichever copy carries the picture. The other
+members become `secondary_articles` on the item and are never selected again.
+
 ## The reader is not an engineer: the audience score
 
 Added 2026-09-09. Triage and classification were written for "an AI-engineering news digest
@@ -430,6 +471,17 @@ from evidence and readiness to `audience_relevance`, which now reads the score i
 being a constant 1.0 for every technical topic. Rows written before the field default to 5.
 Triage stays recall-first; only its audience line changed. The topic vocabulary is untouched:
 a changelog is still `production_engineering`, it is just audience 2.
+
+Two more things went on 2026-09-10, after the first evening block under the audience
+score. The **+0.15 open-source and +0.10 GitHub bonuses** in `calculate_score` are gone:
+together they were worth more than the whole audience weight of a middling story, and
+they lifted a reconstructed Stuxnet source tree (audience 5, novelty 2) to 0.68, above two
+audience-8 stories about LG TVs and stolen Claude tokens. The score is the five weighted
+dimensions and the low-evidence penalty, nothing else. And **`DIGEST_MAX_PER_TOPIC` is 3,
+not 2**: two was set for an engineering digest spread over seven topics; this channel
+lives on two, and the cap of two dropped the third and fourth safety stories (audience 8)
+to fill the block with a developer item at audience 4. Three different stories on one
+topic beat one weak story on another, and the same-story tier keeps them different.
 
 ## Triage reads the headline, not the article
 

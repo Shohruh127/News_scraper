@@ -20,7 +20,7 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 
 from . import clustering
-from .models import EXCLUDED_MATURITIES, Analysis, Article, Digest, DigestItem, Maturity, Topic
+from .models import EXCLUDED_MATURITIES, Analysis, Article, Digest, DigestItem, Topic
 from .story_identity import subject_key
 
 log = logging.getLogger(__name__)
@@ -69,13 +69,12 @@ def calculate_score(article: Article, analysis: Analysis) -> float:
 
     score = w_novelty + w_evidence + w_readiness + w_source + w_audience
 
-    # Bonuses — only fields available in M1
-    if analysis.maturity == Maturity.REPRODUCIBLE_OPEN_SOURCE:
-        score += 0.15
-    if "github.com" in article.canonical_url or (
-        article.source and article.source.connector == "github"
-    ):
-        score += 0.10
+    # No bonus for open source or for a GitHub URL since 2026-09-10. They were worth
+    # +0.25 together, more than the whole audience weight of a middling story, and they
+    # rewarded exactly what the audience score exists to demote: on 2026-09-09 they lifted
+    # a reconstructed Stuxnet source tree (audience 5, novelty 2) to 0.68, above two
+    # audience-8 stories about LG TVs and stolen Claude tokens, and the topic cap then
+    # dropped those two. The reader is not an engineer; a repo is not a reason to post.
 
     # Penalties — only fields available in M1
     if evidence <= 3:
@@ -154,11 +153,20 @@ def select_digest_candidates(
         score = calculate_score(art, analysis)
         scored_candidates.append((art, analysis, score))
 
-    # Sort descending by score before canonical URL dedup
+    # Sort descending by score before clustering
     scored_candidates.sort(key=lambda x: x[2], reverse=True)
 
-    # Apply canonical URL dedup BEFORE topic diversification
-    clustered_candidates = clustering.cluster_candidates(scored_candidates)
+    # One story, one slot. Tier A (text) runs inside cluster_candidates; Tier B asks the
+    # classifier provider once which of these candidates report the same story - see
+    # clustering.py for why text similarity cannot answer that.
+    same_story_groups: list[list[int]] = []
+    if getattr(settings, "STORY_GROUPING_ENABLED", True) and len(scored_candidates) > 1:
+        from . import llm
+
+        same_story_groups = llm.group_same_story(scored_candidates)
+    clustered_candidates = clustering.cluster_candidates(
+        scored_candidates, same_story_groups=same_story_groups
+    )
 
     # Diversification, applied to clusters so a merged story is counted once.
     topic_counts: Counter = Counter()

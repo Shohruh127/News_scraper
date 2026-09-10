@@ -318,8 +318,13 @@ RANKING_WEIGHTS = {
 AUDIENCE_MIN_SCORE = env.int("AUDIENCE_MIN_SCORE", default=3)
 # One post per news item (ADR-004 §6). Two blocks a day, six posts each, one every two hours.
 DIGEST_MAX_ITEMS = env.int("DIGEST_MAX_ITEMS", default=6)
-#: 3 of 6 on one topic is half a block. Lowered with DIGEST_MAX_ITEMS on 2026-08-24.
-DIGEST_MAX_PER_TOPIC = env.int("DIGEST_MAX_PER_TOPIC", default=2)
+#: 2 -> 3 on 2026-09-10. Two was set with DIGEST_MAX_ITEMS on 2026-08-24 ("3 of 6 on one
+#: topic is half a block") for an engineering digest spread over seven topics. The reader's
+#: channel lives on two - frontier models and safety - and on 2026-09-09 the cap of two
+#: dropped the third and fourth safety stories (audience 8, scores 0.67 and 0.64) and filled
+#: the block with a developer item at audience 4. Three different stories on one topic beat
+#: one weak story on another; the same-story tier keeps them different stories.
+DIGEST_MAX_PER_TOPIC = env.int("DIGEST_MAX_PER_TOPIC", default=3)
 #: Selected above DIGEST_MAX_ITEMS so an item whose editorial or translation failed can be
 #: dropped without shortening the block. At six items a block, one failure is 17% of it.
 DIGEST_SELECT_MARGIN = env.int("DIGEST_SELECT_MARGIN", default=2)
@@ -331,6 +336,9 @@ DIGEST_SELECT_MARGIN = env.int("DIGEST_SELECT_MARGIN", default=2)
 # consecutive releases (0.110). The 0.79 gap means any value in 0.2-0.9 decides both
 # cases identically, so this threshold needs no tuning — do not treat it as a knob.
 CLUSTER_JACCARD_THRESHOLD = 0.80
+#: Tier B: one classifier call per composition groups the candidates that report the same
+#: story across outlets (clustering.py). Off means Tier A only, as before 2026-09-10.
+STORY_GROUPING_ENABLED = env.bool("STORY_GROUPING_ENABLED", default=True)
 CLUSTER_SHINGLE_SIZE = 5
 CLUSTER_TEXT_CHARS = 6000
 
